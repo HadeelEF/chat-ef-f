@@ -165,7 +165,7 @@ services:
     # 2 CRITICAL / 27 HIGH findings (Trivy 0.76.0, 2026-10-21); 1.54.3 has 0 / 10 (curl only). The search API that
     # LibreChat's client (meilisearch-js 0.38) calls is stable across 1.x. Multi-arch index digest from Docker Hub.
     # The same digest is the base of infrastructure/railway/meilisearch.Dockerfile (checked by railway_checks.py).
-    image: getmeili/meilisearch:v1.54.3@sha256:e68913ab7d6f5b159529e472cfd362ce3c741fafd3c127961b2142abbe41b3c9
+    image: getmeili/meilisearch:v1.56.0@sha256:1f578fa865f8251894b3bf38d6668d6209a3f451f8f65ab953e129d4c1db5ef4
     restart: unless-stopped
     environment:
       # production: the master key is mandatory (>= 16 bytes) and the built-in search preview page is off.
