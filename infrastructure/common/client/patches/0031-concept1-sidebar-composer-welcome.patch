@@ -1,0 +1,961 @@
+diff --git a/client/index.html b/client/index.html
+index 0f0bb18..e000310 100644
+--- a/client/index.html
++++ b/client/index.html
+@@ -13,6 +13,8 @@
+       content="بصير — مساحة عمل الذكاء الاصطناعي لصندوق البيئة"
+     />
+     <title>بصير | صندوق البيئة</title>
++    <link rel="icon" href="favicon.ico" sizes="48x48" />
++    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+     <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png" />
+     <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png" />
+     <link rel="apple-touch-icon" href="assets/apple-touch-icon-180x180.png" />
+diff --git a/client/src/components/Chat/ChatView.tsx b/client/src/components/Chat/ChatView.tsx
+index 9530d08..c2fc006 100644
+--- a/client/src/components/Chat/ChatView.tsx
++++ b/client/src/components/Chat/ChatView.tsx
+@@ -169,7 +169,12 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
+                     <Header
+                       parentConversationId={parentConversationId}
+                       readOnly={isSubagentThreadReadOnly}
++                      title={isLandingPage ? undefined : conversationTitle}
+                     />
++                    {/* EF (Concept 1, owner-approved): a quarter of the guide's radial graphic (EF-RADIAL-MASTER,
++                      unaltered) in the end corner of the welcome screen only; conversations stay undecorated.
++                      Size and placement in brand.css. */}
++                    {isLandingPage && <div className="efaiw-landing-radial" aria-hidden="true" />}
+                     <>
+                       <div
+                         className={cn(
+@@ -203,14 +208,6 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
+                           )}
+                         >
+                           {isLandingPage && <ConversationStarters />}
+-                          {/* EF (#103): upstream hides the footer below 640 px, where the composer meets the
+-                            screen edge; the deployment's notice still belongs on the welcome screen. */}
+-                          {isLandingPage && configuredFooter && (
+-                            <Footer
+-                              configuredOnly
+-                              className="flex justify-center px-4 pb-2 text-center text-xs text-text-muted sm:hidden"
+-                            />
+-                          )}
+                           {isSubagentThreadReadOnly ? (
+                             <div
+                               className="mx-auto w-full max-w-3xl px-4 py-3 text-center text-sm text-text-secondary xl:max-w-4xl"
+@@ -232,9 +229,17 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
+                             deployment's own footer, privacy policy and terms
+                             stay with the conversation that always showed them. */}
+                           {!isLandingPage && configuredFooter && <Footer configuredOnly />}
++                          {/* EF (#103, Concept 1): on the welcome screen the deployment's notice sits right under the
++                            composer, on every screen size, as it does in a conversation. */}
++                          {isLandingPage && configuredFooter && (
++                            <Footer
++                              configuredOnly
++                              className="efaiw-landing-footer flex justify-center px-4 pb-2 pt-3 text-center text-xs text-text-muted"
++                            />
++                          )}
+                         </div>
+                       </div>
+-                      {isLandingPage && <Footer />}
++                      {isLandingPage && !configuredFooter && <Footer />}
+                     </>
+                   </TraceSurface>
+                 </Presentation>
+diff --git a/client/src/components/Chat/Header.tsx b/client/src/components/Chat/Header.tsx
+index c578ad2..9e3540b 100644
+--- a/client/src/components/Chat/Header.tsx
++++ b/client/src/components/Chat/Header.tsx
+@@ -31,9 +31,12 @@ const defaultInterface = getConfigDefaults().interface;
+ function Header({
+   parentConversationId,
+   readOnly = false,
++  title,
+ }: {
+   parentConversationId?: string;
+   readOnly?: boolean;
++  /** EF (Concept 1): the open conversation's title, shown at the start of the bar (centred on phones). */
++  title?: string;
+ }) {
+   const { data: startupConfig } = useGetStartupConfig();
+   const navVisible = useRecoilValue(store.sidebarExpanded);
+@@ -94,6 +97,17 @@ function Header({
+           hiddenBehindNav,
+         )}
+       >
++        {/* Visible only: the page's sr-only h1 already announces the same title. */}
++        {title != null && title !== '' && (
++          <span
++            className="efaiw-header-title min-w-0 truncate"
++            dir="auto"
++            aria-hidden="true"
++            title={title}
++          >
++            {title}
++          </span>
++        )}
+         {parentConversationId != null && (
+           <SubagentThreadLink threadId={parentConversationId} labelClassName="hidden lg:inline" />
+         )}
+diff --git a/client/src/components/Chat/Input/ChatForm.tsx b/client/src/components/Chat/Input/ChatForm.tsx
+index 2dadd17..53a479b 100644
+--- a/client/src/components/Chat/Input/ChatForm.tsx
++++ b/client/src/components/Chat/Input/ChatForm.tsx
+@@ -73,6 +73,7 @@ import EditBadges from './EditBadges';
+ import BadgeRow from './BadgeRow';
+ import SpeedSelector from './SpeedSelector';
+ import useComposerModes from './composerModes';
++import { useConfiguredFooter } from '~/components/Chat/Footer';
+ import Mention from './Mention';
+ import store from '~/store';
+ 
+@@ -162,6 +163,8 @@ const ChatForm = memo(function ChatForm({
+   const textAreaRef = useRef<HTMLTextAreaElement>(null);
+   useFocusChatEffect(textAreaRef);
+   const localize = useLocalize();
++  /** EF (Concept 1): a configured notice is shown inline under the welcome composer (ChatView). */
++  const configuredFooterInline = useConfiguredFooter();
+ 
+   const [isCollapsed, setIsCollapsed] = useState(false);
+   const [, setIsScrollable] = useState(false);
+@@ -620,7 +623,9 @@ const ChatForm = memo(function ChatForm({
+     centerFormOnLanding && !isSubmitting ? 'transition-all duration-200 sm:mb-28' : 'sm:mb-10';
+   let bottomClearance = 'sm:mb-4';
+   if (isLandingPage) {
+-    bottomClearance = landingClearance;
++    /* EF (Concept 1): the welcome screen's notice follows the composer in the flow (ChatView), so the band below the
++       composer is not reserved for it. */
++    bottomClearance = configuredFooterInline ? 'sm:mb-0' : landingClearance;
+   } else if (footerBelow) {
+     /* A conversation that carries a configured footer keeps the band that bar
+        needs, exactly as the welcome screen does. */
+@@ -876,18 +881,16 @@ const ChatForm = memo(function ChatForm({
+                   </div>
+                 )}
+                 <BadgeRow
+-                  /* EF (#138): the speed selector sits right after the +, in place of the model button and the
+-                     thinking switch; any other chat (an agent, an upstream spec) keeps the model button. */
++                  /* EF (#138): any chat outside the approved lineup (an agent, an upstream spec) keeps the model button
++                     right after the +; the lineup's model control sits beside Send (Concept 1, below). */
+                   modelControl={
+                     index === 0 &&
+                     plusMenu &&
+-                    (modes.available ? (
+-                      <SpeedSelector disabled={isSubmitting || disableInputs} />
+-                    ) : (
++                    !modes.available && (
+                       <div className="min-w-0 shrink">
+                         <ModelSelector startupConfig={startupConfig} variant="composer" />
+                       </div>
+-                    ))
++                    )
+                   }
+                   showEphemeralBadges={plusMenu}
+                   isSubmitting={isSubmitting}
+@@ -909,6 +912,12 @@ const ChatForm = memo(function ChatForm({
+                 )}
+                 <div className="grow" />
+                 <TokenUsage index={index} conversation={conversation} isSubmitting={isSubmitting} />
++                {/* EF (Concept 1, owner-approved): the model in use, named, beside the voice and Send buttons. */}
++                {index === 0 && plusMenu && modes.available && (
++                  <div className="min-w-0 shrink">
++                    <SpeedSelector disabled={isSubmitting || disableInputs} />
++                  </div>
++                )}
+                 {SpeechToText && (
+                   <AudioRecorder
+                     methods={methods}
+diff --git a/client/src/components/Chat/Input/SpeedSelector.tsx b/client/src/components/Chat/Input/SpeedSelector.tsx
+index e6b2496..342a45d 100644
+--- a/client/src/components/Chat/Input/SpeedSelector.tsx
++++ b/client/src/components/Chat/Input/SpeedSelector.tsx
+@@ -1,7 +1,8 @@
+-import { memo } from 'react';
++import { memo, useId } from 'react';
++import { createPortal } from 'react-dom';
+ import * as Ariakit from '@ariakit/react';
+-import { Check, ChevronDown, Lightbulb, Telescope, Zap } from 'lucide-react';
+-import { composerControlClasses } from '@librechat/client';
++import { Brain, Check, ChevronDown, Layers, X, Zap } from 'lucide-react';
++import { composerControlClasses, useMediaQuery } from '@librechat/client';
+ import type { LucideIcon } from 'lucide-react';
+ import type { TranslationKeys } from '~/hooks';
+ import { useShortcutAriaKey } from '~/hooks/useKeyboardShortcuts';
+@@ -12,28 +13,34 @@ import { cn } from '~/utils';
+ 
+ const OPTIONS: ReadonlyArray<{ id: SpeedId; icon: LucideIcon; label: TranslationKeys }> = [
+   { id: 'fast', icon: Zap, label: 'com_efaiw_speed_fast' },
+-  { id: 'careful', icon: Lightbulb, label: 'com_efaiw_speed_careful' },
+-  { id: 'deep', icon: Telescope, label: 'com_efaiw_speed_deep' },
++  { id: 'careful', icon: Layers, label: 'com_efaiw_speed_careful' },
++  { id: 'deep', icon: Brain, label: 'com_efaiw_speed_deep' },
+ ];
+ 
+ /**
+- * EF (#138): «سريع / متأنٍّ / عميق» in place of the model button and the thinking switch, like Qwen Chat's mode
+- * menu: one choice named by its outcome. Each option is one of the three specs and names it under the outcome
+- * («بصير لايت · …», its description from librechat.yaml), so the reply's label still matches. The chat switches in
+- * place and keeps its internet setting.
++ * EF (#138, Concept 1): the composer's model control over the three approved specs. The button names the spec in use
++ * («بصير لايت»), and the menu lists each spec by its name with its description from librechat.yaml, so the reply's
++ * label matches what was chosen. On desktop it is a menu above the button; on phones (styled in brand.css) it is a
++ * bottom sheet with a title, a close button and a backdrop. The chat switches in place and keeps its internet setting.
+  */
+ function SpeedSelector({ disabled = false }: { disabled?: boolean }) {
+   const localize = useLocalize();
++  const headingId = useId();
++  const menu = Ariakit.useMenuStore({ placement: 'top-end' });
++  const open = Ariakit.useStoreState(menu, 'open');
++  const isSmallScreen = useMediaQuery('(max-width: 767px)');
+   const { speed, setSpeed, specOf } = useComposerModes();
+   const active = OPTIONS.find((o) => o.id === speed) ?? OPTIONS[0];
+-  const ActiveIcon = active.icon;
+-  const name = `${localize('com_efaiw_speed')}: ${localize(active.label)}`;
++  const activeSpec = specOf(active.id);
++  const visibleName = activeSpec?.label ?? localize(active.label);
++  const name = localize('com_efaiw_model_selector_label', { model: visibleName });
+   /* The model selector's shortcut (Ctrl/⌘ + Shift + M) opens this menu: it finds the button by its test id. */
+   const shortcut = useShortcutAriaKey('openModelSelector');
+ 
+   return (
+-    <Ariakit.MenuProvider placement="top-start">
++    <>
+       <Ariakit.MenuButton
++        store={menu}
+         disabled={disabled}
+         data-testid="model-selector-button"
+         aria-keyshortcuts={shortcut}
+@@ -41,21 +48,43 @@ function SpeedSelector({ disabled = false }: { disabled?: boolean }) {
+         title={name}
+         className={cn(
+           composerControlClasses(),
+-          'gap-1.5 px-theme-normal',
++          'efaiw-model-button gap-1.5 px-theme-normal',
+           disabled && 'opacity-70',
+         )}
+       >
+-        <ActiveIcon className="icon-md" aria-hidden="true" />
+-        <span>{localize(active.label)}</span>
+-        <ChevronDown className="size-4 text-text-secondary" aria-hidden="true" />
++        <span className="truncate">{visibleName}</span>
++        <ChevronDown
++          className="efaiw-model-chevron size-4 text-text-secondary"
++          aria-hidden="true"
++        />
+       </Ariakit.MenuButton>
+       <Ariakit.Menu
++        store={menu}
+         portal={true}
+-        gutter={6}
++        gutter={8}
+         unmountOnHide={true}
+-        aria-label={localize('com_efaiw_speed')}
+-        className="popover-ui z-50 flex w-72 max-w-[calc(100vw-32px)] flex-col gap-0.5 rounded-xl border border-border-light bg-surface-secondary p-1.5 shadow-lg"
++        aria-labelledby={headingId}
++        /* Focus moves into the menu when it opens; no focusable aria-hidden traps around the portal (axe). */
++        preserveTabOrder={false}
++        wrapperProps={{ className: 'efaiw-model-menu-wrap' }}
++        className="efaiw-model-menu popover-ui z-50 flex w-[25rem] max-w-[calc(100vw-32px)] flex-col gap-0.5 rounded-2xl border border-border-light bg-surface-primary p-2 shadow-lg"
+       >
++        <div className="efaiw-model-menu-head flex items-center justify-between gap-2 px-3 pb-1.5 pt-2">
++          <span
++            id={headingId}
++            className="efaiw-model-menu-title text-xs font-semibold text-text-secondary"
++          >
++            {localize('com_efaiw_model_menu_title')}
++          </span>
++          {/* Phones only (brand.css): a menu item, so the menu holds only menu items (axe aria-required-children). */}
++          <Ariakit.MenuItem
++            className="efaiw-model-menu-close hidden size-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-surface-secondary text-text-secondary outline-none focus-visible:ring-2 focus-visible:ring-ring-primary"
++            aria-label={localize('com_ui_close')}
++            onClick={() => menu.hide()}
++          >
++            <X className="size-5" aria-hidden="true" />
++          </Ariakit.MenuItem>
++        </div>
+         {OPTIONS.map((option) => {
+           const spec = specOf(option.id);
+           if (spec == null) {
+@@ -68,26 +97,43 @@ function SpeedSelector({ disabled = false }: { disabled?: boolean }) {
+               key={option.id}
+               role="menuitemradio"
+               aria-checked={checked}
++              data-efaiw-speed={option.id}
+               onClick={() => setSpeed(option.id)}
+-              className="flex w-full cursor-pointer items-start gap-3 rounded-lg px-3 py-2.5 text-start text-text-primary outline-none hover:bg-surface-hover focus:bg-surface-hover data-[active-item]:bg-surface-hover"
++              className={cn(
++                'efaiw-model-option flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-3 text-start text-text-primary outline-none hover:bg-surface-hover focus:bg-surface-hover data-[active-item]:bg-surface-hover',
++                checked && 'efaiw-model-option-on',
++              )}
+             >
+-              <Icon className="icon-md mt-0.5 shrink-0" aria-hidden="true" />
++              <span className="efaiw-model-tile flex size-10 shrink-0 items-center justify-center rounded-xl">
++                <Icon className="size-5" aria-hidden="true" />
++              </span>
+               <span className="flex min-w-0 flex-1 flex-col">
+-                <span className="text-sm font-medium">{localize(option.label)}</span>
+-                <span className="text-xs text-text-secondary">
+-                  {spec.label}
+-                  {spec.description ? ` · ${spec.description}` : ''}
+-                </span>
++                <span className="text-[15px] font-semibold">{spec.label}</span>
++                {spec.description ? (
++                  <span className="text-[13px] leading-normal text-text-secondary">
++                    {spec.description}
++                  </span>
++                ) : null}
+               </span>
+               <Check
+-                className={cn('icon-sm mt-1 shrink-0', checked ? 'opacity-100' : 'opacity-0')}
++                className={cn(
++                  'size-5 shrink-0 text-[#2c3a82]',
++                  checked ? 'opacity-100' : 'opacity-0',
++                )}
+                 aria-hidden="true"
+               />
+             </Ariakit.MenuItem>
+           );
+         })}
++        <div className="efaiw-model-menu-foot mt-1 border-t border-border-light px-3 pb-1 pt-2.5 text-xs text-text-secondary">
++          {localize('com_efaiw_model_menu_hint')}
++        </div>
+       </Ariakit.Menu>
+-    </Ariakit.MenuProvider>
++      {/* Phones: a dimmed backdrop under the sheet; a tap on it is an interaction outside the menu, which closes it. */}
++      {open &&
++        isSmallScreen &&
++        createPortal(<div className="efaiw-model-backdrop" aria-hidden="true" />, document.body)}
++    </>
+   );
+ }
+ 
+diff --git a/client/src/components/Chat/Landing.tsx b/client/src/components/Chat/Landing.tsx
+index 5dc5abf..a9ca662 100644
+--- a/client/src/components/Chat/Landing.tsx
++++ b/client/src/components/Chat/Landing.tsx
+@@ -136,13 +136,22 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding:
+ 
+   return (
+     <div
++      data-efaiw="landing"
+       className={`flex h-full transform-gpu flex-col items-center justify-center pb-16 transition-all duration-200 ${centerFormOnLanding ? 'max-h-full sm:max-h-0' : 'max-h-full'} ${getDynamicMargin}`}
+     >
+       <div ref={contentRef} className="flex flex-col items-center gap-0 p-2">
+-        <div
+-          className={`flex ${textHasMultipleLines ? 'flex-col' : 'flex-col md:flex-row'} items-center justify-center gap-2`}
+-        >
+-          <div className={`relative size-10 justify-center ${textHasMultipleLines ? 'mb-2' : ''}`}>
++        {/* EF (Concept 1): on phones, where the sidebar and its logo are hidden, the EF logo heads the welcome. */}
++        {!isTemporary && (
++          <img
++            src="assets/logo.svg"
++            className="efaiw-landing-logo"
++            alt={localize('com_ui_logo', { 0: localize('com_efaiw_ef_name') })}
++          />
++        )}
++        <div className="efaiw-landing-head flex flex-col items-center justify-center gap-2">
++          <div
++            className={`efaiw-landing-icon relative size-10 justify-center ${textHasMultipleLines ? 'mb-2' : ''}`}
++          >
+             {isTemporary ? (
+               <div className={containerClassName}>
+                 <HatGlasses className="h-2/3 w-2/3 text-text-primary" aria-hidden="true" />
+@@ -189,7 +198,7 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding:
+             <SplitText
+               key={`split-text-${greetingText}${user?.name ? '-user' : ''}`}
+               text={greetingText}
+-              className={`${getTextSizeClass(greetingText)} font-bold text-text-primary`}
++              className={`efaiw-landing-greeting ${getTextSizeClass(greetingText)} font-bold text-text-primary`}
+               delay={50}
+               textAlign="center"
+               animationFrom={greetingAnimationFrom}
+diff --git a/client/src/components/Chat/Menus/OpenSidebar.tsx b/client/src/components/Chat/Menus/OpenSidebar.tsx
+index dfa311d..d4ca542 100644
+--- a/client/src/components/Chat/Menus/OpenSidebar.tsx
++++ b/client/src/components/Chat/Menus/OpenSidebar.tsx
+@@ -1,3 +1,4 @@
++import { Menu } from 'lucide-react';
+ import { TooltipAnchor, Button, Sidebar } from '@librechat/client';
+ import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcuts';
+ import useSidebarToggle from '~/hooks/Nav/useSidebarToggle';
+@@ -52,7 +53,9 @@ export default function OpenSidebar({
+           className={className}
+           onClick={handleClick}
+         >
+-          <Sidebar className="icon-md" aria-hidden="true" />
++          {/* EF (Concept 1): the familiar menu icon on phones, where it opens the drawer. */}
++          <Menu className="icon-md md:hidden" aria-hidden="true" />
++          <Sidebar className="icon-md hidden md:block" aria-hidden="true" />
+         </Button>
+       }
+     />
+diff --git a/client/src/components/SidePanel/Nav.tsx b/client/src/components/SidePanel/Nav.tsx
+index 9c979e6..c428b91 100644
+--- a/client/src/components/SidePanel/Nav.tsx
++++ b/client/src/components/SidePanel/Nav.tsx
+@@ -1,19 +1,12 @@
+ import type { NavLink } from '~/common';
+ import { useActivePanel, resolveActivePanel } from '~/Providers';
+-import { useLocalize } from '~/hooks';
+ 
+ export default function Nav({ links }: { links: NavLink[] }) {
+   const { active } = useActivePanel();
+   const effectiveActive = resolveActivePanel(active, links);
+-  const localize = useLocalize();
+-  const logoAlt = localize('com_ui_logo', { 0: localize('com_efaiw_ef_name') });
+   return (
+     <div className="flex h-full min-h-0 flex-col">
+-      {/* EF logo (D-04) above every side panel; 40 px keeps the symbol at its digital minimum. */}
+-      <div className="flex flex-shrink-0 px-4 pb-1 pt-3">
+-        <img src="assets/logo.svg" className="h-10 w-auto dark:hidden" alt={logoAlt} />
+-        <img src="assets/logo-dark.svg" className="hidden h-10 w-auto dark:block" alt={logoAlt} />
+-      </div>
++      {/* EF (Concept 1): the logo heads the sidebar column (EfSidebarColumn), above the navigation. */}
+       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden text-text-primary">
+         {links.map((link) =>
+           link.id === effectiveActive && link.Component ? <link.Component key={link.id} /> : null,
+diff --git a/client/src/components/UnifiedSidebar/ConversationsSection.tsx b/client/src/components/UnifiedSidebar/ConversationsSection.tsx
+index 5ac828a..42684ad 100644
+--- a/client/src/components/UnifiedSidebar/ConversationsSection.tsx
++++ b/client/src/components/UnifiedSidebar/ConversationsSection.tsx
+@@ -22,7 +22,6 @@ import PinnedSection from '~/components/Conversations/PinnedSection';
+ import useSidebarToggle from '~/hooks/Nav/useSidebarToggle';
+ import { Conversations } from '~/components/Conversations';
+ import { collectPinnedConversations } from '~/utils';
+-import SearchBar from '~/components/Nav/SearchBar';
+ import store from '~/store';
+ 
+ const chatsHeaderTrailing = <ChatFilterMenu />;
+@@ -170,14 +169,8 @@ const ConversationsSection = memo(() => {
+       role="region"
+       aria-label={localize('com_ui_chat_history')}
+     >
+-      {/* The search field owns this row alone; filtering and ordering moved beside the
+-          Chats heading, where the list they act on is labelled. On mobile the field
+-          itself lives in the drawer's bottom bar, within thumb reach. */}
+-      {!isSmallScreen && search.enabled && (
+-        <div className="flex items-center px-3">
+-          <SearchBar isSmallScreen={isSmallScreen} />
+-        </div>
+-      )}
++      {/* EF (Concept 1): the search field is a row of the sidebar's navigation (EfSidebarColumn), on the desktop and
++          in the phone drawer; filtering and ordering stay beside the Chats heading. */}
+       <div
+         ref={setScrollViewport}
+         className="scrollbar-gutter-stable min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
+diff --git a/client/src/components/UnifiedSidebar/EfSidebarColumn.tsx b/client/src/components/UnifiedSidebar/EfSidebarColumn.tsx
+new file mode 100644
+index 0000000..c6969fd
+--- /dev/null
++++ b/client/src/components/UnifiedSidebar/EfSidebarColumn.tsx
+@@ -0,0 +1,340 @@
++import { memo, lazy, Suspense, useCallback, useEffect, useRef } from 'react';
++import { useRecoilValue } from 'recoil';
++import { Link, useLocation } from 'react-router-dom';
++import { ChevronDown, ChevronLeft, Ellipsis, LayoutGrid, SquarePen, X } from 'lucide-react';
++import { Button, Sidebar, Skeleton, TooltipAnchor } from '@librechat/client';
++import type { NavLink } from '~/common';
++import type { TranslationKeys } from '~/hooks';
++import { useActivePanel, resolveActivePanel, DEFAULT_PANEL } from '~/Providers';
++import {
++  useShortcutAriaKey,
++  useShortcutDisplay,
++  useShortcutHint,
++} from '~/hooks/useKeyboardShortcuts';
++import { useLocalize, useLocalStorage, useShowMarketplace } from '~/hooks';
++import { CLOSE_SIDEBAR_ID } from '~/components/Chat/Menus/OpenSidebar';
++import SidePanelNav from '~/components/SidePanel/Nav';
++import SearchBar from '~/components/Nav/SearchBar';
++import { parseShortcutKeys } from '~/components/Nav/ShortcutKeyCombo';
++import useNewChat from '~/hooks/Chat/useNewChat';
++import { MobileShortcutTargets as ShortcutTargets } from './mobile';
++import { cn } from '~/utils';
++import store from '~/store';
++
++const AccountSettings = lazy(() => import('~/components/Nav/AccountSettings'));
++
++/** EF (Concept 1, owner-approved): the names of the panels listed under «More». The builder keeps its full name so it
++ *  is not confused with the agents row above it, which opens the marketplace. */
++const MORE_LABELS: Record<string, TranslationKeys> = {
++  agents: 'com_sidepanel_agent_builder',
++  skills: 'com_efaiw_rail_skills',
++  prompts: 'com_ui_prompts',
++  memories: 'com_efaiw_rail_memories',
++  bookmarks: 'com_efaiw_rail_bookmarks',
++  files: 'com_efaiw_rail_files',
++  parameters: 'com_efaiw_rail_parameters',
++};
++
++const rowClass =
++  'efaiw-side-row flex h-11 w-full items-center gap-3 rounded-xl px-3 text-start text-[15px] text-text-primary outline-none transition-colors hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring-primary';
++
++/**
++ * EF (Concept 1, owner-approved): the expanded sidebar as one column after ChatGPT's, on the desktop and in the phone
++ * drawer. Top to bottom: the EF logo and the close control; «New chat» in the primary blue; the chat search; the agents
++ * marketplace; «More», which lists every other panel LibreChat offers (agent builder, skills, prompts, memory,
++ * bookmarks, files, parameters, and any the deployment enables); the active panel (the chat history by default, with a
++ * way back to it from any other panel); the account menu. Nothing LibreChat offers is removed: the collapsed desktop
++ * sidebar keeps the labelled rail, and the hidden shortcut targets keep the panel shortcuts working.
++ */
++function EfSidebarColumn({
++  links,
++  mobile = false,
++  expanded = true,
++  onClose,
++  onLeaveInsights,
++}: {
++  links: NavLink[];
++  mobile?: boolean;
++  expanded?: boolean;
++  onClose: (afterSlide?: () => void) => void;
++  onLeaveInsights?: () => void;
++}) {
++  const localize = useLocalize();
++  const location = useLocation();
++  const { active, setActive } = useActivePanel();
++  const search = useRecoilValue(store.search);
++  const switchToHistory = useRecoilValue(store.newChatSwitchToHistory);
++  const showMarketplace = useShowMarketplace();
++  const [moreOpen, setMoreOpen] = useLocalStorage('efaiwSidebarMoreOpen', false);
++  const closeRef = useRef<HTMLButtonElement>(null);
++
++  const isInsightsRoute = location.pathname.startsWith('/insights');
++  const routeActiveId = isInsightsRoute ? 'insights' : undefined;
++  const activeId = routeActiveId ?? resolveActivePanel(active, links);
++  const activeLink = links.find((link) => link.id === activeId);
++  const moreLinks = links.filter((link) => link.id !== DEFAULT_PANEL);
++  const labelOf = (link: NavLink) => localize(MORE_LABELS[link.id] ?? link.title);
++
++  const toggleLabel = 'com_nav_close_sidebar';
++  const toggleHint = useShortcutHint('toggleSidebar', localize(toggleLabel));
++  const toggleAriaKey = useShortcutAriaKey('toggleSidebar');
++  const newChatHint = useShortcutHint('newChat', localize('com_ui_new_chat'));
++  const newChatAriaKey = useShortcutAriaKey('newChat');
++  /* The keys as bound now (the employee can rebind or turn shortcuts off in Settings). */
++  const newChatKeys = parseShortcutKeys(useShortcutDisplay('newChat'));
++  const logoAlt = localize('com_ui_logo', { 0: localize('com_efaiw_ef_name') });
++
++  /** The phone drawer makes the chat inert while open, so focus moves into it (as upstream's drawer header did). */
++  useEffect(() => {
++    if (mobile && expanded) {
++      closeRef.current?.focus();
++    }
++  }, [mobile, expanded]);
++
++  const { startNewChat, handleNewChatClick: desktopNewChat } = useNewChat({
++    onNewChat: () => {
++      if (switchToHistory) {
++        setActive(DEFAULT_PANEL);
++      }
++    },
++  });
++
++  /** Phone: close first and reset in the slide's callback, as upstream's drawer bottom bar did, so the reset does not
++   *  stall the slide; modified clicks still open /c/new in a new tab. */
++  const handleNewChat = useCallback(
++    (event: React.MouseEvent<HTMLAnchorElement>) => {
++      if (!mobile) {
++        desktopNewChat(event);
++        return;
++      }
++      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) {
++        return;
++      }
++      event.preventDefault();
++      onClose(() => startNewChat());
++    },
++    [mobile, desktopNewChat, onClose, startNewChat],
++  );
++
++  const openPanel = useCallback(
++    (link: NavLink, event?: React.MouseEvent<HTMLButtonElement>) => {
++      if (link.onClick) {
++        link.onClick(event);
++        if (mobile) {
++          onClose();
++        }
++        return;
++      }
++      setActive(link.id);
++      /* The list folds away so the chosen panel gets the room; its header names it and leads back to the chats. */
++      setMoreOpen(false);
++      if (routeActiveId) {
++        onLeaveInsights?.();
++      }
++    },
++    [mobile, onClose, setActive, setMoreOpen, routeActiveId, onLeaveInsights],
++  );
++
++  return (
++    <div className="efaiw-side flex h-full w-full min-w-0 flex-col bg-surface-primary-alt">
++      <div className="efaiw-side-top flex flex-shrink-0 items-center justify-between gap-2">
++        <img
++          src="assets/logo.svg"
++          className="efaiw-side-logo h-[52px] w-auto dark:hidden"
++          alt={logoAlt}
++        />
++        <img
++          src="assets/logo-dark.svg"
++          className="efaiw-side-logo hidden h-[52px] w-auto dark:block"
++          alt={logoAlt}
++        />
++        <TooltipAnchor
++          side={mobile ? 'bottom' : 'right'}
++          description={toggleHint}
++          render={
++            <Button
++              ref={closeRef}
++              /* OpenSidebar focuses this id after opening; claimed only while the column is shown. */
++              id={expanded ? CLOSE_SIDEBAR_ID : undefined}
++              data-testid={expanded ? 'close-sidebar-button' : undefined}
++              size="icon"
++              variant="ghost"
++              aria-label={localize(toggleLabel)}
++              aria-expanded={expanded}
++              aria-controls="chat-history-nav"
++              aria-keyshortcuts={toggleAriaKey}
++              tabIndex={expanded ? 0 : -1}
++              className="h-10 w-10 flex-shrink-0 rounded-lg text-text-secondary"
++              onClick={() => onClose()}
++            >
++              {mobile ? (
++                <X className="h-[22px] w-[22px]" aria-hidden="true" />
++              ) : (
++                <Sidebar className="h-5 w-5" aria-hidden="true" />
++              )}
++            </Button>
++          }
++        />
++      </div>
++
++      <div className="efaiw-side-nav flex flex-shrink-0 flex-col gap-0.5">
++        <TooltipAnchor
++          side={mobile ? 'bottom' : 'right'}
++          description={newChatHint}
++          render={
++            <a
++              href="/c/new"
++              data-testid={mobile ? 'nav-new-chat-fab' : 'new-chat-button'}
++              aria-label={localize('com_ui_new_chat')}
++              aria-keyshortcuts={newChatAriaKey}
++              className="efaiw-side-new flex h-[46px] w-full items-center gap-3 rounded-xl px-3 text-[15px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring-primary focus-visible:ring-offset-2"
++              onClick={handleNewChat}
++            >
++              <SquarePen className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
++              <span className="flex-1 truncate">{localize('com_ui_new_chat')}</span>
++              {!mobile && newChatKeys.length > 0 && (
++                <span className="efaiw-side-kbd" aria-hidden="true">
++                  {newChatKeys.map((key, idx) => (
++                    <kbd key={`${key}-${idx}`}>{key}</kbd>
++                  ))}
++                </span>
++              )}
++            </a>
++          }
++        />
++
++        {search.enabled === true && (
++          <div
++            className="efaiw-side-search flex"
++            /* Searching filters the chat history, so the history comes back into view. */
++            onFocusCapture={() => {
++              if (activeId !== DEFAULT_PANEL && !routeActiveId) {
++                setActive(DEFAULT_PANEL);
++              }
++            }}
++          >
++            <SearchBar isSmallScreen={mobile} />
++          </div>
++        )}
++
++        {showMarketplace && (
++          <Link
++            to="/agents"
++            data-testid="nav-agents-marketplace-button"
++            aria-label={localize('com_agents_marketplace')}
++            title={localize('com_agents_marketplace')}
++            className={rowClass}
++            onClick={(event) => {
++              if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) {
++                return;
++              }
++              if (mobile) {
++                onClose();
++              }
++            }}
++          >
++            <LayoutGrid className="h-5 w-5 flex-shrink-0 text-text-secondary" aria-hidden="true" />
++            <span className="flex-1 truncate">{localize('com_efaiw_rail_agents')}</span>
++          </Link>
++        )}
++
++        {moreLinks.length > 0 && (
++          <>
++            <button
++              type="button"
++              data-testid="efaiw-more-toggle"
++              aria-expanded={moreOpen}
++              aria-controls="efaiw-more-list"
++              className={cn(rowClass, moreOpen && 'efaiw-side-more-open')}
++              onClick={() => setMoreOpen(!moreOpen)}
++            >
++              <Ellipsis
++                className="efaiw-side-more-icon h-5 w-5 flex-shrink-0 text-text-secondary"
++                aria-hidden="true"
++              />
++              <span className="flex-1 truncate">{localize('com_efaiw_more')}</span>
++              <ChevronDown
++                className={cn(
++                  'h-4 w-4 flex-shrink-0 text-text-secondary transition-transform',
++                  moreOpen && 'rotate-180',
++                )}
++                aria-hidden="true"
++              />
++            </button>
++            {moreOpen && (
++              <ul id="efaiw-more-list" className="efaiw-side-more flex flex-col gap-0.5">
++                {moreLinks.map((link) => {
++                  const isActive = link.id === activeId;
++                  return (
++                    <li key={link.id}>
++                      <button
++                        type="button"
++                        data-testid={`efaiw-more-${link.id}`}
++                        aria-pressed={isActive}
++                        disabled={link.disabled}
++                        className={cn(
++                          rowClass,
++                          'h-10 text-[14.5px]',
++                          isActive && 'efaiw-side-active',
++                        )}
++                        onClick={(event) => openPanel(link, event)}
++                      >
++                        <link.icon className="h-[18px] w-[18px] flex-shrink-0" aria-hidden="true" />
++                        <span className="flex-1 truncate">{labelOf(link)}</span>
++                      </button>
++                    </li>
++                  );
++                })}
++              </ul>
++            )}
++          </>
++        )}
++      </div>
++
++      <div className="efaiw-side-panel flex min-h-0 flex-1 flex-col">
++        {activeId !== DEFAULT_PANEL && activeLink && !routeActiveId && (
++          <div className="efaiw-side-panel-head flex flex-shrink-0 items-center gap-2">
++            <button
++              type="button"
++              data-testid="efaiw-back-to-chats"
++              className="flex h-9 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring-primary"
++              onClick={() => setActive(DEFAULT_PANEL)}
++            >
++              <ChevronLeft className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
++              {localize('com_efaiw_back_to_chats')}
++            </button>
++            <h2 className="min-w-0 flex-1 truncate text-end text-sm font-semibold text-text-primary">
++              {labelOf(activeLink)}
++            </h2>
++          </div>
++        )}
++        <nav
++          id="chat-history-nav"
++          aria-label={localize('com_ui_chat_history')}
++          className="min-h-0 flex-1 overflow-hidden"
++        >
++          <SidePanelNav links={links} />
++        </nav>
++      </div>
++
++      <ShortcutTargets
++        links={links}
++        onLeaveInsights={onLeaveInsights}
++        routeActiveId={routeActiveId}
++      />
++
++      <div
++        className="efaiw-side-me flex-shrink-0"
++        style={
++          mobile ? { paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' } : undefined
++        }
++      >
++        <Suspense fallback={<Skeleton className="h-11 w-full rounded-xl" />}>
++          <AccountSettings />
++        </Suspense>
++      </div>
++    </div>
++  );
++}
++
++export default memo(EfSidebarColumn);
+diff --git a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
+index b8f5d24..fca81d7 100644
+--- a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
++++ b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
+@@ -172,7 +172,7 @@ function ExpandedPanel({
+   const toggleSidebarAriaKey = useShortcutAriaKey('toggleSidebar');
+ 
+   return (
+-    <div className="flex h-full flex-shrink-0 flex-col gap-2 border-r border-border-light bg-surface-primary-alt px-2 py-2">
++    <div className="efaiw-rail flex h-full flex-shrink-0 flex-col gap-2 border-r border-border-light bg-surface-primary-alt px-2 py-2">
+       <TooltipAnchor
+         side="right"
+         description={toggleSidebarHint}
+diff --git a/client/src/components/UnifiedSidebar/Sidebar.tsx b/client/src/components/UnifiedSidebar/Sidebar.tsx
+index bba6843..6a55774 100644
+--- a/client/src/components/UnifiedSidebar/Sidebar.tsx
++++ b/client/src/components/UnifiedSidebar/Sidebar.tsx
+@@ -1,6 +1,6 @@
+ import { memo } from 'react';
+ import type { NavLink } from '~/common';
+-import SidePanelNav from '~/components/SidePanel/Nav';
++import EfSidebarColumn from './EfSidebarColumn';
+ import ExpandedPanel from './ExpandedPanel';
+ import { useLocalize } from '~/hooks';
+ import { cn } from '~/utils';
+@@ -31,30 +31,20 @@ function Sidebar({
+   const localize = useLocalize();
+   return (
+     <>
+-      <div className="flex h-full w-full overflow-hidden">
+-        <ExpandedPanel
+-          links={links}
+-          expanded={expanded}
+-          onCollapse={onCollapse}
+-          onExpand={onExpand}
+-          onLeaveInsights={onLeaveInsights}
+-        />
+-        <nav
+-          className={cn(
+-            /** The resize separator to the right is transparent until hovered, so
+-             *  the panel has no resting right edge. That is deliberate in the
+-             *  standard themes, where `surface-primary-alt` carries the boundary
+-             *  on its own; in high contrast both sides are the same pure white or
+-             *  pure black, so the edge has to be drawn. */
+-            'min-h-0 flex-1 overflow-hidden bg-surface-primary-alt high-contrast:border-r high-contrast:border-border-light',
+-            expanded ? 'opacity-100' : 'pointer-events-none opacity-0',
+-          )}
+-          style={{ transition: expanded ? 'opacity 200ms ease 80ms' : 'opacity 150ms ease' }}
+-          aria-hidden={!expanded}
+-          inert={!expanded ? '' : undefined}
+-        >
+-          <SidePanelNav links={links} />
+-        </nav>
++      {/* EF (Concept 1, owner-approved): expanded, the sidebar is one column (logo, new chat, search, agents, «More»,
++          the active panel, the account); collapsed, it keeps upstream's labelled rail. */}
++      <div className="flex h-full w-full overflow-hidden high-contrast:border-r high-contrast:border-border-light">
++        {expanded ? (
++          <EfSidebarColumn links={links} onClose={onCollapse} onLeaveInsights={onLeaveInsights} />
++        ) : (
++          <ExpandedPanel
++            links={links}
++            expanded={expanded}
++            onCollapse={onCollapse}
++            onExpand={onExpand}
++            onLeaveInsights={onLeaveInsights}
++          />
++        )}
+       </div>
+       <div
+         role="separator"
+diff --git a/client/src/components/UnifiedSidebar/UnifiedSidebar.tsx b/client/src/components/UnifiedSidebar/UnifiedSidebar.tsx
+index b194442..5dd20a2 100644
+--- a/client/src/components/UnifiedSidebar/UnifiedSidebar.tsx
++++ b/client/src/components/UnifiedSidebar/UnifiedSidebar.tsx
+@@ -16,12 +16,11 @@ import {
+   DRAWER_UNPAINTED,
+ } from './constants';
+ import { ChatContext, ChatFormProvider, ActivePanelProvider } from '~/Providers';
+-import { MobileHeader, MobileBottomBar, MobileShortcutTargets } from './mobile';
+ import useUnifiedSidebarLinks from '~/hooks/Nav/useUnifiedSidebarLinks';
+ import useSidebarToggle from '~/hooks/Nav/useSidebarToggle';
+ import useSidebarState from '~/hooks/Nav/useSidebarState';
+ import { useChatHelpers, useLocalize } from '~/hooks';
+-import SidePanelNav from '~/components/SidePanel/Nav';
++import EfSidebarColumn from './EfSidebarColumn';
+ import Sidebar from './Sidebar';
+ import { cn } from '~/utils';
+ 
+@@ -214,25 +213,14 @@ function UnifiedSidebar({ isSliding = false }: { isSliding?: boolean }) {
+       >
+         <SidebarChatProvider>
+           <ActivePanelProvider>
+-            <MobileHeader
++            {/* EF (Concept 1, owner-approved): the same column as the desktop sidebar, closed with its X. */}
++            <EfSidebarColumn
+               links={links}
++              mobile={true}
+               expanded={expanded}
+               onClose={handleCollapse}
+               onLeaveInsights={handleLeaveInsights}
+-              routeActiveId={isInsightsRoute ? 'insights' : undefined}
+             />
+-            <nav
+-              id="chat-history-nav"
+-              className="min-h-0 flex-1 overflow-hidden bg-surface-primary-alt"
+-            >
+-              <SidePanelNav links={links} />
+-            </nav>
+-            <MobileShortcutTargets
+-              links={links}
+-              onLeaveInsights={handleLeaveInsights}
+-              routeActiveId={isInsightsRoute ? 'insights' : undefined}
+-            />
+-            <MobileBottomBar links={links} onNewChat={handleCollapse} />
+           </ActivePanelProvider>
+         </SidebarChatProvider>
+       </div>
+diff --git a/client/src/components/UnifiedSidebar/__tests__/drawerPaint.spec.tsx b/client/src/components/UnifiedSidebar/__tests__/drawerPaint.spec.tsx
+index 4fd08f7..de29d68 100644
+--- a/client/src/components/UnifiedSidebar/__tests__/drawerPaint.spec.tsx
++++ b/client/src/components/UnifiedSidebar/__tests__/drawerPaint.spec.tsx
+@@ -66,6 +66,11 @@ jest.mock('../Sidebar', () => ({
+   default: () => <div data-testid="desktop-sidebar" />,
+ }));
+ 
++jest.mock('../EfSidebarColumn', () => ({
++  __esModule: true,
++  default: () => <div data-testid="ef-sidebar-column" />,
++}));
++
+ const drawerVisibility = (expanded: boolean, isSliding: boolean): string => {
+   mockSidebarState.expanded = expanded;
+   const { unmount } = render(
+diff --git a/client/src/components/UnifiedSidebar/constants.ts b/client/src/components/UnifiedSidebar/constants.ts
+index f826863..b119522 100644
+--- a/client/src/components/UnifiedSidebar/constants.ts
++++ b/client/src/components/UnifiedSidebar/constants.ts
+@@ -1,6 +1,7 @@
+ /** EF (#108): 72 px instead of 52 so each icon carries its short label. */
+ export const COLLAPSED_WIDTH = 72;
+-export const EXPANDED_MIN = 360;
++/** EF (Concept 1): the expanded sidebar is one 300 px column (no rail beside it). */
++export const EXPANDED_MIN = 300;
+ 
+ /**
+  * How much of the viewport the mobile drawer covers.
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index 8533bca..dafd07e 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3105,7 +3105,7 @@
+   "com_efaiw_speed_deep": "Deep",
+   "com_efaiw_plus_menu": "Add and tools",
+   "com_efaiw_attach_file": "Attach a file",
+-  "com_efaiw_internet": "Internet",
++  "com_efaiw_internet": "Web search",
+   "com_efaiw_download_reply": "Download",
+   "com_efaiw_download_word": "Word document (.docx)",
+   "com_efaiw_download_markdown": "Markdown (.md)",
+@@ -3121,5 +3121,9 @@
+   "com_efaiw_print_save": "Print or save as PDF",
+   "com_efaiw_print_blocked": "The browser blocked the print page. Allow pop-ups for this site, then try again.",
+   "com_efaiw_download_default_name": "Baseer reply",
+-  "com_efaiw_panel_switcher_label": "{{panel}}, choose a panel"
++  "com_efaiw_panel_switcher_label": "{{panel}}, choose a panel",
++  "com_efaiw_more": "More",
++  "com_efaiw_back_to_chats": "Back to chats",
++  "com_efaiw_model_menu_title": "Choose a model",
++  "com_efaiw_model_menu_hint": "You can change the model at any time during the chat."
+ }

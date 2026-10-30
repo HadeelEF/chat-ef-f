@@ -1,0 +1,41 @@
+<!doctype html>
+<!-- EF AI Workspace offline page (#105), precached by the service worker and shown when a page cannot load without a
+     network (assets/ef-offline-sw.js). Static, no scripts. PROVISIONAL text until Corporate Communications approves it (#7). -->
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#FFFFFF">
+<title>لا يوجد اتصال | بصير</title>
+<style>
+/* The brand face when the browser still holds it (HTTP cache); Tahoma otherwise. Absolute URLs: the service worker
+   serves this page for whatever address failed to load. */
+@font-face { font-family: 'EF Aktiv Grotesk'; font-weight: 400; font-display: swap; src: url('/assets/fonts/aktiv-grotesk-regular.otf') format('opentype'); }
+@font-face { font-family: 'EF Aktiv Grotesk'; font-weight: 700; font-display: swap; src: url('/assets/fonts/aktiv-grotesk-bold.otf') format('opentype'); }
+:root { --ink: #0f1822; --muted: #373f48; --blue: #2c3a82; --bg: #ffffff; --on-blue: #ffffff; color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--ink);
+  font-family: 'EF Aktiv Grotesk', Tahoma, sans-serif; line-height: 1.7; padding: 24px 16px; text-align: center; }
+main { max-width: 420px; }
+/* #163: the box takes the artwork's viewBox proportion, so the symbol is drawn at the full 40 px (guide p9). */
+.logo { display: block; height: 40px; width: auto; aspect-ratio: 487.12 / 162.46; margin: 0 auto 20px; }
+.eyebrow { color: var(--blue); font-weight: 700; font-size: 14px; margin: 0 0 8px; }
+h1 { font-size: 26px; line-height: 1.4; margin: 0 0 12px; }
+p { margin: 0 0 20px; color: var(--muted); }
+a.retry { display: inline-block; background: var(--blue); color: var(--on-blue); text-decoration: none; font-weight: 700;
+  border-radius: 999px; padding: 10px 24px; min-height: 44px; }
+a.retry:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+.en { direction: ltr; font-size: 14px; margin-top: 28px; }
+</style>
+</head>
+<body>
+<main>
+  <img class="logo" src="/assets/logo.svg" alt="شعار صندوق البيئة">
+  <p class="eyebrow">بصير</p>
+  <h1>لا يوجد اتصال بالشبكة</h1>
+  <p>بصير يحتاج إلى اتصال ليعمل. تحقّق من اتصالك ثم أعد المحاولة؛ محادثاتك محفوظة.</p>
+  <a class="retry" href="/">إعادة المحاولة</a>
+  <p class="en" lang="en">You are offline. Baseer needs a connection; your conversations are saved. Reconnect and try again.</p>
+</main>
+</body>
+</html>

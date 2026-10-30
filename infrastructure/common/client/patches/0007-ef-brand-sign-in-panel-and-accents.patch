@@ -1,0 +1,216 @@
+EF brand, full platform (D-04, #7, #94, ADR-0013): the sign-in page gets an EF brand panel (white logo, the guide's
+radial graphic, platform name and tagline; a band on small screens), headings use the Bold face, primary accents
+(send button, active chat marker, starter hover) use the brand blue, generated avatars use EF blues, and every side
+panel shows the EF logo. Builds on 0002 (Convo.tsx) and 0006 (AuthLayout.tsx). Values live in ../brand/brand.css.
+
+diff --git a/client/src/components/Auth/AuthLayout.tsx b/client/src/components/Auth/AuthLayout.tsx
+index c14fe8b..6629e2f 100644
+--- a/client/src/components/Auth/AuthLayout.tsx
++++ b/client/src/components/Auth/AuthLayout.tsx
+@@ -62,30 +62,45 @@ function AuthLayout({
+   return (
+     <div className="relative flex min-h-screen flex-col bg-surface-primary">
+       <Banner />
+-      <BlinkAnimation active={isFetching}>
+-        <div className="mt-8 h-16 w-full bg-cover">
++      <div className="flex flex-grow flex-col lg:flex-row">
++        {/* EF brand panel (D-04): a band above the form on small screens, a side panel from lg. */}
++        <aside className="efaiw-auth-brand relative flex flex-shrink-0 flex-col gap-6 overflow-hidden px-6 pb-8 pt-7 lg:w-[44%] lg:max-w-[40rem] lg:justify-between lg:p-12">
+           <img
+-            src="assets/logo.svg"
+-            className="h-full w-full object-contain dark:hidden"
+-            alt={localize('com_ui_logo', { 0: startupConfig?.appTitle ?? 'LibreChat' })}
++            src="assets/ef-radial-master.svg"
++            className="efaiw-auth-radial"
++            alt=""
++            aria-hidden="true"
+           />
+-          <img
+-            src="assets/logo-dark.svg"
+-            className="hidden h-full w-full object-contain dark:block"
+-            alt={localize('com_ui_logo', { 0: startupConfig?.appTitle ?? 'LibreChat' })}
+-          />
+-        </div>
+-      </BlinkAnimation>
++          <BlinkAnimation active={isFetching}>
++            <img
++              src="assets/logo-dark.svg"
++              className="relative h-12 w-auto self-start lg:h-16"
++              alt={localize('com_ui_logo', { 0: localize('com_efaiw_ef_name') })}
++            />
++          </BlinkAnimation>
++          <div className="relative">
++            <p className="text-4xl font-bold leading-snug lg:text-6xl">
++              {localize('com_efaiw_product_name')}
++            </p>
++            <p className="efaiw-auth-tagline mt-1 text-lg font-medium lg:mt-4 lg:text-2xl">
++              {localize('com_efaiw_product_tagline')}
++            </p>
++          </div>
++          <p className="efaiw-auth-note relative hidden text-sm lg:block">
++            {localize('com_efaiw_synthetic_notice')}
++          </p>
++        </aside>
++        <div className="relative flex flex-grow flex-col">
+       <DisplayError />
+       <div className="absolute bottom-0 left-0 md:m-4">
+         <ThemeSelector />
+       </div>
+ 
+-      <main className="flex flex-grow items-center justify-center">
++      <main className="flex flex-grow items-start justify-center py-10 lg:items-center lg:py-8">
+         <div className="w-authPageWidth overflow-hidden bg-surface-primary px-6 py-4 sm:max-w-md sm:rounded-lg">
+           {!hasStartupConfigError && !isFetching && header && (
+             <h1
+-              className="mb-4 text-center text-3xl font-semibold text-text-primary"
++              className="mb-6 text-center text-3xl font-bold text-text-primary"
+               style={{ userSelect: 'none' }}
+             >
+               {header}
+@@ -99,6 +114,8 @@ function AuthLayout({
+         </div>
+       </main>
+       <Footer startupConfig={startupConfig} />
++        </div>
++      </div>
+     </div>
+   );
+ }
+diff --git a/client/src/components/Chat/Input/ConversationStarters.tsx b/client/src/components/Chat/Input/ConversationStarters.tsx
+index ea9549e..a770838 100644
+--- a/client/src/components/Chat/Input/ConversationStarters.tsx
++++ b/client/src/components/Chat/Input/ConversationStarters.tsx
+@@ -80,7 +80,7 @@ const ConversationStarters = () => {
+             key={index}
+             onClick={() => sendConversationStarter(text)}
+             style={{ animationDelay: `${index * 75}ms`, animationFillMode: 'backwards' }}
+-            className="flex max-w-[16rem] cursor-pointer items-center justify-center rounded-2xl border border-border-medium bg-surface-secondary px-4 py-2.5 text-center text-sm text-text-secondary shadow-sm transition-colors duration-200 fade-in hover:border-border-heavy hover:bg-surface-tertiary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-primary"
++            className="flex max-w-[16rem] cursor-pointer items-center justify-center rounded-2xl border border-border-light bg-surface-primary px-4 py-2.5 text-center text-sm text-text-primary shadow-sm transition-colors duration-200 fade-in hover:border-surface-submit hover:bg-surface-active-alt hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-primary"
+           >
+             <span className="line-clamp-2 text-balance break-words">{text}</span>
+           </button>
+diff --git a/client/src/components/Chat/Landing.tsx b/client/src/components/Chat/Landing.tsx
+index 12ad6de..5dc5abf 100644
+--- a/client/src/components/Chat/Landing.tsx
++++ b/client/src/components/Chat/Landing.tsx
+@@ -174,7 +174,7 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding:
+               <SplitText
+                 key={`split-text-${name}`}
+                 text={name}
+-                className={`${getTextSizeClass(name)} font-medium text-text-primary`}
++                className={`${getTextSizeClass(name)} font-bold text-text-primary`}
+                 delay={50}
+                 textAlign="center"
+                 animationFrom={greetingAnimationFrom}
+@@ -189,7 +189,7 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding:
+             <SplitText
+               key={`split-text-${greetingText}${user?.name ? '-user' : ''}`}
+               text={greetingText}
+-              className={`${getTextSizeClass(greetingText)} font-medium text-text-primary`}
++              className={`${getTextSizeClass(greetingText)} font-bold text-text-primary`}
+               delay={50}
+               textAlign="center"
+               animationFrom={greetingAnimationFrom}
+diff --git a/client/src/components/Conversations/Convo.tsx b/client/src/components/Conversations/Convo.tsx
+index f31e0f0..872d0f6 100644
+--- a/client/src/components/Conversations/Convo.tsx
++++ b/client/src/components/Conversations/Convo.tsx
+@@ -314,7 +314,7 @@ function Conversation({
+       className={cn(
+         'group relative flex h-12 w-full items-center rounded-lg outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-text-primary md:h-9',
+         isActiveConvo || isPopoverActive
+-          ? 'bg-surface-active-alt before:absolute before:bottom-1 before:left-0 rtl:before:left-auto rtl:before:right-0 before:top-1 before:w-0.5 before:rounded-full before:bg-text-primary'
++          ? 'bg-surface-active-alt before:absolute before:bottom-1 before:left-0 rtl:before:left-auto rtl:before:right-0 before:top-1 before:w-0.5 before:rounded-full before:bg-surface-submit'
+           : 'hover:bg-surface-active-alt',
+       )}
+       onPointerEnter={(event) => {
+diff --git a/client/src/components/SidePanel/Nav.tsx b/client/src/components/SidePanel/Nav.tsx
+index 33e8b83..9c979e6 100644
+--- a/client/src/components/SidePanel/Nav.tsx
++++ b/client/src/components/SidePanel/Nav.tsx
+@@ -1,14 +1,24 @@
+ import type { NavLink } from '~/common';
+ import { useActivePanel, resolveActivePanel } from '~/Providers';
++import { useLocalize } from '~/hooks';
+ 
+ export default function Nav({ links }: { links: NavLink[] }) {
+   const { active } = useActivePanel();
+   const effectiveActive = resolveActivePanel(active, links);
++  const localize = useLocalize();
++  const logoAlt = localize('com_ui_logo', { 0: localize('com_efaiw_ef_name') });
+   return (
+-    <div className="flex h-full min-h-0 flex-col overflow-y-auto overflow-x-hidden text-text-primary">
+-      {links.map((link) =>
+-        link.id === effectiveActive && link.Component ? <link.Component key={link.id} /> : null,
+-      )}
++    <div className="flex h-full min-h-0 flex-col">
++      {/* EF logo (D-04) above every side panel; 40 px keeps the symbol at its digital minimum. */}
++      <div className="flex flex-shrink-0 px-4 pb-1 pt-3">
++        <img src="assets/logo.svg" className="h-10 w-auto dark:hidden" alt={logoAlt} />
++        <img src="assets/logo-dark.svg" className="hidden h-10 w-auto dark:block" alt={logoAlt} />
++      </div>
++      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden text-text-primary">
++        {links.map((link) =>
++          link.id === effectiveActive && link.Component ? <link.Component key={link.id} /> : null,
++        )}
++      </div>
+     </div>
+   );
+ }
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index d51a905..bb2574c 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -1757,6 +1757,10 @@
+   "com_ui_loading_more_data": "Loading more results",
+   "com_ui_locked": "Locked",
+   "com_ui_logo": "{{0}} Logo",
++  "com_efaiw_ef_name": "Environment Fund",
++  "com_efaiw_product_name": "Baseer",
++  "com_efaiw_product_tagline": "The Environment Fund's AI workspace",
++  "com_efaiw_synthetic_notice": "Development and demo environment. Synthetic data only.",
+   "com_ui_low": "Low",
+   "com_ui_make_production": "Make Production",
+   "com_ui_manage": "Manage",
+diff --git a/packages/client/src/hooks/useAvatar.ts b/packages/client/src/hooks/useAvatar.ts
+index c57b058..ffdb9a3 100644
+--- a/packages/client/src/hooks/useAvatar.ts
++++ b/packages/client/src/hooks/useAvatar.ts
+@@ -26,22 +26,8 @@ const useAvatar = (user: TUser | undefined): string => {
+       fontFamily: ['Verdana'],
+       fontSize: 36,
+       backgroundType: ['solid'],
+-      backgroundColor: [
+-        'd81b60',
+-        '8e24aa',
+-        '5e35b1',
+-        '3949ab',
+-        'DB3733',
+-        '1B79CC',
+-        '027CB8',
+-        '008291',
+-        '008577',
+-        '58802F',
+-        '8A761D',
+-        '9C6D00',
+-        'B06200',
+-        'D1451A',
+-      ],
++      /* EF palette (D-04): primary blue, secondary blue and a deep shade of the primary family. */
++      backgroundColor: ['2c3a82', '0051b1', '1e285f'],
+       textColor: ['ffffff'],
+     });
+ 
+diff --git a/packages/client/src/utils/composer.ts b/packages/client/src/utils/composer.ts
+index 73f1d5e..0963dcc 100644
+--- a/packages/client/src/utils/composer.ts
++++ b/packages/client/src/utils/composer.ts
+@@ -35,7 +35,7 @@ export const composerSubmitClasses = (): string =>
+   cn(
+     'flex items-center justify-center',
+     'size-theme-control touch:size-theme-control-touch',
+-    'rounded-theme-control-round bg-text-primary p-theme-compact text-text-primary',
++    'rounded-theme-control-round bg-surface-submit p-theme-compact text-text-primary',
+     'outline-offset-4 transition-all duration-theme-normal',
+     'disabled:cursor-not-allowed disabled:text-text-secondary disabled:opacity-10',
+   );

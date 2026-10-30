@@ -1,0 +1,252 @@
+Platform audit fixes (#120, ADR-0013). Defects found by the full functional/UX audit of the built client:
+- /register and /forgot-password showed their forms although both are off on this platform; the reset page then claimed
+  an e-mail was sent. Both now return to the sign-in page when the server says the feature is off.
+- An unknown address showed the technical error page (English text, "404 Not Found", a log download button); it now
+  opens a new chat (or the sign-in page when signed out).
+- The message editors were fixed left-to-right (the old `chatDirection` default): an Arabic message opened for editing
+  ran from the left. They now follow the text (dir=auto), like the message box since 0002.
+- In a chat with an agent the model button said «اختر نموذجًا» because the agents endpoint is not in the menu (model
+  specs only); it now shows the agent's name.
+- Dialogs: the close button's hidden label was the English word "Close", and in Arabic the title sat on the left with
+  the close button on the right; the label is translated and both mirror in RTL.
+- Dates in the archived chats and files tables were English month names ("Oct 2026 21" once mixed into RTL); Arabic
+  pages now format them in Arabic with Western digits and the Gregorian calendar, English is unchanged.
+
+diff --git a/client/src/components/Auth/Registration.tsx b/client/src/components/Auth/Registration.tsx
+index 77da29c..fe2ebee 100644
+--- a/client/src/components/Auth/Registration.tsx
++++ b/client/src/components/Auth/Registration.tsx
+@@ -2,7 +2,7 @@ import React, { useContext, useState } from 'react';
+ import { useForm } from 'react-hook-form';
+ import { loginPage } from 'librechat-data-provider';
+ import { Turnstile } from '@marsidev/react-turnstile';
+-import { useNavigate, useOutletContext, useLocation } from 'react-router-dom';
++import { Navigate, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
+ import { useRegisterUserMutation } from 'librechat-data-provider/react-query';
+ import { ThemeContext, SecretInput, Spinner, Button, Input, isDark } from '@librechat/client';
+ import type { TRegisterUser, TError } from 'librechat-data-provider';
+@@ -124,6 +124,11 @@ const Registration: React.FC = () => {
+     );
+   };
+ 
++  // EF (#120): with registration off the form only collects details the server then rejects.
++  if (startupConfig?.registrationEnabled === false) {
++    return <Navigate to="/login" replace={true} />;
++  }
++
+   return (
+     <>
+       {errorMessage && (
+diff --git a/client/src/components/Auth/RequestPasswordReset.tsx b/client/src/components/Auth/RequestPasswordReset.tsx
+index e073347..271c3d0 100644
+--- a/client/src/components/Auth/RequestPasswordReset.tsx
++++ b/client/src/components/Auth/RequestPasswordReset.tsx
+@@ -1,6 +1,6 @@
+ import { useState, ReactNode } from 'react';
+ import { useForm } from 'react-hook-form';
+-import { useOutletContext } from 'react-router-dom';
++import { Navigate, useOutletContext } from 'react-router-dom';
+ import { loginPage } from 'librechat-data-provider';
+ import { Spinner, Button, Alert, Input } from '@librechat/client';
+ import { useRequestPasswordResetMutation } from 'librechat-data-provider/react-query';
+@@ -71,6 +71,11 @@ function RequestPasswordReset() {
+     });
+   };
+ 
++  // EF (#120): with reset off the server refuses every request, but the page said a link had been sent.
++  if (startupConfig?.passwordResetEnabled === false) {
++    return <Navigate to="/login" replace={true} />;
++  }
++
+   if (bodyText) {
+     return <BodyTextWrapper>{bodyText}</BodyTextWrapper>;
+   }
+diff --git a/client/src/components/Chat/Menus/Endpoints/utils.ts b/client/src/components/Chat/Menus/Endpoints/utils.ts
+index 8a47832..d735613 100644
+--- a/client/src/components/Chat/Menus/Endpoints/utils.ts
++++ b/client/src/components/Chat/Menus/Endpoints/utils.ts
+@@ -207,6 +207,10 @@ export const getDisplayValue = ({
+ 
+   if (selectedValues.model && selectedValues.endpoint) {
+     const endpoint = mappedEndpoints.find((e) => e.value === selectedValues.endpoint);
++    /* EF (#120): with model specs only, the agents endpoint is not in the menu; still name the agent. */
++    if (!endpoint && isAgentsEndpoint(selectedValues.endpoint) && agentsMap?.[selectedValues.model]?.name) {
++      return agentsMap[selectedValues.model]?.name;
++    }
+     if (!endpoint) {
+       return localize('com_ui_select_model');
+     }
+diff --git a/client/src/components/Chat/Messages/Content/EditContentParts.tsx b/client/src/components/Chat/Messages/Content/EditContentParts.tsx
+index e6857df..eb48d24 100644
+--- a/client/src/components/Chat/Messages/Content/EditContentParts.tsx
++++ b/client/src/components/Chat/Messages/Content/EditContentParts.tsx
+@@ -394,7 +394,7 @@ export default function EditContentParts({
+           return (
+             <label
+               key={`editor-${messageId}-${absoluteIndex}`}
+-              dir={isRTL ? 'rtl' : 'ltr'}
++              dir={isRTL ? 'rtl' : undefined}
+               className="flex min-w-0 flex-col gap-1.5 text-xs font-medium text-text-secondary"
+             >
+               {label}
+@@ -416,13 +416,13 @@ export default function EditContentParts({
+                 }
+                 disabled={isBusy}
+                 minRows={3}
+-                dir={isRTL ? 'rtl' : 'ltr'}
++                dir={isRTL ? 'rtl' : 'auto'}
+                 className={cn(
+                   'message-editor-text max-h-[65vh] min-h-24 w-full resize-y rounded-lg',
+                   'border border-border-medium bg-surface-tertiary-alt px-3 py-2',
+                   'font-normal text-text-primary',
+                   'focus-visible:outline-none',
+-                  isRTL ? 'text-right' : 'text-left',
++                  isRTL && 'text-right',
+                   'disabled:opacity-50 md:max-h-[75vh]',
+                 )}
+               />
+diff --git a/client/src/components/Chat/Messages/Content/EditMessage.tsx b/client/src/components/Chat/Messages/Content/EditMessage.tsx
+index 0920950..eff8524 100644
+--- a/client/src/components/Chat/Messages/Content/EditMessage.tsx
++++ b/client/src/components/Chat/Messages/Content/EditMessage.tsx
+@@ -243,7 +243,7 @@ const EditMessage = ({
+             'break-words rounded-lg border border-border-medium bg-surface-tertiary-alt',
+             'px-3 py-2 text-text-primary',
+             'focus-visible:outline-none',
+-            isRTL ? 'text-right' : 'text-left',
++            isRTL && 'text-right',
+             'disabled:opacity-50 md:max-h-[75vh]',
+           )}
+           aria-label={localize('com_ui_message_input')}
+@@ -253,7 +253,7 @@ const EditMessage = ({
+               : 'Control+S Meta+S Escape'
+           }
+           disabled={isSubmitting || updateMessageMutation.isLoading}
+-          dir={isRTL ? 'rtl' : 'ltr'}
++          dir={isRTL ? 'rtl' : 'auto'}
+         />
+         {/* The actions wrap rather than hold one unbreakable row: on a 320px assistant
+             turn the identity column and page padding leave less width than the three
+diff --git a/client/src/routes/index.tsx b/client/src/routes/index.tsx
+index 78f2e98..785720d 100644
+--- a/client/src/routes/index.tsx
++++ b/client/src/routes/index.tsx
+@@ -196,6 +196,11 @@ export const router = createBrowserRouter(
+                 </MarketplaceProvider>
+               ),
+             },
++            /* EF (#120): an unknown address opened the technical error page. */
++            {
++              path: '*',
++              element: <Navigate to="/c/new" replace={true} />,
++            },
+           ],
+         },
+       ],
+diff --git a/client/src/utils/files.ts b/client/src/utils/files.ts
+index 5692905..2119744 100644
+--- a/client/src/utils/files.ts
++++ b/client/src/utils/files.ts
+@@ -212,6 +212,19 @@ export function formatDate(dateString: string, isSmallScreen = false) {
+ 
+   const date = new Date(dateString);
+ 
++  /* EF (#120): Arabic pages get Arabic month names; Western digits and the Gregorian calendar match the rest of
++   * the interface (plain `ar-SA` would switch to the Hijri calendar). */
++  const lang = typeof document !== 'undefined' ? document.documentElement.lang : '';
++  if (lang.startsWith('ar')) {
++    return new Intl.DateTimeFormat('ar', {
++      day: 'numeric',
++      month: isSmallScreen ? 'numeric' : 'short',
++      year: isSmallScreen ? '2-digit' : 'numeric',
++      numberingSystem: 'latn',
++      calendar: 'gregory',
++    }).format(date);
++  }
++
+   if (isSmallScreen) {
+     return date.toLocaleDateString('en-US', {
+       month: 'numeric',
+diff --git a/packages/client/src/components/Dialog.tsx b/packages/client/src/components/Dialog.tsx
+index e05d536..d1f6911 100644
+--- a/packages/client/src/components/Dialog.tsx
++++ b/packages/client/src/components/Dialog.tsx
+@@ -3,7 +3,7 @@ import { X } from 'lucide-react';
+ import { JSX } from 'react/jsx-runtime';
+ import * as DialogPrimitive from '@radix-ui/react-dialog';
+ import { Button, ButtonProps } from './Button';
+-import { useMediaQuery } from '~/hooks';
++import { useLocalize, useMediaQuery } from '~/hooks';
+ import { cn } from '~/utils';
+ 
+ const Dialog: React.FC<DialogPrimitive.DialogProps> = DialogPrimitive.Root;
+@@ -54,6 +54,7 @@ const DialogContent: React.ForwardRefExoticComponent<
+     ref,
+   ) => {
+     const isSmallScreen = useMediaQuery('(max-width: 768px)');
++    const localize = useLocalize();
+     return (
+       <DialogPortal>
+         <DialogOverlay />
+@@ -73,9 +74,9 @@ const DialogContent: React.ForwardRefExoticComponent<
+         >
+           {children}
+           {showCloseButton && (
+-            <DialogPrimitive.Close className="absolute right-6 top-[1.6rem] rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-text-primary focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-surface-hover">
++            <DialogPrimitive.Close className="absolute right-6 top-[1.6rem] rtl:left-6 rtl:right-auto rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-text-primary focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-surface-hover">
+               <X className="h-5 w-5 text-text-primary" aria-hidden="true" />
+-              <span className="sr-only">Close</span>
++              <span className="sr-only">{localize('com_ui_close')}</span>
+             </DialogPrimitive.Close>
+           )}
+         </DialogPrimitive.Content>
+@@ -91,7 +92,7 @@ const DialogHeader: {
+ } = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>): JSX.Element => (
+   <div
+     className={cn(
+-      'flex flex-col space-y-2 border-b border-border-light p-6 pb-4 text-left',
++      'flex flex-col space-y-2 border-b border-border-light p-6 pb-4 text-left rtl:text-right',
+       className ?? '',
+     )}
+     {...props}
+diff --git a/packages/client/src/components/OriginalDialog.tsx b/packages/client/src/components/OriginalDialog.tsx
+index 0a65962..1f8d807 100644
+--- a/packages/client/src/components/OriginalDialog.tsx
++++ b/packages/client/src/components/OriginalDialog.tsx
+@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
+ import { JSX } from 'react/jsx-runtime';
+ import * as DialogPrimitive from '@radix-ui/react-dialog';
+ import { cn } from '~/utils';
++import { useLocalize } from '~/hooks';
+ 
+ const DialogDepthContext = React.createContext(0);
+ 
+@@ -180,6 +181,7 @@ const DialogContent: React.ForwardRefExoticComponent<
+     ref,
+   ) => {
+     const depth = React.useContext(DialogDepthContext);
++    const localize = useLocalize();
+     const contentZIndex = 140 + (depth - 1) * 60;
+     const contentRef = React.useRef<HTMLDivElement | null>(null);
+     const composedRef = React.useCallback(
+@@ -324,9 +326,9 @@ const DialogContent: React.ForwardRefExoticComponent<
+             aria-hidden="true"
+           />
+           {showCloseButton && (
+-            <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-ring-primary ring-offset-surface-dialog transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-text-primary focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-surface-hover data-[state=open]:text-text-secondary">
++            <DialogPrimitive.Close className="absolute right-4 top-4 rtl:left-4 rtl:right-auto rounded-sm opacity-70 ring-ring-primary ring-offset-surface-dialog transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-text-primary focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-surface-hover data-[state=open]:text-text-secondary">
+               <X className="h-6 w-6" aria-hidden="true" />
+-              <span className="sr-only">Close</span>
++              <span className="sr-only">{localize('com_ui_close')}</span>
+             </DialogPrimitive.Close>
+           )}
+         </DialogPrimitive.Content>
+@@ -340,7 +342,7 @@ const DialogHeader: {
+   ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>): JSX.Element;
+   displayName: string;
+ } = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>): JSX.Element => (
+-  <div className={cn('flex flex-col space-y-1.5 text-center sm:text-left', className)} {...props} />
++  <div className={cn('flex flex-col space-y-1.5 text-center sm:text-left sm:rtl:text-right', className)} {...props} />
+ );
+ DialogHeader.displayName = 'DialogHeader';
+ 

@@ -1,0 +1,403 @@
+EF AI Workspace (#241): a picked skill survives a model switch, and the phone's «$» list sits above the message box.
+
+- Model switch in a chat with no message yet (hooks/Input/useSelectMention.ts). Upstream's spec and endpoint
+  switches start a fresh composer there (newConversation without keepComposerState): the draft token renews and every
+  attachment goes, so a skill picked on the default «بصير لايت» (a context file, ADR-0022) or an attached file never
+  reached «بصير بلس» or «بصير برو»; the typed text stayed. They now pass keepComposerState while the chat is unsent
+  (no id, or «new»), which keeps the draft and its attachments, as upstream does when agent metadata re-renders the
+  box. A chat with messages keeps its id and its files as before; moving from it to a new chat still starts clean.
+  The speed selector, the model menu and the «بلا إنترنت ×» chip all switch through onSelectSpec; common/types.ts
+  declares the option on ConvoGenerator, the type the hook receives newConversation as.
+  - hooks/Input/useSelectMention.spec.tsx: the switch in an unsent chat, before any conversation, through the model
+    menu's endpoint pick, in a chat with messages, and from a chat with messages to a new one.
+- Phone skills list (Chat/Input/SkillsCommand.tsx): two and a half rows (140 px) under 768 px instead of four, so the
+  list stays short above the box with the keyboard open; brand.css places it and slims its foot.
+- The first-visit skills tip (Chat/Input/EfSkillsTip.tsx) sat between the box and the lists above it: opening the
+  skills list now hides it for good (the employee has found skills), and it steps aside while «/» or «@» is open.
+  - Chat/Input/__tests__/EfSkillsTip.spec.tsx: «فهمت», the skills list, and the «/» list.
+
+diff --git a/client/src/common/types.ts b/client/src/common/types.ts
+index 15fefa7..2767e61 100644
+--- a/client/src/common/types.ts
++++ b/client/src/common/types.ts
+@@ -635,6 +635,8 @@ export type NewConversationParams = {
+   modelsData?: t.TModelsConfig;
+   buildDefault?: boolean;
+   keepAddedConvos?: boolean;
++  /** EF (#241): useNewConvo's option, which a model switch in an unsent chat passes (hooks/Input/useSelectMention). */
++  keepComposerState?: boolean;
+   disableParams?: boolean;
+ };
+ 
+diff --git a/client/src/components/Chat/Input/EfSkillsTip.tsx b/client/src/components/Chat/Input/EfSkillsTip.tsx
+index 4931613..a259fbf 100644
+--- a/client/src/components/Chat/Input/EfSkillsTip.tsx
++++ b/client/src/components/Chat/Input/EfSkillsTip.tsx
+@@ -1,8 +1,10 @@
+-import { memo, useState } from 'react';
++import { memo, useEffect, useState } from 'react';
++import { useAtomValue } from 'jotai';
+ import { useRecoilValue } from 'recoil';
+ import { Permissions, PermissionTypes } from 'librechat-data-provider';
+ import { useAgentCapabilities, useGetAgentsConfig, useHasAccess, useLocalize } from '~/hooks';
+ import { useInstallHintOpen } from '~/utils/efaiwApp';
++import { showSkillsPopoverFamily } from './skillsState';
+ import store from '~/store';
+ 
+ const SEEN_KEY = 'efaiw:skills-tip-seen';
+@@ -15,13 +17,27 @@ const wasSeen = () => {
+   }
+ };
+ 
++const markSeen = () => {
++  try {
++    localStorage.setItem(SEEN_KEY, '1');
++  } catch {
++    /* Private mode: hidden for this visit only. */
++  }
++};
++
+ /**
+  * EF (chat design #224): once, above the message box of a new chat, how to use a skill; «فهمت» hides it for good on
+  * this browser. Only where «$» works, and not while the iPhone install hint is open (#238: one card at a time).
++ * EF (#241): opening the skills list also hides it for good, since the employee has found skills, and it steps aside
++ * while the «/» or «@» list is open: those lists sit right above the box, which the tip would push away from them.
++ * Rendered by the first message box only (ChatForm index 0).
+  */
+ function EfSkillsTip() {
+   const localize = useLocalize();
+   const [hidden, setHidden] = useState(wasSeen);
++  const skillsListOpen = useAtomValue(showSkillsPopoverFamily(0));
++  const commandsListOpen = useRecoilValue(store.showPromptsPopoverFamily(0));
++  const mentionsListOpen = useRecoilValue(store.showPopoverFamily(0));
+   const dollarCommandEnabled = useRecoilValue(store.dollarCommand);
+   const canUseSkills = useHasAccess({
+     permissionType: PermissionTypes.SKILLS,
+@@ -31,7 +47,23 @@ function EfSkillsTip() {
+   const { skillsEnabled } = useAgentCapabilities(agentsConfig?.capabilities);
+   const installHintOpen = useInstallHintOpen();
+ 
+-  if (hidden || installHintOpen || !dollarCommandEnabled || !canUseSkills || !skillsEnabled) {
++  useEffect(() => {
++    if (skillsListOpen && !hidden) {
++      markSeen();
++      setHidden(true);
++    }
++  }, [skillsListOpen, hidden]);
++
++  if (
++    hidden ||
++    skillsListOpen ||
++    commandsListOpen ||
++    mentionsListOpen ||
++    installHintOpen ||
++    !dollarCommandEnabled ||
++    !canUseSkills ||
++    !skillsEnabled
++  ) {
+     return null;
+   }
+   return (
+@@ -41,11 +73,7 @@ function EfSkillsTip() {
+       <button
+         type="button"
+         onClick={() => {
+-          try {
+-            localStorage.setItem(SEEN_KEY, '1');
+-          } catch {
+-            /* Private mode: hidden for this visit only. */
+-          }
++          markSeen();
+           setHidden(true);
+         }}
+       >
+diff --git a/client/src/components/Chat/Input/SkillsCommand.tsx b/client/src/components/Chat/Input/SkillsCommand.tsx
+index 9fba22e..d303049 100644
+--- a/client/src/components/Chat/Input/SkillsCommand.tsx
++++ b/client/src/components/Chat/Input/SkillsCommand.tsx
+@@ -3,7 +3,7 @@ import { useAtomValue, useSetAtom } from 'jotai';
+ import { useNavigate } from 'react-router-dom';
+ import { useQueryClient } from '@tanstack/react-query';
+ import { AutoSizer, List } from 'react-virtualized';
+-import { Input, Spinner, useCombobox, useToastContext } from '@librechat/client';
++import { Input, Spinner, useCombobox, useMediaQuery, useToastContext } from '@librechat/client';
+ import {
+   QueryKeys,
+   dataService,
+@@ -26,6 +26,9 @@ import MentionItem from './MentionItem';
+ const commandChar = '$';
+ /* EF (chat design #224): two-line rows, the skill's description reads as its example. */
+ const ROW_HEIGHT = 56;
++/* EF (#241): on phones the list sits right above the message box, as ChatGPT, Claude and Gemini show theirs: two and
++   a half rows, so it stays short with the keyboard open and the half row shows that more scroll in. */
++const PHONE_LIST_HEIGHT = ROW_HEIGHT * 2.5;
+ const skillIcon = (
+   <span aria-hidden="true" className="efaiw-skill-tile">
+     $
+@@ -143,6 +146,8 @@ function SkillsCommandContent({
+ 
+   const { data, isLoading, isError, fetchNextPage, hasNextPage, isFetchingNextPage } =
+     useSkillsInfiniteQuery({ limit: 50 });
++  const isPhone = useMediaQuery('(max-width: 767px)');
++  const listHeight = isPhone ? PHONE_LIST_HEIGHT : 224;
+ 
+   /* Auto-fetch all pages so client-side search covers the full catalog,
+      not just the first page. The skills API is server-side capped. */
+@@ -371,7 +376,7 @@ function SkillsCommandContent({
+                   rowCount={matches.length}
+                   rowRenderer={rowRenderer}
+                   scrollToIndex={activeIndex}
+-                  height={Math.min(matches.length * ROW_HEIGHT, 224)}
++                  height={Math.min(matches.length * ROW_HEIGHT, listHeight)}
+                 />
+               )}
+             </AutoSizer>
+diff --git a/client/src/components/Chat/Input/__tests__/EfSkillsTip.spec.tsx b/client/src/components/Chat/Input/__tests__/EfSkillsTip.spec.tsx
+new file mode 100644
+index 0000000..c290cae
+--- /dev/null
++++ b/client/src/components/Chat/Input/__tests__/EfSkillsTip.spec.tsx
+@@ -0,0 +1,73 @@
++import React from 'react';
++import { Provider, createStore } from 'jotai';
++import { RecoilRoot, useSetRecoilState } from 'recoil';
++import { act, render, screen } from '@testing-library/react';
++import '@testing-library/jest-dom';
++import { showSkillsPopoverFamily } from '../skillsState';
++import EfSkillsTip from '../EfSkillsTip';
++import store from '~/store';
++
++jest.mock('~/hooks', () => ({
++  useLocalize: () => (key: string) => key,
++  useHasAccess: () => true,
++  useGetAgentsConfig: () => ({ agentsConfig: { capabilities: ['skills'] } }),
++  useAgentCapabilities: () => ({ skillsEnabled: true }),
++}));
++
++jest.mock('~/utils/efaiwApp', () => ({
++  useInstallHintOpen: () => false,
++}));
++
++const SEEN_KEY = 'efaiw:skills-tip-seen';
++let openCommands: (open: boolean) => void = () => undefined;
++
++function CommandsListSwitch() {
++  const set = useSetRecoilState(store.showPromptsPopoverFamily(0));
++  openCommands = set;
++  return null;
++}
++
++function setup() {
++  const jotai = createStore();
++  render(
++    <RecoilRoot>
++      <Provider store={jotai}>
++        <CommandsListSwitch />
++        <EfSkillsTip />
++      </Provider>
++    </RecoilRoot>,
++  );
++  return jotai;
++}
++
++const tip = () => screen.queryByRole('note');
++
++describe('EfSkillsTip (#241)', () => {
++  beforeEach(() => localStorage.clear());
++
++  it('shows once above a new chat until «فهمت»', () => {
++    setup();
++    expect(tip()).toBeInTheDocument();
++    act(() => screen.getByRole('button', { name: 'com_efaiw_skills_tip_ok' }).click());
++    expect(tip()).not.toBeInTheDocument();
++    expect(localStorage.getItem(SEEN_KEY)).toBe('1');
++  });
++
++  it('hides for good once the skills list opens, so the list sits right above the box', () => {
++    const jotai = setup();
++    act(() => jotai.set(showSkillsPopoverFamily(0), true));
++    expect(tip()).not.toBeInTheDocument();
++    expect(localStorage.getItem(SEEN_KEY)).toBe('1');
++    act(() => jotai.set(showSkillsPopoverFamily(0), false));
++    expect(tip()).not.toBeInTheDocument();
++  });
++
++  it('steps aside while the «/» list is open and comes back after it', () => {
++    setup();
++    act(() => openCommands(true));
++    expect(tip()).not.toBeInTheDocument();
++    act(() => openCommands(false));
++    expect(tip()).toBeInTheDocument();
++    expect(localStorage.getItem(SEEN_KEY)).toBeNull();
++  });
++});
+diff --git a/client/src/hooks/Input/useSelectMention.spec.tsx b/client/src/hooks/Input/useSelectMention.spec.tsx
+new file mode 100644
+index 0000000..bbb98ab
+--- /dev/null
++++ b/client/src/hooks/Input/useSelectMention.spec.tsx
+@@ -0,0 +1,114 @@
++import React from 'react';
++import { RecoilRoot } from 'recoil';
++import { MemoryRouter } from 'react-router-dom';
++import { renderHook } from '@testing-library/react';
++import { Constants } from 'librechat-data-provider';
++import type { TConversation, TEndpointsConfig, TModelSpec } from 'librechat-data-provider';
++import type { ConvoGenerator } from '~/common';
++import useSelectMention from './useSelectMention';
++import store from '~/store';
++
++/** The default conversation takes the preset's settings and keeps the conversation it is built from. */
++jest.mock('~/hooks', () => ({
++  useDefaultConvo:
++    () =>
++    ({ conversation, preset }: { conversation: Partial<TConversation>; preset: object }) => ({
++      ...conversation,
++      ...preset,
++      conversationId: conversation.conversationId,
++    }),
++}));
++
++/** EF (#241): the lineup's speeds are custom endpoints of the same server (librechat.yaml). */
++const endpointsConfig = {
++  Qwen: { type: 'custom' },
++  'Qwen Thinking': { type: 'custom' },
++  DeepSeek: { type: 'custom' },
++} as unknown as TEndpointsConfig;
++
++const plus = {
++  name: 'baseer-plus',
++  label: 'بصير بلس',
++  preset: { endpoint: 'Qwen Thinking', model: 'qwen3.8-flash' },
++} as unknown as TModelSpec;
++
++const lite = (conversationId: string | null): TConversation =>
++  ({
++    conversationId,
++    endpoint: 'Qwen',
++    endpointType: 'custom',
++    model: 'qwen3.8-flash',
++    spec: 'baseer-lite',
++  }) as unknown as TConversation;
++
++function setup(conversation: TConversation | null, modularChat = true) {
++  const newConversation = jest.fn() as unknown as jest.MockedFunction<ConvoGenerator>;
++  const wrapper = ({ children }: { children: React.ReactNode }) => (
++    <RecoilRoot initializeState={({ set }) => set(store.modularChat, modularChat)}>
++      <MemoryRouter>{children}</MemoryRouter>
++    </RecoilRoot>
++  );
++  const { result } = renderHook(
++    () =>
++      useSelectMention({
++        modelSpecs: [plus],
++        endpointsConfig,
++        getConversation: () => conversation,
++        newConversation,
++        returnHandlers: true,
++      }),
++    { wrapper },
++  );
++  return { handlers: result.current, newConversation };
++}
++
++const lastCall = (fn: jest.Mock | jest.MockedFunction<ConvoGenerator>) =>
++  (fn as jest.Mock).mock.calls.at(-1)?.[0];
++
++describe('useSelectMention: the message box on a model switch (#241)', () => {
++  it('keeps the draft and attachments of a chat with no message yet (a picked skill, a file)', () => {
++    const { handlers, newConversation } = setup(lite(Constants.NEW_CONVO));
++    handlers.onSelectSpec?.(plus);
++    expect(newConversation).toHaveBeenCalledTimes(1);
++    expect(lastCall(newConversation)).toMatchObject({
++      preset: { spec: 'baseer-plus', endpoint: 'Qwen Thinking' },
++      keepComposerState: true,
++    });
++  });
++
++  it('keeps them before the conversation exists at all', () => {
++    const { handlers, newConversation } = setup(null);
++    handlers.onSelectSpec?.(plus);
++    expect(lastCall(newConversation)).toMatchObject({ keepComposerState: true });
++  });
++
++  it('keeps them when the model menu picks an endpoint and model', () => {
++    const { handlers, newConversation } = setup(lite(Constants.NEW_CONVO));
++    handlers.onSelectEndpoint?.('Qwen Thinking', { model: 'qwen3.8-flash' });
++    expect(lastCall(newConversation)).toMatchObject({
++      preset: { endpoint: 'Qwen Thinking', model: 'qwen3.8-flash' },
++      keepComposerState: true,
++    });
++  });
++
++  it('leaves a chat with messages on the upstream switch, which keeps its id', () => {
++    const { handlers, newConversation } = setup(lite('5e1c2a1e-0000-4000-8000-000000000001'));
++    handlers.onSelectSpec?.(plus);
++    const call = lastCall(newConversation);
++    expect(call.template.conversationId).toBe('5e1c2a1e-0000-4000-8000-000000000001');
++    expect(call.keepAddedConvos).toBe(true);
++    expect(call.keepComposerState).toBeUndefined();
++  });
++
++  it('still starts clean when a chat with messages moves to a new chat', () => {
++    const { handlers, newConversation } = setup(
++      lite('5e1c2a1e-0000-4000-8000-000000000002'),
++      false,
++    );
++    handlers.onSelectSpec?.(plus);
++    expect(lastCall(newConversation)).toMatchObject({
++      template: { conversationId: Constants.NEW_CONVO },
++      keepComposerState: false,
++    });
++  });
++});
+diff --git a/client/src/hooks/Input/useSelectMention.ts b/client/src/hooks/Input/useSelectMention.ts
+index 62bd9fe..c2af873 100644
+--- a/client/src/hooks/Input/useSelectMention.ts
++++ b/client/src/hooks/Input/useSelectMention.ts
+@@ -1,7 +1,12 @@
+ import { useCallback, useMemo } from 'react';
+ import { useRecoilValue } from 'recoil';
+ import { useSearchParams } from 'react-router-dom';
+-import { EModelEndpoint, isAgentsEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
++import {
++  Constants,
++  EModelEndpoint,
++  isAgentsEndpoint,
++  isAssistantsEndpoint,
++} from 'librechat-data-provider';
+ import type {
+   TPreset,
+   TModelSpec,
+@@ -20,6 +25,15 @@ import {
+ import { useDefaultConvo } from '~/hooks';
+ import store from '~/store';
+ 
++/**
++ * EF (#241): a model switch in a chat that has no message yet keeps the employee in the same message box, so its
++ * draft and attachments (a picked skill, ADR-0022, or a file) go with it, as the typed text already does. Upstream
++ * starts a fresh composer there and drops them, so a skill picked on the default model never reached the next one.
++ * A chat with messages keeps its id and its attachments already.
++ */
++const isUnsentChat = (conversation: TConversation | null): boolean =>
++  conversation?.conversationId == null || conversation.conversationId === Constants.NEW_CONVO;
++
+ export default function useSelectMention({
+   presets,
+   modelSpecs,
+@@ -124,6 +138,7 @@ export default function useSelectMention({
+         },
+         preset,
+         keepAddedConvos: isModular,
++        keepComposerState: isUnsentChat(conversation),
+       });
+     },
+     [
+@@ -222,6 +237,7 @@ export default function useSelectMention({
+         },
+         preset: { ...kwargs, spec: null, iconURL: null, modelLabel: null, endpoint: newEndpoint },
+         keepAddedConvos: isNewModular,
++        keepComposerState: isUnsentChat(conversation),
+       });
+     },
+     [

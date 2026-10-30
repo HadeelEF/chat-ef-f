@@ -1,0 +1,1073 @@
+EF AI Workspace: chat page fixes from the live QA on Railway dev (2026-10-26, desktop and mobile, the three models).
+
+- A search call written as text (QA-02, P0). Qwen with built-in search sometimes writes it as text
+  («<tool_call>\n<web_search>\n{"query": …}…</tool_call>») and stops; live, a whole reply was that text.
+  - utils/efaiwFollowUps.ts: stripWrittenToolCalls drops such a call at the start of a line and outside a code fence,
+    also one still open at the end. visibleReplyText leaves it and the suggestions block out; display, copy, read aloud
+    and download use it.
+- A reply with nothing to show. Measured on Qwen directly: about one news question in eight came back with only the
+  suggestions block; live also only «أبحث عن …» and nothing after it.
+  - EfReplyExtras.tsx: isEmptyReply covers no visible text, or only a short «أبحث/سأبحث/Let me search…» line, with no
+    tool or other output. Thinking alone is not an answer, and a reply the employee stopped (`unfinished`) is not empty.
+  - EfEmptyReply shows «لم يصل رد هذه المرة.» with «أعد المحاولة» on the latest reply. A fresh empty latest reply (streamed in
+    this page, so without `createdAt` yet, or under 90 s old; not an old chat being opened) is retried once by itself,
+    once per question in the page.
+  - The suggestions are hidden under an empty reply. The notice sits in the reply's footer in ContentRender.tsx and
+    MessageRender.tsx.
+- Letters as artifacts (QA-03). utils/efaiwDocx.ts textArtifactsOf: the text or Markdown artifacts of a reply,
+  unwrapped.
+  - isDocumentReply reads it, so a letter carried as an artifact gets its Word/PDF bar again.
+  - The reply's downloads (DownloadReply.replyMarkdown) give that document alone, without the lines around it.
+- PowerPoint closing slide (QA-06):
+  - isClosingTitle accepts one closing title or several joined («الخلاصة والخطوات التالية», «Summary and next steps»),
+    also التوصيات / recommendations.
+  - The chat's «الافتراضات» line no longer becomes a slide (the document-alone download above).
+- «<br>» in table cells (QA-08). utils/efaiwBreaks.ts turns a lone <br> tag into a line break in the reply view (a
+  remark plugin in markdownConfig.ts) and in Word, PowerPoint, Excel and the PDF view. Any other HTML stays text.
+- Suggestion actions (QA-09):
+  - replyLanguage counts most letters outside code and artifact bodies, falling back to the artifact's text without
+    tags, so actions under an HTML artifact are sent in Arabic.
+  - No «جدول» under a table, no «خطاب رسمي» under a letter.
+- MCP for employees (QA-07). hooks/MCP/useMCPIconMap.ts asks for the MCP server list only for a role with MCP USE
+  (ADR-0021); employees got a 403 on chat pages.
+- Screen reader (found by the browser test of this patch): hooks/SSE/useEventHandlers.ts announced the finished reply's
+  whole text, the hidden suggestions block included (since 0038). It now announces the visible text, and nothing for an
+  empty reply, whose notice is a status.
+- en translation: com_efaiw_empty_reply, com_efaiw_empty_retry.
+- Tests: efaiwFollowUps.spec.ts, EfReplyExtras.spec.tsx, efaiwReplyDocuments.test.ts, useMCPIconMap.spec.tsx.
+
+diff --git a/client/src/components/Chat/Messages/Content/Markdown.tsx b/client/src/components/Chat/Messages/Content/Markdown.tsx
+index 963a8d0..81ecc92 100644
+--- a/client/src/components/Chat/Messages/Content/Markdown.tsx
++++ b/client/src/components/Chat/Messages/Content/Markdown.tsx
+@@ -4,7 +4,7 @@ import { getRemarkPlugins, getRehypePlugins, getMarkdownComponents } from './mar
+ import useSmoothStreaming from '~/hooks/Messages/useSmoothStreaming';
+ import MarkdownErrorBoundary from './MarkdownErrorBoundary';
+ import { FADE_HYDRATION_THRESHOLD } from './animate';
+-import { stripFollowUps } from '~/utils/efaiwFollowUps';
++import { visibleReplyText } from '~/utils/efaiwFollowUps';
+ import { useMessageContext } from '~/Providers';
+ import MarkdownBlocks from './MarkdownBlocks';
+ import store from '~/store';
+@@ -18,8 +18,9 @@ const Markdown = memo(function Markdown({
+   content: rawContent = '',
+   isLatestMessage,
+ }: TContentProps) {
+-  /* EF (chat design #224): the suggestion block Baseer ends a reply with is read by EfFollowUps, never shown. */
+-  const content = useMemo(() => stripFollowUps(rawContent), [rawContent]);
++  /* EF (chat design #224): the suggestion block Baseer ends a reply with is read by EfFollowUps, never shown; nor is a
++   * search call the model wrote as text (live QA). */
++  const content = useMemo(() => visibleReplyText(rawContent), [rawContent]);
+   const { isSubmitting = false } = useMessageContext() ?? {};
+   const smoothStreaming = useSmoothStreaming();
+   const LaTeXParsing = useRecoilValue<boolean>(store.LaTeXParsing);
+diff --git a/client/src/components/Chat/Messages/Content/markdownConfig.ts b/client/src/components/Chat/Messages/Content/markdownConfig.ts
+index 6f07a5f..eda4c37 100644
+--- a/client/src/components/Chat/Messages/Content/markdownConfig.ts
++++ b/client/src/components/Chat/Messages/Content/markdownConfig.ts
+@@ -17,6 +17,7 @@ import { langSubset, remarkApproxTilde, remarkSingleDollarMath } from '~/utils';
+ import { Artifact, artifactPlugin } from '~/components/Artifacts/Artifact';
+ import { code, a, p, img, table } from './MarkdownComponents';
+ import { unicodeCitation } from '~/components/Web';
++import { remarkHtmlBreaks } from '~/utils/efaiwBreaks';
+ 
+ /**
+  * Single source of truth for the markdown rendering pipeline, shared by the
+@@ -40,6 +41,8 @@ export const getRemarkPlugins = (latexParsing = true): PluggableList => [
+   remarkApproxTilde,
+   supersub,
+   remarkGfm,
++  /* EF (live QA): «<br>» in a table cell is a line break, not text. */
++  remarkHtmlBreaks,
+   remarkDirective,
+   artifactPlugin,
+   [remarkMath, { singleDollarTextMath: false }],
+diff --git a/client/src/components/Chat/Messages/DownloadReply.tsx b/client/src/components/Chat/Messages/DownloadReply.tsx
+index de371bb..25a1693 100644
+--- a/client/src/components/Chat/Messages/DownloadReply.tsx
++++ b/client/src/components/Chat/Messages/DownloadReply.tsx
+@@ -5,9 +5,9 @@ import { DropdownPopup, TooltipAnchor } from '@librechat/client';
+ import { ContentTypes } from 'librechat-data-provider';
+ import type { TMessage } from 'librechat-data-provider';
+ import type { MenuItemProps } from '~/common';
+-import { safeFileName } from '~/utils/efaiwDocx';
++import { safeFileName, textArtifactsOf } from '~/utils/efaiwDocx';
+ import { hasMarkdownTable } from '~/utils/efaiwXlsx';
+-import { stripFollowUps } from '~/utils/efaiwFollowUps';
++import { visibleReplyText } from '~/utils/efaiwFollowUps';
+ import useDocumentDownloads from './useDocumentDownloads';
+ import { hoverButtonClasses } from './styles';
+ import { useLocalize } from '~/hooks';
+@@ -15,9 +15,15 @@ import { useLocalize } from '~/hooks';
+ /** EF (chat design #224): menus portal into <main>, so they keep its landmark and right-to-left direction. */
+ export const mainLandmark = () => document.querySelector<HTMLElement>('main');
+ 
+-/** The reply's own text, without its thinking or tool calls, nor the suggestion block (#224). */
+-export const replyMarkdown = (message: TMessage): string =>
+-  stripFollowUps(rawReplyMarkdown(message));
++/**
++ * The reply's own text, without its thinking or tool calls, the suggestion block (#224) or a written search call. A
++ * reply that carries its document as a Markdown artifact gives the document alone (live QA: a deck got the chat's
++ * «الافتراضات» line as a slide).
++ */
++export const replyMarkdown = (message: TMessage): string => {
++  const visible = visibleReplyText(rawReplyMarkdown(message));
++  return textArtifactsOf(visible) ?? visible;
++};
+ 
+ export const rawReplyMarkdown = (message: TMessage): string => {
+   if (Array.isArray(message.content) && message.content.length > 0) {
+diff --git a/client/src/components/Chat/Messages/EfReplyExtras.tsx b/client/src/components/Chat/Messages/EfReplyExtras.tsx
+index 685aca3..b46cfd7 100644
+--- a/client/src/components/Chat/Messages/EfReplyExtras.tsx
++++ b/client/src/components/Chat/Messages/EfReplyExtras.tsx
+@@ -1,4 +1,4 @@
+-import { memo, useCallback, useMemo } from 'react';
++import { memo, useCallback, useEffect, useMemo } from 'react';
+ import {
+   CornerDownLeft,
+   Download,
+@@ -7,6 +7,7 @@ import {
+   Lightbulb,
+   Mail,
+   Minimize2,
++  RotateCcw,
+   SpellCheck,
+   Table,
+ } from 'lucide-react';
+@@ -15,7 +16,12 @@ import { ContentTypes } from 'librechat-data-provider';
+ import type { TMessage } from 'librechat-data-provider';
+ import type { TranslationKeys } from '~/hooks';
+ import type { TAskFunction } from '~/common';
+-import { followUpsFor, isDocumentReply, replyLanguage } from '~/utils/efaiwFollowUps';
++import {
++  followUpsFor,
++  isDocumentReply,
++  replyLanguage,
++  visibleReplyText,
++} from '~/utils/efaiwFollowUps';
+ import type { EfFollowUpAction } from '~/utils/efaiwFollowUps';
+ import useDocumentDownloads from './useDocumentDownloads';
+ import { rawReplyMarkdown, replyMarkdown } from './DownloadReply';
+@@ -67,7 +73,11 @@ export const EfFollowUps = memo(function EfFollowUps({
+   const failed =
+     Array.isArray(message.content) &&
+     message.content.some((part) => part?.type === ContentTypes.ERROR);
+-  if (failed || raw.trim() === '' || (questions.length === 0 && actions.length === 0)) {
++  if (
++    failed ||
++    visibleReplyText(raw).trim() === '' ||
++    (questions.length === 0 && actions.length === 0)
++  ) {
+     return null;
+   }
+   return (
+@@ -110,6 +120,86 @@ export const EfFollowUps = memo(function EfFollowUps({
+   );
+ });
+ 
++/** User messages whose empty reply was already retried in this page: at most one automatic retry each. */
++const retriedEmpty = new Set<string>();
++/** A reply this recent is one the employee just asked for, not an old chat being opened. */
++const FRESH_REPLY_MS = 90_000;
++
++/** A reply that only says it is searching («أبحث عن…», «Let me search…») and stops there. */
++const SEARCH_ONLY_RE =
++  /^(?:أبحث|سأبحث|جار[ٍي]? البحث|دعني أبحث|سأقوم بالبحث|let me search|i(?:'m| am) searching|searching)/i;
++const SEARCH_ONLY_MAX = 120;
++
++/**
++ * EF (live QA): a finished reply with nothing to show: no text once the suggestion block and a written search call are
++ * left out (Qwen sometimes sends only the block, only «<tool_call>…», or only «أبحث عن…»), and no tool or other output.
++ * Thinking alone does not count as an answer. A reply the employee stopped (`unfinished`) is not empty: it was cut.
++ */
++export function isEmptyReply(message: TMessage): boolean {
++  if (message.isCreatedByUser === true || message.error === true || message.unfinished === true) {
++    return false;
++  }
++  const parts = Array.isArray(message.content) ? message.content : [];
++  const other = parts.some(
++    (part) =>
++      part != null &&
++      typeof part !== 'string' &&
++      part.type !== ContentTypes.TEXT &&
++      part.type !== ContentTypes.THINK,
++  );
++  if (other) {
++    return false;
++  }
++  const text = visibleReplyText(rawReplyMarkdown(message)).trim();
++  return text === '' || (text.length < SEARCH_ONLY_MAX && SEARCH_ONLY_RE.test(text));
++}
++
++/**
++ * EF (live QA): an empty reply says so instead of showing nothing. The latest one is retried once by itself when the
++ * employee has just asked (an old chat opened later is not), and offers «أعد المحاولة».
++ */
++export const EfEmptyReply = memo(function EfEmptyReply({
++  message,
++  isLast,
++  regenerate,
++}: {
++  message: TMessage;
++  isLast: boolean;
++  regenerate: () => void;
++}) {
++  const localize = useLocalize();
++  const empty = useMemo(() => isEmptyReply(message), [message]);
++  const parentId = message.parentMessageId ?? '';
++
++  useEffect(() => {
++    if (!empty || !isLast || parentId === '' || retriedEmpty.has(parentId)) {
++      return;
++    }
++    /* A reply streamed in this page has no `createdAt` until the chat is loaded again; one loaded from the server has it. */
++    const created = message.createdAt;
++    if (created != null && !(Date.now() - Date.parse(created) < FRESH_REPLY_MS)) {
++      return;
++    }
++    retriedEmpty.add(parentId);
++    regenerate();
++  }, [empty, isLast, parentId, message.createdAt, regenerate]);
++
++  if (!empty) {
++    return null;
++  }
++  return (
++    <div className="efaiw-empty-reply" role="status">
++      <span>{localize('com_efaiw_empty_reply')}</span>
++      {isLast && (
++        <button type="button" className="efaiw-empty-retry" onClick={() => regenerate()}>
++          <RotateCcw className="icon-sm" aria-hidden="true" />
++          <span>{localize('com_efaiw_empty_retry')}</span>
++        </button>
++      )}
++    </div>
++  );
++});
++
+ /**
+  * EF (chat design #224): a letter, a memo or minutes gets a bar with its file name and one tap to Word or PDF, in the
+  * fund's identity (the same files as the reply's download menu).
+diff --git a/client/src/components/Chat/Messages/HoverButtons.tsx b/client/src/components/Chat/Messages/HoverButtons.tsx
+index 651a6ae..8377b50 100644
+--- a/client/src/components/Chat/Messages/HoverButtons.tsx
++++ b/client/src/components/Chat/Messages/HoverButtons.tsx
+@@ -15,7 +15,7 @@ import type { TConversation, TMessage, TFeedback } from 'librechat-data-provider
+ import { useMessagesIsSubmitting, useOptionalMessagesOperations } from '~/Providers';
+ import { useGenerationsByLatest, useLocalize } from '~/hooks';
+ import { hasEditablePart } from './Content/editableParts';
+-import { stripFollowUps } from '~/utils/efaiwFollowUps';
++import { visibleReplyText } from '~/utils/efaiwFollowUps';
+ import { revealedQueuedTurnFamily } from '~/store/steer';
+ import { Fork } from '~/components/Conversations';
+ import { hoverButtonClasses } from './styles';
+@@ -60,9 +60,9 @@ type HoverButtonProps = {
+   disabled?: boolean;
+ };
+ 
+-/* EF (chat design #224): read aloud without the suggestion block at the end of a reply. */
++/* EF (chat design #224): read aloud without the suggestion block at the end of a reply, or a written search call. */
+ const extractMessageContent = (message: TMessage): string =>
+-  stripFollowUps(rawMessageContent(message));
++  visibleReplyText(rawMessageContent(message));
+ 
+ const rawMessageContent = (message: TMessage): string => {
+   if (typeof message.content === 'string') {
+diff --git a/client/src/components/Chat/Messages/__tests__/EfReplyExtras.spec.tsx b/client/src/components/Chat/Messages/__tests__/EfReplyExtras.spec.tsx
+index cda447d..826d163 100644
+--- a/client/src/components/Chat/Messages/__tests__/EfReplyExtras.spec.tsx
++++ b/client/src/components/Chat/Messages/__tests__/EfReplyExtras.spec.tsx
+@@ -2,7 +2,7 @@ import React from 'react';
+ import { render, screen, fireEvent } from '@testing-library/react';
+ import { ContentTypes } from 'librechat-data-provider';
+ import type { TMessage } from 'librechat-data-provider';
+-import { EfDocBar, EfFollowUps } from '../EfReplyExtras';
++import { EfDocBar, EfEmptyReply, EfFollowUps, isEmptyReply } from '../EfReplyExtras';
+ 
+ jest.mock('~/hooks', () => ({
+   useLocalize: () => (key: string, vars?: Record<string, string>) =>
+@@ -83,3 +83,80 @@ describe('EfDocBar (chat design #224)', () => {
+     expect(container).toBeEmptyDOMElement();
+   });
+ });
++
++describe('EfEmptyReply (live QA)', () => {
++  const CALL = '<tool_call>\n<web_search>\n{"query": "x"}\n</parameter>\n</function>\n</tool_call>';
++  const now = new Date().toISOString();
++
++  it('counts a reply with only the suggestions block, only a written search call, or only thinking as empty', () => {
++    expect(isEmptyReply(reply(BLOCK.trim()))).toBe(true);
++    expect(isEmptyReply(reply(CALL))).toBe(true);
++    const thinking = {
++      messageId: 't',
++      isCreatedByUser: false,
++      content: [{ type: ContentTypes.THINK, think: 'أفكر' }],
++    } as unknown as TMessage;
++    expect(isEmptyReply(thinking)).toBe(true);
++    expect(isEmptyReply(reply(`جواب.${BLOCK}`))).toBe(false);
++    expect(isEmptyReply(reply('', { isCreatedByUser: true }))).toBe(false);
++    expect(isEmptyReply(reply('', { error: true }))).toBe(false);
++    expect(
++      isEmptyReply(reply(`أبحث عن آخر أخبار مبادرة السعودية الخضراء هذا الأسبوع.${BLOCK}`)),
++    ).toBe(true);
++    expect(isEmptyReply(reply('أبحث في هذا التقرير عن ثلاثة أسباب: '.repeat(5)))).toBe(false);
++    expect(isEmptyReply(reply('', { unfinished: true }))).toBe(false);
++  });
++
++  it('says so and retries the latest fresh reply once by itself', () => {
++    const regenerate = jest.fn();
++    const empty = reply(CALL, { messageId: 'e1', parentMessageId: 'u1', createdAt: now });
++    const { rerender } = render(<EfEmptyReply message={empty} isLast regenerate={regenerate} />);
++    expect(screen.getByRole('status')).toHaveTextContent('com_efaiw_empty_reply');
++    expect(regenerate).toHaveBeenCalledTimes(1);
++    rerender(<EfEmptyReply message={{ ...empty }} isLast regenerate={regenerate} />);
++    expect(regenerate).toHaveBeenCalledTimes(1);
++    fireEvent.click(screen.getByRole('button', { name: 'com_efaiw_empty_retry' }));
++    expect(regenerate).toHaveBeenCalledTimes(2);
++  });
++
++  it('retries a reply streamed in this page, which has no createdAt yet', () => {
++    const regenerate = jest.fn();
++    render(
++      <EfEmptyReply
++        message={reply(BLOCK.trim(), { messageId: 'e4', parentMessageId: 'u4' })}
++        isLast
++        regenerate={regenerate}
++      />,
++    );
++    expect(regenerate).toHaveBeenCalledTimes(1);
++  });
++
++  it('does not retry an old chat being opened, nor an older reply, and shows nothing for a real answer', () => {
++    const regenerate = jest.fn();
++    const old = reply(BLOCK.trim(), {
++      messageId: 'e2',
++      parentMessageId: 'u2',
++      createdAt: '2026-01-01T00:00:00.000Z',
++    });
++    render(<EfEmptyReply message={old} isLast regenerate={regenerate} />);
++    render(
++      <EfEmptyReply
++        message={reply(CALL, { messageId: 'e3', parentMessageId: 'u3', createdAt: now })}
++        isLast={false}
++        regenerate={regenerate}
++      />,
++    );
++    expect(regenerate).not.toHaveBeenCalled();
++    expect(screen.getAllByRole('status')).toHaveLength(2);
++    expect(screen.getAllByRole('button', { name: 'com_efaiw_empty_retry' })).toHaveLength(1);
++    const { container } = render(
++      <EfEmptyReply message={reply(`جواب.${BLOCK}`)} isLast regenerate={regenerate} />,
++    );
++    expect(container).toBeEmptyDOMElement();
++  });
++
++  it('hides the suggestions under an empty reply', () => {
++    const { container } = render(<EfFollowUps message={reply(BLOCK.trim())} ask={jest.fn()} />);
++    expect(container).toBeEmptyDOMElement();
++  });
++});
+diff --git a/client/src/components/Chat/Messages/ui/MessageRender.tsx b/client/src/components/Chat/Messages/ui/MessageRender.tsx
+index e56ebc1..fb6f0e9 100644
+--- a/client/src/components/Chat/Messages/ui/MessageRender.tsx
++++ b/client/src/components/Chat/Messages/ui/MessageRender.tsx
+@@ -17,7 +17,7 @@ import MessageContent from '~/components/Chat/Messages/Content/MessageContent';
+ import { useLocalize, useMessageActions, useContentMetadata } from '~/hooks';
+ import SiblingSwitch from '~/components/Chat/Messages/SiblingSwitch';
+ import HoverButtons from '~/components/Chat/Messages/HoverButtons';
+-import { EfDocBar, EfFollowUps } from '~/components/Chat/Messages/EfReplyExtras';
++import { EfDocBar, EfEmptyReply, EfFollowUps } from '~/components/Chat/Messages/EfReplyExtras';
+ import MessageRow from '~/components/Chat/Messages/ui/MessageRow';
+ import MessageIcon from '~/components/Chat/Messages/MessageIcon';
+ import Wakeup from '~/components/Chat/Messages/Content/Wakeup';
+@@ -185,6 +185,10 @@ const MessageRender = memo(function MessageRender({
+           {msg.isCreatedByUser !== true && !(isSubmitting && isLatestMessage) && (
+             <EfDocBar message={msg} title={conversation?.title} />
+           )}
++          {/* EF (live QA): a reply with nothing to show says so, and the latest offers a retry. */}
++          {msg.isCreatedByUser !== true && !(isSubmitting && isLatestMessage) && (
++            <EfEmptyReply message={msg} isLast={isLast} regenerate={handleRegenerateMessage} />
++          )}
+           <SubRow classes={cn(messageFooterClasses, msg.isCreatedByUser && 'justify-end')}>
+             {/* The reading holds the column start: it takes over the slot the streaming
+               dot vacates, so the retry navigation beside it — whose width the footer
+diff --git a/client/src/components/Messages/ContentRender.tsx b/client/src/components/Messages/ContentRender.tsx
+index 3d474ab..25173cd 100644
+--- a/client/src/components/Messages/ContentRender.tsx
++++ b/client/src/components/Messages/ContentRender.tsx
+@@ -21,7 +21,7 @@ import { getHeaderHoverLabel } from '~/components/Chat/Messages/ui/HeaderLabel';
+ import ContentParts from '~/components/Chat/Messages/Content/ContentParts';
+ import SiblingSwitch from '~/components/Chat/Messages/SiblingSwitch';
+ import HoverButtons from '~/components/Chat/Messages/HoverButtons';
+-import { EfDocBar, EfFollowUps } from '~/components/Chat/Messages/EfReplyExtras';
++import { EfDocBar, EfEmptyReply, EfFollowUps } from '~/components/Chat/Messages/EfReplyExtras';
+ import MessageRow from '~/components/Chat/Messages/ui/MessageRow';
+ import MessageIcon from '~/components/Chat/Messages/MessageIcon';
+ import { showThinkingAtom } from '~/store/showThinking';
+@@ -192,6 +192,10 @@ const ContentRender = memo(function ContentRender({
+           {msg.isCreatedByUser !== true && !(isSubmitting && isLatestMessage) && (
+             <EfDocBar message={msg} title={conversation?.title} />
+           )}
++          {/* EF (live QA): a reply with nothing to show says so, and the latest offers a retry. */}
++          {msg.isCreatedByUser !== true && !(isSubmitting && isLatestMessage) && (
++            <EfEmptyReply message={msg} isLast={isLast} regenerate={handleRegenerateMessage} />
++          )}
+           <SubRow classes={cn(messageFooterClasses, msg.isCreatedByUser && 'justify-end')}>
+             {/* The reading holds the column start: it takes over the slot the streaming
+               dot vacates, so the retry navigation beside it — whose width the footer
+diff --git a/client/src/hooks/MCP/__tests__/useMCPIconMap.spec.tsx b/client/src/hooks/MCP/__tests__/useMCPIconMap.spec.tsx
+index 66b676f..c24631c 100644
+--- a/client/src/hooks/MCP/__tests__/useMCPIconMap.spec.tsx
++++ b/client/src/hooks/MCP/__tests__/useMCPIconMap.spec.tsx
+@@ -7,9 +7,16 @@ const mockUseMCPServersQuery = jest.fn();
+ jest.mock('~/data-provider', () => ({
+   useMCPServersQuery: (config: unknown) => mockUseMCPServersQuery(config),
+ }));
++/* EF (live QA): the list is asked for only with MCP USE (ADR-0021). */
++let mockCanUseMcp = true;
++jest.mock('~/hooks/Roles/useHasAccess', () => ({
++  __esModule: true,
++  default: () => mockCanUseMcp,
++}));
+ 
+ describe('useMCPIconMap', () => {
+   beforeEach(() => {
++    mockCanUseMcp = true;
+     resetCatalogWarmup();
+     mockUseMCPServersQuery.mockReturnValue({ data: undefined });
+     mockUseMCPServersQuery.mockClear();
+@@ -37,4 +44,18 @@ describe('useMCPIconMap', () => {
+ 
+     expect(mockUseMCPServersQuery).toHaveBeenLastCalledWith({ enabled: true });
+   });
++
++  it('never asks for the list without MCP USE, as for an employee', () => {
++    mockCanUseMcp = false;
++    renderHook(() => {
++      useMCPIconMap();
++      useMCPServerNames();
++    });
++    act(() => {
++      activateCatalog('mcpServers');
++    });
++
++    expect(mockUseMCPServersQuery).toHaveBeenLastCalledWith({ enabled: false });
++    expect(mockUseMCPServersQuery).not.toHaveBeenCalledWith({ enabled: true });
++  });
+ });
+diff --git a/client/src/hooks/MCP/useMCPIconMap.ts b/client/src/hooks/MCP/useMCPIconMap.ts
+index 4e61668..b33506f 100644
+--- a/client/src/hooks/MCP/useMCPIconMap.ts
++++ b/client/src/hooks/MCP/useMCPIconMap.ts
+@@ -1,13 +1,23 @@
+ import { useMemo } from 'react';
+-import { normalizeServerName } from 'librechat-data-provider';
++import { normalizeServerName, PermissionTypes, Permissions } from 'librechat-data-provider';
+ import { useCatalogReady } from '../useCatalogWarmup';
+ import { useMCPServersQuery } from '~/data-provider';
++import useHasAccess from '~/hooks/Roles/useHasAccess';
++
++/** EF (live QA): only a role that may use MCP servers asks for them; others got a 403 on every chat page (ADR-0021). */
++function useMCPServersForRole() {
++  const canUseMcp = useHasAccess({
++    permissionType: PermissionTypes.MCP_SERVERS,
++    permission: Permissions.USE,
++  });
++  const mcpServersReady = useCatalogReady('mcpServers');
++  return useMCPServersQuery({ enabled: canUseMcp && mcpServersReady });
++}
+ 
+ /** These observers mount from rendered messages, so they must not pull the
+  * server catalog onto the first-render path ahead of the warmup schedule. */
+ export function useMCPIconMap(): Map<string, string> {
+-  const mcpServersReady = useCatalogReady('mcpServers');
+-  const { data: servers } = useMCPServersQuery({ enabled: mcpServersReady });
++  const { data: servers } = useMCPServersForRole();
+ 
+   return useMemo(() => {
+     const map = new Map<string, string>();
+@@ -30,7 +40,6 @@ export function useMCPIconMap(): Map<string, string> {
+  * so they can be matched against a key. The config is keyed by the raw name.
+  */
+ export function useMCPServerNames(): string[] {
+-  const mcpServersReady = useCatalogReady('mcpServers');
+-  const { data: servers } = useMCPServersQuery({ enabled: mcpServersReady });
++  const { data: servers } = useMCPServersForRole();
+   return useMemo(() => (servers ? Object.keys(servers).map(normalizeServerName) : []), [servers]);
+ }
+diff --git a/client/src/hooks/Messages/useCopyToClipboard.ts b/client/src/hooks/Messages/useCopyToClipboard.ts
+index 7cbadb4..3d2b35d 100644
+--- a/client/src/hooks/Messages/useCopyToClipboard.ts
++++ b/client/src/hooks/Messages/useCopyToClipboard.ts
+@@ -11,7 +11,7 @@ import {
+   STANDALONE_PATTERN,
+   INVALID_CITATION_REGEX,
+ } from '~/utils/citations';
+-import { stripFollowUps } from '~/utils/efaiwFollowUps';
++import { visibleReplyText } from '~/utils/efaiwFollowUps';
+ import { markdownToHtml } from '~/utils/richtext';
+ import store from '~/store';
+ 
+@@ -52,16 +52,16 @@ function getPartText(part: TMessageContentParts): string {
+   return typeof part.text === 'string' ? part.text : (part.text?.value ?? '');
+ }
+ 
+-/* EF (chat design #224): the suggestion block at the end of a reply is never copied. */
++/* EF (chat design #224): the suggestion block at the end of a reply is never copied, nor a written search call. */
+ function getMessageParts({ text, content }: Partial<Pick<TMessage, 'text' | 'content'>>): string[] {
+   if (!Array.isArray(content) || content.length === 0) {
+-    const messageText = stripFollowUps(text ?? '');
++    const messageText = visibleReplyText(text ?? '');
+     return messageText.length > 0 ? [messageText] : [];
+   }
+ 
+   const parts: string[] = [];
+   for (const part of content) {
+-    const partText = stripFollowUps(getPartText(part));
++    const partText = visibleReplyText(getPartText(part));
+     if (partText.length > 0) {
+       parts.push(partText);
+     }
+diff --git a/client/src/hooks/SSE/useEventHandlers.ts b/client/src/hooks/SSE/useEventHandlers.ts
+index e202d54..c9cebb2 100644
+--- a/client/src/hooks/SSE/useEventHandlers.ts
++++ b/client/src/hooks/SSE/useEventHandlers.ts
+@@ -62,6 +62,7 @@ import { useApplyAgentTemplate } from '~/hooks/Agents';
+ import { useAuthContext } from '~/hooks/AuthContext';
+ import { MESSAGE_UPDATE_INTERVAL } from '~/common';
+ import { useLiveAnnouncer } from '~/Providers';
++import { visibleReplyText } from '~/utils/efaiwFollowUps';
+ import store from '~/store';
+ 
+ type TSyncData = {
+@@ -1054,7 +1055,12 @@ export default function useEventHandlers({
+ 
+         /* a11y announcements */
+         announcePolite({ message: 'end', isStatus: true });
+-        announcePolite({ message: getAllContentText(responseMessage) });
++        /* EF (live QA): read what the employee sees, without the hidden suggestions block (#224) or a written search
++         * call; an empty reply is announced by its own notice (EfEmptyReply, role=status). */
++        const spoken = visibleReplyText(getAllContentText(responseMessage));
++        if (spoken.trim() !== '') {
++          announcePolite({ message: spoken });
++        }
+ 
+         const isNewConvo = conversation.conversationId !== submissionConvo.conversationId;
+ 
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index b73bca2..4404d58 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3211,6 +3211,8 @@
+   "com_efaiw_download_excel_hint": "The reply's tables only",
+   "com_efaiw_download_markdown_hint": "Formatted text for other tools",
+   "com_efaiw_docbar_hint": "Document ready to download",
++  "com_efaiw_empty_reply": "No reply came through this time.",
++  "com_efaiw_empty_retry": "Try again",
+   "com_efaiw_docbar_download": "Download as {{0}}",
+   "com_efaiw_fu_title": "Suggestions",
+   "com_efaiw_fu_letter": "Formal letter",
+diff --git a/client/src/utils/__tests__/efaiwFollowUps.spec.ts b/client/src/utils/__tests__/efaiwFollowUps.spec.ts
+index 43d58ad..595a747 100644
+--- a/client/src/utils/__tests__/efaiwFollowUps.spec.ts
++++ b/client/src/utils/__tests__/efaiwFollowUps.spec.ts
+@@ -5,6 +5,8 @@ import {
+   replyLanguage,
+   ruleActions,
+   stripFollowUps,
++  stripWrittenToolCalls,
++  visibleReplyText,
+ } from '../efaiwFollowUps';
+ 
+ const BLOCK =
+@@ -65,3 +67,59 @@ describe('efaiwFollowUps (chat design #224)', () => {
+     expect(replyLanguage('> **الخلاصة:** تحسّنت جودة الهواء.')).toBe('ar');
+   });
+ });
++
++describe('a search call written as text (live QA)', () => {
++  const CALL =
++    '<tool_call>\n<web_search>\n{"query": "أخبار البيئة السعودية"}\n</parameter>\n</function>\n</tool_call>';
++
++  it('never shows the call, alone, before an answer, or still open at the end', () => {
++    expect(stripWrittenToolCalls(CALL)).toBe('');
++    expect(stripWrittenToolCalls(`${CALL}\n\nالجواب هنا.`)).toBe('\n\nالجواب هنا.');
++    expect(stripWrittenToolCalls('مقدمة\n<tool_call>\n<web_search>\n{"query": "أخ')).toBe('مقدمة');
++    expect(visibleReplyText(`${CALL}\n\n${BLOCK}`)).toBe('');
++  });
++
++  it('keeps one shown as code, and the word in a sentence', () => {
++    const code = 'الصيغة:\n```xml\n<tool_call>\n{"name": "x"}\n</tool_call>\n```';
++    expect(stripWrittenToolCalls(code)).toBe(code);
++    expect(stripWrittenToolCalls('الوسم <tool_call> يبدأ الاستدعاء.')).toBe(
++      'الوسم <tool_call> يبدأ الاستدعاء.',
++    );
++  });
++});
++
++describe('replies with artifacts (live QA)', () => {
++  const htmlReply = [
++    ':::artifact{identifier="page" type="text/html" title="صفحة"}',
++    '```html',
++    '<!DOCTYPE html><html lang="ar" dir="rtl"><head><style>body{font-family:Tahoma}</style></head>',
++    '<body><h1>صندوق البيئة</h1></body></html>',
++    '```',
++    ':::',
++    '',
++    'أعددت صفحة تعريفية قصيرة.',
++  ].join('\n');
++
++  it('takes the language from the prose, not the HTML', () => {
++    expect(replyLanguage(htmlReply)).toBe('ar');
++    expect(
++      replyLanguage(
++        ':::artifact{identifier="p" type="text/html" title="t"}\n```html\n<p>صندوق البيئة يدعم المشاريع</p>\n```\n:::',
++      ),
++    ).toBe('ar');
++    expect(replyLanguage('Here is the page for the Environment Fund (صندوق البيئة).')).toBe('en');
++  });
++
++  it('recognises a letter carried as a Markdown artifact', () => {
++    const letter =
++      ':::artifact{identifier="l" type="text/markdown" title="خطاب"}\n````\n**الموضوع:** طلب تمديد\n\nسعادة المدير المحترم،\n````\n:::\n\nالافتراضات: التاريخ افتراضي.';
++    expect(isDocumentReply(letter)).toBe(true);
++  });
++
++  it('does not offer a table under a table, nor a letter under a letter', () => {
++    const table = `| أ | ب |\n|---|---|\n| 1 | 2 |\n\n\`\`\`efaiw-followups\n{"q":[],"a":["table","explain"]}\n\`\`\``;
++    expect(followUpsFor(table).actions).toEqual(['explain']);
++    const letter = `**الموضوع:** شكر\n\nسعادة المدير المحترم،\n\n\`\`\`efaiw-followups\n{"q":[],"a":["letter","email"]}\n\`\`\``;
++    expect(followUpsFor(letter).actions).toEqual(['email']);
++  });
++});
+diff --git a/client/src/utils/__tests__/efaiwReplyDocuments.test.ts b/client/src/utils/__tests__/efaiwReplyDocuments.test.ts
+new file mode 100644
+index 0000000..045f4d0
+--- /dev/null
++++ b/client/src/utils/__tests__/efaiwReplyDocuments.test.ts
+@@ -0,0 +1,80 @@
++import { htmlBreaksToBreaks } from '../efaiwBreaks';
++import { buildDocxParts, textArtifactsOf } from '../efaiwDocx';
++import { isClosingTitle } from '../efaiwPptx';
++import { markdownToXlsx } from '../efaiwXlsx';
++
++/** EF (live QA 2026-10-26): what a reply's downloads read, from defects seen on the live platform. */
++describe('a document carried as an artifact', () => {
++  const letter = [
++    'إليك الخطاب:',
++    '',
++    ':::artifact{identifier="letter" type="text/markdown" title="خطاب شكر"}',
++    '````',
++    '**الموضوع:** شكر فريق العمل',
++    '',
++    'سعادة مدير الإدارة المحترم،',
++    '````',
++    ':::',
++    '',
++    'الافتراضات: اسم الإدارة افتراضي.',
++  ].join('\n');
++
++  it('is the artifact alone, unwrapped, without the lines around it', () => {
++    expect(textArtifactsOf(letter)).toBe(
++      '**الموضوع:** شكر فريق العمل\n\nسعادة مدير الإدارة المحترم،',
++    );
++  });
++
++  it('is null for a reply without a text artifact, or with only an HTML one', () => {
++    expect(textArtifactsOf('جواب عادي.')).toBeNull();
++    const html =
++      ':::artifact{identifier="p" type="text/html" title="صفحة"}\n```html\n<p>x</p>\n```\n:::';
++    expect(textArtifactsOf(html)).toBeNull();
++  });
++});
++
++describe('«<br>» in a table cell', () => {
++  it('becomes a line break, other HTML stays as it is', () => {
++    const tree = {
++      type: 'root',
++      children: [
++        { type: 'html', value: '<br/>' },
++        {
++          type: 'paragraph',
++          children: [
++            { type: 'html', value: '<b>' },
++            { type: 'html', value: '<br>' },
++          ],
++        },
++      ],
++    };
++    expect(htmlBreaksToBreaks(tree)).toEqual({
++      type: 'root',
++      children: [
++        { type: 'break' },
++        { type: 'paragraph', children: [{ type: 'html', value: '<b>' }, { type: 'break' }] },
++      ],
++    });
++  });
++
++  it('is a line break in Word and in the Excel cell, not the tag', () => {
++    const table = '| المشروع | الوصف |\n|---|---|\n| سدير | سطر أول<br>سطر ثانٍ |';
++    const document = buildDocxParts(table, 'جدول')['word/document.xml'] as string;
++    expect(document).not.toContain('&lt;br');
++    expect(document).toContain('<w:br/>');
++    const workbook = markdownToXlsx(table, 'جدول');
++    expect(workbook).not.toBeNull();
++  });
++});
++
++describe('the closing slide', () => {
++  it('takes one closing title or several joined, numbered or not', () => {
++    expect(isClosingTitle('الخلاصة')).toBe(true);
++    expect(isClosingTitle('الخلاصة والخطوات التالية')).toBe(true);
++    expect(isClosingTitle('5. التوصيات والخطوات القادمة')).toBe(true);
++    expect(isClosingTitle('Summary and next steps')).toBe(true);
++    expect(isClosingTitle('Conclusion & recommendations:')).toBe(true);
++    expect(isClosingTitle('خلاصة القول في المشروع')).toBe(false);
++    expect(isClosingTitle('الخلاصة التنفيذية للمشروع')).toBe(false);
++  });
++});
+diff --git a/client/src/utils/efaiwBreaks.ts b/client/src/utils/efaiwBreaks.ts
+new file mode 100644
+index 0000000..bd03c70
+--- /dev/null
++++ b/client/src/utils/efaiwBreaks.ts
+@@ -0,0 +1,26 @@
++/**
++ * EF (live QA): models write «<br>» for a line break inside a Markdown table cell, where Markdown has none. The reply
++ * view and the downloads show raw HTML as text, so a lone <br> tag becomes a real line break; any other HTML stays text.
++ */
++type MdNode = { type: string; value?: string; children?: MdNode[] };
++
++const BR_TAG = /^<br\s*\/?>$/i;
++
++export function htmlBreaksToBreaks<T extends MdNode>(tree: T): T {
++  const walk = (node: MdNode) => {
++    node.children?.forEach((child, i, list) => {
++      if (child.type === 'html' && BR_TAG.test((child.value ?? '').trim())) {
++        list[i] = { type: 'break' };
++      } else {
++        walk(child);
++      }
++    });
++  };
++  walk(tree);
++  return tree;
++}
++
++/** The same in the reply view, as a remark plugin. */
++export const remarkHtmlBreaks = () => (tree: MdNode) => {
++  htmlBreaksToBreaks(tree);
++};
+diff --git a/client/src/utils/efaiwDocx.ts b/client/src/utils/efaiwDocx.ts
+index d76b27b..21ecf13 100644
+--- a/client/src/utils/efaiwDocx.ts
++++ b/client/src/utils/efaiwDocx.ts
+@@ -17,6 +17,7 @@ import { gfmFromMarkdown } from 'mdast-util-gfm';
+ import { fromMarkdown } from 'mdast-util-from-markdown';
+ import { fontKey, obfuscateFont } from './efaiwBrandAssets';
+ import type { EfOfficeAssets } from './efaiwBrandAssets';
++import { htmlBreaksToBreaks } from './efaiwBreaks';
+ 
+ type Node = {
+   type: string;
+@@ -87,6 +88,35 @@ const plainText = (node: Node): string =>
+ 
+ const TEXT_ARTIFACT = /type="(?:text\/markdown|text\/md|text\/plain)"/;
+ 
++/**
++ * EF (live QA): the text or Markdown artifacts of a reply, unwrapped and joined, or null when it has none. A reply that
++ * carries its document as an artifact (a letter, a deck) downloads and is recognised as that document, without the
++ * lines Baseer writes around it («إليك الخطاب»، «الافتراضات: …»).
++ */
++export const textArtifactsOf = (markdown: string): string | null => {
++  const docs: string[] = [];
++  let current: string[] | null = null;
++  for (const line of (markdown ?? '').split('\n')) {
++    if (/^\s*:::artifact\{.*\}\s*$/.test(line)) {
++      current = TEXT_ARTIFACT.test(line) ? [line] : null;
++      continue;
++    }
++    if (/^\s*:::\s*$/.test(line)) {
++      if (current != null) {
++        docs.push(stripArtifactDirectives([...current, line].join('\n')).trim());
++      }
++      current = null;
++      continue;
++    }
++    current?.push(line);
++  }
++  if (current != null) {
++    docs.push(stripArtifactDirectives(current.join('\n')).trim());
++  }
++  const text = docs.filter(Boolean).join('\n\n');
++  return text === '' ? null : text;
++};
++
+ /**
+  * LibreChat's artifact directive lines are dropped; the artifact's content stays in the document. A text or Markdown
+  * artifact comes wrapped in a code fence (LibreChat's artifact instructions): that fence is dropped too, so the
+@@ -435,10 +465,12 @@ export function buildDocxParts(
+   title: string,
+   assets?: EfOfficeAssets | null,
+ ): Record<string, string | Uint8Array> {
+-  const tree = fromMarkdown(stripArtifactDirectives(markdown), {
+-    extensions: [gfm()],
+-    mdastExtensions: [gfmFromMarkdown()],
+-  }) as unknown as Node;
++  const tree = htmlBreaksToBreaks(
++    fromMarkdown(stripArtifactDirectives(markdown), {
++      extensions: [gfm()],
++      mdastExtensions: [gfmFromMarkdown()],
++    }) as unknown as Node,
++  );
+   const writer = new DocxWriter();
+   const body = writer.body(tree.children ?? []);
+   const rtl = isRtlText(markdown);
+diff --git a/client/src/utils/efaiwFollowUps.ts b/client/src/utils/efaiwFollowUps.ts
+index b657ec4..c87e845 100644
+--- a/client/src/utils/efaiwFollowUps.ts
++++ b/client/src/utils/efaiwFollowUps.ts
+@@ -13,6 +13,8 @@
+  * simple rules on the reply's text and there are no questions.
+  */
+ 
++import { textArtifactsOf } from './efaiwDocx';
++
+ export const FOLLOW_UPS_LANG = 'efaiw-followups';
+ 
+ export type EfFollowUpAction =
+@@ -71,6 +73,30 @@ export function stripFollowUps(text: string): string {
+   return text.replace(BLOCK_RE, '').replace(/\s+$/, '');
+ }
+ 
++/**
++ * EF (live QA): Qwen with built-in search sometimes writes a search call as text («<tool_call><web_search>…») instead
++ * of searching, and stops there. Such a call at the start of a line and outside a code fence is never shown; one still
++ * open at the end is cut off too (while streaming, or when the reply ended inside it).
++ */
++const TOOL_CALL_RE = /(^|\n)[ \t]*<tool_call>[\s\S]*?(?:<\/tool_call>[ \t]*(?=\n|$)|$)/g;
++
++export function stripWrittenToolCalls(text: string): string {
++  if (!text || !text.includes('<tool_call>')) {
++    return text;
++  }
++  return text
++    .replace(TOOL_CALL_RE, (match: string, lead: string, offset: number) => {
++      const fences = (text.slice(0, offset).match(/^[ \t]*```/gm) ?? []).length;
++      return fences % 2 === 1 ? match : lead;
++    })
++    .replace(/\s+$/, '');
++}
++
++/** What the employee sees of a reply: without its suggestion blocks or a search call written as text. */
++export function visibleReplyText(text: string): string {
++  return stripFollowUps(stripWrittenToolCalls(text));
++}
++
+ const isAction = (value: unknown): value is EfFollowUpAction =>
+   typeof value === 'string' && (EF_FOLLOW_UP_ACTIONS as readonly string[]).includes(value);
+ 
+@@ -108,17 +134,36 @@ export function parseFollowUpsBlock(text: string): Omit<EfFollowUps, 'fromModel'
+   return { questions, actions };
+ }
+ 
+-/** The reply's language from its first strong letter: an Arabic reply gets Arabic labels and «translate to English». */
++const letters = (text: string) => ({
++  ar: (text.match(/[\u0600-\u06FF]/g) ?? []).length,
++  en: (text.match(/[A-Za-z]/g) ?? []).length,
++});
++
++/**
++ * The reply's language from most of its letters: an Arabic reply gets Arabic labels and «translate to English». Code
++ * and artifact bodies are left out first (an HTML page is mostly Latin tags), then counted without their tags only when
++ * nothing else is left (live QA: under an HTML artifact the actions were sent in English).
++ */
+ export function replyLanguage(text: string): 'ar' | 'en' {
+-  const match = /[A-Za-z؀-ۿ]/.exec(stripFollowUps(text ?? ''));
+-  return match != null && /[A-Za-z]/.test(match[0]) ? 'en' : 'ar';
++  const outside = visibleReplyText(text ?? '')
++    .replace(/^\s*:::artifact\{.*\}\s*$/gm, '')
++    .replace(/^\s*:::\s*$/gm, '');
++  let count = letters(outside.replace(/(`{3,})[^\n]*\n[\s\S]*?\n\s*\1/g, ''));
++  if (count.ar + count.en === 0) {
++    count = letters(outside.replace(/^\s*`{3,}.*$/gm, '').replace(/<[^>]*>/g, ' '));
++  }
++  return count.en > count.ar ? 'en' : 'ar';
+ }
+ 
+ const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
+ 
+-/** A letter, a memo or minutes: opens with a subject line, a formal greeting or a «محضر» title. */
++/**
++ * A letter, a memo or minutes: opens with a subject line, a formal greeting or a «محضر» title. When the reply carries
++ * its document as a Markdown artifact, the artifact is read (live QA: letters came as artifacts and lost their bar).
++ */
+ export function isDocumentReply(text: string): boolean {
+-  const head = stripFollowUps(text ?? '')
++  const visible = visibleReplyText(text ?? '');
++  const head = (textArtifactsOf(visible) ?? visible)
+     .replace(/^[\s>#*_]+/gm, '')
+     .split('\n')
+     .map((line) => line.trim())
+@@ -150,11 +195,29 @@ export function ruleActions(text: string): EfFollowUpAction[] {
+   return [...picks.slice(0, MAX_ACTIONS), 'translate'];
+ }
+ 
++/** Actions that would redo what the reply already is: a table under a table, a letter under a letter (live QA). */
++const redundant = (text: string): Set<EfFollowUpAction> => {
++  const body = visibleReplyText(text ?? '');
++  const out = new Set<EfFollowUpAction>();
++  if (/^\s*\|.+\|\s*$/m.test(body)) {
++    out.add('table');
++  }
++  if (isDocumentReply(body)) {
++    out.add('letter');
++  }
++  return out;
++};
++
+ /** What the suggestions under a finished reply are: the model's block when valid, else the rules. */
+ export function followUpsFor(text: string): EfFollowUps {
++  const skip = redundant(text);
+   const parsed = parseFollowUpsBlock(text);
+   if (parsed != null) {
+-    return { ...parsed, fromModel: true };
++    return { ...parsed, actions: parsed.actions.filter((a) => !skip.has(a)), fromModel: true };
+   }
+-  return { questions: [], actions: ruleActions(text), fromModel: false };
++  return {
++    questions: [],
++    actions: ruleActions(text).filter((a) => !skip.has(a)),
++    fromModel: false,
++  };
+ }
+diff --git a/client/src/utils/efaiwPptx.ts b/client/src/utils/efaiwPptx.ts
+index 399d37d..6738b89 100644
+--- a/client/src/utils/efaiwPptx.ts
++++ b/client/src/utils/efaiwPptx.ts
+@@ -28,6 +28,7 @@ import { fromMarkdown } from 'mdast-util-from-markdown';
+ import { EF_DOC, isRtlText, storedZip, stripArtifactDirectives, xmlEscape } from './efaiwDocx';
+ import { embeddedOpenType } from './efaiwBrandAssets';
+ import type { EfOfficeAssets } from './efaiwBrandAssets';
++import { htmlBreaksToBreaks } from './efaiwBreaks';
+ 
+ type Node = {
+   type: string;
+@@ -186,10 +187,12 @@ const tableBlock = (node: Node): Table => {
+ 
+ /** The deck: its title, subtitle and slides (before pagination). */
+ export function markdownToSlides(markdown: string, fallbackTitle: string) {
+-  const tree = fromMarkdown(stripArtifactDirectives(markdown), {
+-    extensions: [gfm()],
+-    mdastExtensions: [gfmFromMarkdown()],
+-  }) as unknown as Node;
++  const tree = htmlBreaksToBreaks(
++    fromMarkdown(stripArtifactDirectives(markdown), {
++      extensions: [gfm()],
++      mdastExtensions: [gfmFromMarkdown()],
++    }) as unknown as Node,
++  );
+   let nodes = (tree.children ?? []).filter((n) => n.type !== 'html' && n.type !== 'definition');
+   /* A reply's lead-in before the document's first `#` ("here is the deck") is chat, not a slide. */
+   const firstHeading = nodes.findIndex((n) => n.type === 'heading');
+@@ -590,9 +593,30 @@ const LOGO_H = Math.round((1.6 / 2.54) * EMU);
+ /** Where the calm side of the title background starts: its radial reaches about 41% of the width (EF-BG-09). */
+ const CALM_X = Math.round(SLIDE_W * 0.45);
+ 
++/** The closing slide's title words; one or several joined («الخلاصة والخطوات التالية», «Summary and next steps»). */
++const CLOSING_PARTS = new Set([
++  'الخلاصة',
++  'الخاتمة',
++  'الخطوات التالية',
++  'الخطوات القادمة',
++  'التوصيات',
++  'summary',
++  'conclusion',
++  'conclusions',
++  'next steps',
++  'recommendations',
++]);
++
+ /** The closing slide the brand skill asks for, numbered or not («5. الخلاصة»). */
+-const CLOSING_TITLE =
+-  /^(?:[\d٠-٩]+\s*[.):–-]?\s*)?(?:الخلاصة|الخاتمة|الخطوات التالية|الخطوات القادمة|summary|conclusions?|next steps)\s*[:.]?$/i;
++export function isClosingTitle(title: string): boolean {
++  const bare = title
++    .trim()
++    .replace(/^[\d\u0660-\u0669]+\s*[.):–-]?\s*/, '')
++    .replace(/\s*[:.]$/, '')
++    .toLowerCase();
++  const parts = bare.split(/\s+و(?=ال)|\s*(?:&|\band\b|،|,)\s*/).map((part) => part.trim());
++  return parts.length > 0 && parts.every((part) => CLOSING_PARTS.has(part));
++}
+ 
+ function titleSlide(
+   title: string,
+@@ -814,7 +838,7 @@ export function buildPptxParts(
+     const closing =
+       index === deck.slides.length - 1 &&
+       pages.length === 1 &&
+-      CLOSING_TITLE.test(slide.title.trim()) &&
++      isClosingTitle(slide.title) &&
+       slide.blocks.every((block) => block.kind === 'para');
+     pages.forEach((blocks, page) => {
+       const continued =
+diff --git a/client/src/utils/efaiwPrint.ts b/client/src/utils/efaiwPrint.ts
+index 200c063..5db3998 100644
+--- a/client/src/utils/efaiwPrint.ts
++++ b/client/src/utils/efaiwPrint.ts
+@@ -11,6 +11,7 @@ import { gfm } from 'micromark-extension-gfm';
+ import { gfmFromMarkdown } from 'mdast-util-gfm';
+ import { fromMarkdown } from 'mdast-util-from-markdown';
+ import { isRtlText, stripArtifactDirectives } from './efaiwDocx';
++import { htmlBreaksToBreaks } from './efaiwBreaks';
+ 
+ type Node = {
+   type: string;
+@@ -123,10 +124,12 @@ const listChild = (node: Node): string =>
+   node.type === 'paragraph' ? `<span>${inline(node.children)}</span>` : block(node);
+ 
+ export function markdownToPrintHtml(markdown: string): string {
+-  const tree = fromMarkdown(stripArtifactDirectives(markdown), {
+-    extensions: [gfm()],
+-    mdastExtensions: [gfmFromMarkdown()],
+-  }) as unknown as Node;
++  const tree = htmlBreaksToBreaks(
++    fromMarkdown(stripArtifactDirectives(markdown), {
++      extensions: [gfm()],
++      mdastExtensions: [gfmFromMarkdown()],
++    }) as unknown as Node,
++  );
+   return (tree.children ?? []).map(block).join('\n');
+ }
+ 
+diff --git a/client/src/utils/efaiwXlsx.ts b/client/src/utils/efaiwXlsx.ts
+index fc56459..aaa486d 100644
+--- a/client/src/utils/efaiwXlsx.ts
++++ b/client/src/utils/efaiwXlsx.ts
+@@ -11,6 +11,7 @@ import { gfm } from 'micromark-extension-gfm';
+ import { gfmFromMarkdown } from 'mdast-util-gfm';
+ import { fromMarkdown } from 'mdast-util-from-markdown';
+ import { EF_DOC, isRtlText, storedZip, stripArtifactDirectives, xmlEscape } from './efaiwDocx';
++import { htmlBreaksToBreaks } from './efaiwBreaks';
+ 
+ type Node = {
+   type: string;
+@@ -53,10 +54,12 @@ const sheetName = (text: string, index: number, rtl: boolean, used: Set<string>)
+ 
+ /** Every GFM table of the Markdown, with the text of the nearest heading above it. */
+ export function markdownTables(markdown: string): SheetTable[] {
+-  const tree = fromMarkdown(stripArtifactDirectives(markdown), {
+-    extensions: [gfm()],
+-    mdastExtensions: [gfmFromMarkdown()],
+-  }) as unknown as Node;
++  const tree = htmlBreaksToBreaks(
++    fromMarkdown(stripArtifactDirectives(markdown), {
++      extensions: [gfm()],
++      mdastExtensions: [gfmFromMarkdown()],
++    }) as unknown as Node,
++  );
+   const tables: SheetTable[] = [];
+   const used = new Set<string>();
+   let heading = '';

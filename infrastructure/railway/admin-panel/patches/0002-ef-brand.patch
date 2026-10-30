@@ -1,0 +1,410 @@
+EF AI Workspace (#160, ADR-0016): the Environment Fund brand on the admin panel (owner decision 2026-10-23). The panel
+stays in English. The brand files (Aktiv Grotesk 400/600/700, the horizontal logos, the app icon, the favicon) are
+copied unaltered from infrastructure/common/client/brand into public/ef by admin-panel.Dockerfile.
+
+- src/ef-brand.css: Aktiv Grotesk, also under the name "Inter" that Click UI 0.9.1 writes into its typography
+  variables; Click UI's theme variables in EF colours for both themes (generated from Click UI 0.9.1, rules in the
+  file). Imported by src/styles.css, whose own --cui-* accent, link and outline colours follow the same palette.
+- Sidebar: the EF app icon instead of the LibreChat mark. Login card: the horizontal logo above the title (blue on
+  light, white on dark). Page title "Baseer Admin Panel" and the EF favicon. Logo alt text "Environment Fund".
+diff --git a/src/components/AuthCard.tsx b/src/components/AuthCard.tsx
+index eb11f62..bfd7422 100644
+--- a/src/components/AuthCard.tsx
++++ b/src/components/AuthCard.tsx
+@@ -9,6 +9,21 @@ import { adminLoginFn, adminVerify2FAFn, openIdCheckOptions, openidLoginFn } fro
+ import { InputOTP, InputOTPGroup, InputOTPSlot, InputOTPSeparator } from './InputOTP';
+ import { PasswordInput } from './PasswordInput';
+ import { useLocalize } from '@/hooks';
++import { efAsset } from '@/utils';
++
++/**
++ * EF AI Workspace (#160): the Environment Fund horizontal logo, unaltered, its symbol at the 40 px digital minimum
++ * (guide p9): blue on the light theme, white on the dark one. The blue file's width and height attributes are not in
++ * its viewBox's proportion, so its box is sized to the viewBox (120 x 40) for the artwork to fill the 40 px.
++ */
++function EfLogo({ alt }: { alt: string }) {
++  return (
++    <>
++      <img src={efAsset('logo.svg')} alt={alt} className="h-10 w-30 dark:hidden" />
++      <img src={efAsset('logo-dark.svg')} alt={alt} className="hidden h-10 w-auto dark:block" />
++    </>
++  );
++}
+ 
+ export function AuthCard({
+   redirectTo = '/',
+@@ -221,6 +236,7 @@ export function AuthCard({
+         color="default"
+       >
+         <Container orientation="vertical" gap="lg" alignItems="center">
++          <EfLogo alt={localize('com_a11y_logo_alt')} />
+           <Title type="h1">{localize('com_auth_title')}</Title>
+           <p className="text-center text-sm text-(--cui-color-text-muted)">
+             {localize('com_auth_sso_redirecting_auto')}
+@@ -241,6 +257,7 @@ export function AuthCard({
+       color="default"
+     >
+       <Container orientation="vertical" gap="lg" alignItems="center">
++        <EfLogo alt={localize('com_a11y_logo_alt')} />
+         <Title type="h1">
+           {step === '2fa' ? localize('com_auth_2fa_title') : localize('com_auth_title')}
+         </Title>
+diff --git a/src/components/Sidebar.tsx b/src/components/Sidebar.tsx
+index ce99c1e..d698ca3 100644
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -3,10 +3,9 @@ import { Icon, Dropdown } from '@clickhouse/click-ui';
+ import { Link, useRouter } from '@tanstack/react-router';
+ import type * as t from '@/types';
+ import { useStripAriaExpanded, useCapabilities, useLocalize } from '@/hooks';
+-import libreChatLogo from '@/assets/librechat.svg';
+ import { SettingsDialog } from './SettingsDialog';
+ import { SystemCapabilities } from '@/constants';
+-import { getInitials, cn } from '@/utils';
++import { getInitials, cn, efAsset } from '@/utils';
+ import { adminLogoutFn } from '@/server';
+ 
+ const navItems: t.NavItem[] = [
+@@ -88,7 +87,11 @@ export function Sidebar({ user, collapsed, onToggle }: t.SidebarProps) {
+       >
+         <div className="flex h-14 shrink-0 items-center px-2">
+           <div className="flex items-center gap-2.5 overflow-hidden px-1.5">
+-            <img src={libreChatLogo} alt={localize('com_a11y_logo_alt')} className="h-6 w-6 shrink-0" />
++            <img
++              src={efAsset('ef-app-icon.svg')}
++              alt={localize('com_a11y_logo_alt')}
++              className="h-6 w-6 shrink-0 rounded-md"
++            />
+             <span className="truncate text-sm font-semibold text-(--cui-color-text-default)">
+               {localize('com_auth_title')}
+             </span>
+diff --git a/src/ef-brand.css b/src/ef-brand.css
+new file mode 100644
+index 0000000..d7d5be7
+--- /dev/null
++++ b/src/ef-brand.css
+@@ -0,0 +1,182 @@
++/*
++ * EF AI Workspace (#160, ADR-0016): the Environment Fund brand on the admin panel. The panel stays in English.
++ *
++ * Font: Aktiv Grotesk (brand/fonts, copied to public/ef/fonts by the image build), three weights as in the platform
++ * (400, 600, 700; 500 renders as 400, #118). Click UI 0.9.1 writes "Inter" into each of its typography variables, so
++ * the same files are also declared under that name: every Click UI text and the panel's own use Aktiv.
++ *
++ * Colours (visual identity guide v01, p22-24): Click UI's own theme variables, overridden per theme with selectors
++ * more specific than Click UI's (it sets data-cui-theme on <html>). Generated from Click UI 0.9.1's variables:
++ * - light: primary buttons #2c3a82 (hover and pressed #1e285f), the near-black accent (#151515) and checked controls
++ *   #2c3a82, links and focus outlines (#437eef) #0051b1;
++ * - dark: the ClickHouse yellow becomes the palette's light blues (#9ca6e0; lighter shades #c3c9ec, #eaecf8).
++ * Charts and warnings keep Click UI's colours. Regenerate on a Click UI upgrade.
++ */
++@font-face {
++  font-family: 'EF Aktiv Grotesk';
++  src: url('/ef/fonts/aktiv-grotesk-regular.otf') format('opentype');
++  font-weight: 400;
++  font-style: normal;
++  font-display: swap;
++}
++
++@font-face {
++  font-family: 'Inter';
++  src: url('/ef/fonts/aktiv-grotesk-regular.otf') format('opentype');
++  font-weight: 400;
++  font-style: normal;
++  font-display: swap;
++}
++
++@font-face {
++  font-family: 'EF Aktiv Grotesk';
++  src: url('/ef/fonts/aktiv-grotesk-semibold.otf') format('opentype');
++  font-weight: 600;
++  font-style: normal;
++  font-display: swap;
++}
++
++@font-face {
++  font-family: 'Inter';
++  src: url('/ef/fonts/aktiv-grotesk-semibold.otf') format('opentype');
++  font-weight: 600;
++  font-style: normal;
++  font-display: swap;
++}
++
++@font-face {
++  font-family: 'EF Aktiv Grotesk';
++  src: url('/ef/fonts/aktiv-grotesk-bold.otf') format('opentype');
++  font-weight: 700;
++  font-style: normal;
++  font-display: swap;
++}
++
++@font-face {
++  font-family: 'Inter';
++  src: url('/ef/fonts/aktiv-grotesk-bold.otf') format('opentype');
++  font-weight: 700;
++  font-style: normal;
++  font-display: swap;
++}
++
++:root:not([data-cui-theme='dark']) {
++  --click-accordion-color-link-icon-active: #0051b1;
++  --click-accordion-color-link-icon-default: #0051b1;
++  --click-accordion-color-link-label-active: #0051b1;
++  --click-accordion-color-link-label-default: #0051b1;
++  --click-alert-color-text-info: #0051b1;
++  --click-badge-opaque-color-text-info: #0051b1;
++  --click-button-basic-color-empty-text-active: #0051b1;
++  --click-button-basic-color-empty-text-default: #0051b1;
++  --click-button-basic-color-primary-background-active: #1e285f;
++  --click-button-basic-color-primary-background-default: #2c3a82;
++  --click-button-basic-color-primary-background-hover: #1e285f;
++  --click-button-basic-color-primary-background-loading: linear-gradient(
++    90deg,
++    rgb(44 58 130 / 0.1) 0%,
++    rgb(44 58 130) 100%
++  );
++  --click-button-basic-color-primary-stroke-active: #1e285f;
++  --click-button-basic-color-primary-stroke-default: #2c3a82;
++  --click-button-basic-color-primary-stroke-hover: #1e285f;
++  --click-button-split-primary-background-action-active: #1e285f;
++  --click-button-split-primary-background-action-default: #2c3a82;
++  --click-button-split-primary-background-action-hover: #1e285f;
++  --click-button-split-primary-background-main-active: #1e285f;
++  --click-button-split-primary-background-main-default: #2c3a82;
++  --click-button-split-primary-background-main-hover: #1e285f;
++  --click-button-split-primary-divide-active: #1e285f;
++  --click-button-split-primary-divide-default: #1e285f;
++  --click-button-split-primary-divide-hover: #1e285f;
++  --click-button-split-primary-stroke-active: #1e285f;
++  --click-button-split-primary-stroke-default: #2c3a82;
++  --click-button-split-primary-stroke-hover: #1e285f;
++  --click-card-horizontal-default-color-stroke-active: #2c3a82;
++  --click-card-horizontal-muted-color-stroke-active: #2c3a82;
++  --click-card-primary-color-stroke-active: #2c3a82;
++  --click-card-promotion-color-stroke-focus: #2c3a82;
++  --click-card-secondary-color-link-hover: #0051b1;
++  --click-checkbox-color-background-active: #2c3a82;
++  --click-checkbox-color-stroke-active: #2c3a82;
++  --click-checkbox-color-variations-default-background-active: #2c3a82;
++  --click-checkbox-color-variations-default-stroke-active: #2c3a82;
++  --click-checkbox-color-variations-var2-background-active: #0051b1;
++  --click-feedback-color-info-foreground: #0051b1;
++  --click-global-color-accent-default: #2c3a82;
++  --click-global-color-outline-default: #0051b1;
++  --click-global-color-text-link-default: #0051b1;
++  --click-icon-color-text-info: #0051b1;
++  --click-radio-color-background-active: #2c3a82;
++  --click-radio-color-stroke-active: #2c3a82;
++  --click-switch-color-background-active: #2c3a82;
++  --click-switch-color-stroke-active: #2c3a82;
++  --click-table-row-color-link-default: #0051b1;
++  --click-tabs-basic-color-stroke-active: #2c3a82;
++}
++
++:root[data-cui-theme='dark'] {
++  --click-accordion-color-link-icon-active: #9ca6e0;
++  --click-accordion-color-link-icon-default: #9ca6e0;
++  --click-accordion-color-link-icon-hover: #eaecf8;
++  --click-accordion-color-link-label-active: #9ca6e0;
++  --click-accordion-color-link-label-default: #9ca6e0;
++  --click-accordion-color-link-label-hover: #c3c9ec;
++  --click-button-basic-color-empty-text-active: #9ca6e0;
++  --click-button-basic-color-empty-text-default: #9ca6e0;
++  --click-button-basic-color-empty-text-hover: #c3c9ec;
++  --click-button-basic-color-primary-background-active: #9ca6e0;
++  --click-button-basic-color-primary-background-default: #9ca6e0;
++  --click-button-basic-color-primary-background-hover: #c3c9ec;
++  --click-button-basic-color-primary-background-loading: linear-gradient(
++    90deg,
++    rgb(156 166 224 / 0.1) 0%,
++    rgb(156 166 224) 100%
++  );
++  --click-button-basic-color-primary-stroke-active: #9ca6e0;
++  --click-button-basic-color-primary-stroke-default: #9ca6e0;
++  --click-button-basic-color-primary-stroke-hover: #9ca6e0;
++  --click-button-split-primary-background-action-default: #9ca6e0;
++  --click-button-split-primary-background-action-hover: #9ca6e0;
++  --click-button-split-primary-background-main-active: #9ca6e0;
++  --click-button-split-primary-background-main-default: #9ca6e0;
++  --click-button-split-primary-background-main-hover: #c3c9ec;
++  --click-button-split-primary-divide-default: #9ca6e0;
++  --click-button-split-primary-divide-hover: #9ca6e0;
++  --click-card-horizontal-default-color-stroke-active: #9ca6e0;
++  --click-card-horizontal-muted-color-stroke-active: #9ca6e0;
++  --click-card-primary-color-stroke-active: #9ca6e0;
++  --click-card-promotion-color-icon-active: #9ca6e0;
++  --click-card-promotion-color-icon-default: #9ca6e0;
++  --click-card-promotion-color-icon-hover: #9ca6e0;
++  --click-card-promotion-color-stroke-active: linear-gradient(
++    174deg,
++    #9ca6e0 8.31%,
++    #2c2e31 22.92%
++  );
++  --click-card-promotion-color-stroke-default: linear-gradient(
++    174deg,
++    #9ca6e0 8.31%,
++    #2c2e31 22.92%
++  );
++  --click-card-promotion-color-stroke-focus: #9ca6e0;
++  --click-card-promotion-color-stroke-hover: linear-gradient(174deg, #9ca6e0 8.31%, #2c2e31 22.92%);
++  --click-card-secondary-color-link-hover: #9ca6e0;
++  --click-checkbox-color-background-active: #9ca6e0;
++  --click-checkbox-color-stroke-active: #9ca6e0;
++  --click-checkbox-color-variations-default-background-active: #9ca6e0;
++  --click-checkbox-color-variations-default-stroke-active: #9ca6e0;
++  --click-checkbox-color-variations-var4-stroke-active: #c3c9ec;
++  --click-checkbox-color-variations-var4-stroke-default: #9ca6e0;
++  --click-checkbox-color-variations-var4-stroke-hover: #c3c9ec;
++  --click-field-color-stroke-active: #9ca6e0;
++  --click-global-color-accent-default: #9ca6e0;
++  --click-global-color-outline-default: #9ca6e0;
++  --click-global-color-text-link-default: #9ca6e0;
++  --click-global-color-text-link-hover: #c3c9ec;
++  --click-radio-color-background-active: #9ca6e0;
++  --click-switch-color-background-active: #9ca6e0;
++  --click-switch-color-stroke-active: #9ca6e0;
++  --click-table-row-color-link-default: #9ca6e0;
++  --click-tabs-basic-color-stroke-active: #9ca6e0;
++}
+diff --git a/src/locales/en/translation.json b/src/locales/en/translation.json
+index bac5568..52b646a 100644
+--- a/src/locales/en/translation.json
++++ b/src/locales/en/translation.json
+@@ -1510,5 +1510,5 @@
+   "com_kv_type_number": "123",
+   "com_kv_type_boolean": "T/F",
+   "com_kv_type_json": "{ }",
+-  "com_a11y_logo_alt": "LibreChat logo"
++  "com_a11y_logo_alt": "Environment Fund"
+ }
+diff --git a/src/routes/__root.tsx b/src/routes/__root.tsx
+index 18d99af..1ad3224 100644
+--- a/src/routes/__root.tsx
++++ b/src/routes/__root.tsx
+@@ -36,7 +36,7 @@ export const Route = createRootRoute({
+         content: 'width=device-width, initial-scale=1',
+       },
+       {
+-        title: 'LibreChat Admin Panel',
++        title: 'Baseer Admin Panel',
+       },
+     ],
+     links: [
+@@ -46,7 +46,8 @@ export const Route = createRootRoute({
+       },
+       {
+         rel: 'icon',
+-        href: `${(import.meta.env.VITE_BASE_PATH || '').replace(/\/$/, '')}/favicon.ico`,
++        type: 'image/png',
++        href: `${(import.meta.env.VITE_BASE_PATH || '').replace(/\/$/, '')}/ef/favicon-32x32.png`,
+       },
+     ],
+   }),
+diff --git a/src/styles.css b/src/styles.css
+index ce7003d..2ce6486 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -1,4 +1,6 @@
+ @import 'tailwindcss';
++/* EF AI Workspace (#160): Environment Fund font and colours. */
++@import './ef-brand.css';
+ 
+ @theme {
+   --z-sticky: 10; /* sticky table/section headers (in-tree) */
+@@ -75,13 +77,13 @@
+     --cui-color-text-default: #161517;
+     --cui-color-text-muted: #6c6f77;
+     --cui-color-text-disabled: #9a9ea7;
+-    --cui-color-text-primary: #437eef;
+-    --cui-color-text-link: #437eef;
++    --cui-color-text-primary: #0051b1;
++    --cui-color-text-link: #0051b1;
+     --cui-color-text-danger: #e20a0a;
+     --cui-color-title-default: #161517;
+     --cui-color-title-muted: #6c6f77;
+-    --cui-color-accent: #437eef;
+-    --cui-color-outline: #437eef;
++    --cui-color-accent: #2c3a82;
++    --cui-color-outline: #0051b1;
+     --cui-color-shadow: rgb(0% 0% 0% / 0.1);
+     --cui-color-accent-success: #16a34a;
+     --cui-color-accent-warning: #d97706;
+@@ -89,8 +91,8 @@
+     --cui-color-accent-danger: #dc2626;
+     --cui-color-accent-user: #7c3aed;
+     --cui-radii-sm: 0.375rem;
+-    --cui-color-feedback-info-bg: #e7effd;
+-    --cui-color-feedback-info-fg: #437eef;
++    --cui-color-feedback-info-bg: #eaecf8;
++    --cui-color-feedback-info-fg: #0051b1;
+     --cui-color-feedback-success-bg: #e5ffe8;
+     --cui-color-feedback-success-fg: #008a0b;
+     --cui-color-feedback-warning-bg: #ffe2d1;
+@@ -120,13 +122,13 @@
+     --cui-color-text-default: #ffffff;
+     --cui-color-text-muted: #b3b6bd;
+     --cui-color-text-disabled: #808080;
+-    --cui-color-text-primary: #faff69;
+-    --cui-color-text-link: #faff69;
++    --cui-color-text-primary: #9ca6e0;
++    --cui-color-text-link: #9ca6e0;
+     --cui-color-text-danger: #ffbaba;
+     --cui-color-title-default: rgb(97.5% 97.5% 97.5%);
+     --cui-color-title-muted: #b3b6bd;
+-    --cui-color-accent: #faff69;
+-    --cui-color-outline: #faff69;
++    --cui-color-accent: #9ca6e0;
++    --cui-color-outline: #9ca6e0;
+     --cui-color-shadow: rgb(8.2353% 8.2353% 8.2353% / 0.6);
+     --cui-color-accent-success: #4ade80;
+     --cui-color-accent-warning: #fbbf24;
+@@ -166,13 +168,13 @@
+       --cui-color-text-default: #ffffff;
+       --cui-color-text-muted: #b3b6bd;
+       --cui-color-text-disabled: #808080;
+-      --cui-color-text-primary: #faff69;
+-      --cui-color-text-link: #faff69;
++      --cui-color-text-primary: #9ca6e0;
++      --cui-color-text-link: #9ca6e0;
+       --cui-color-text-danger: #ffbaba;
+       --cui-color-title-default: rgb(97.5% 97.5% 97.5%);
+       --cui-color-title-muted: #b3b6bd;
+-      --cui-color-accent: #faff69;
+-      --cui-color-outline: #faff69;
++      --cui-color-accent: #9ca6e0;
++      --cui-color-outline: #9ca6e0;
+       --cui-color-shadow: rgb(8.2353% 8.2353% 8.2353% / 0.6);
+       --cui-color-accent-success: #4ade80;
+       --cui-color-accent-warning: #fbbf24;
+@@ -230,6 +232,7 @@ html {
+ body {
+   @apply m-0;
+   font-family:
++    'EF Aktiv Grotesk',
+     'Inter',
+     'SF Pro Display',
+     -apple-system,
+diff --git a/src/utils/efBrand.ts b/src/utils/efBrand.ts
+new file mode 100644
+index 0000000..a5c5aff
+--- /dev/null
++++ b/src/utils/efBrand.ts
+@@ -0,0 +1,7 @@
++/**
++ * EF AI Workspace (#160): Environment Fund brand files, copied from the repository's brand folder into public/ef by
++ * the image build (infrastructure/railway/admin-panel.Dockerfile), unaltered.
++ */
++const base = (import.meta.env.VITE_BASE_PATH || '').replace(/\/$/, '');
++
++export const efAsset = (file: string): string => `${base}/ef/${file}`;
+diff --git a/src/utils/index.ts b/src/utils/index.ts
+index 0b5415a..d0c3192 100644
+--- a/src/utils/index.ts
++++ b/src/utils/index.ts
+@@ -1,5 +1,6 @@
+ export * from './capabilities';
+ export * from './cn';
++export * from './efBrand';
+ export * from './format';
+ export * from './interfacePermissions';
+ export * from './keys';

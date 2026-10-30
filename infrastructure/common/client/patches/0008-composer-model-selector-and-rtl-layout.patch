@@ -1,0 +1,238 @@
+Owner request (#97, ADR-0013): the model selector moves from the header into the composer's action row (a quiet
+"name ▾" button whose menu opens upward, without the search box); the conversation panel opens by default on desktop
+(a new storage key resets an earlier collapsed state once, later choices persist); in RTL the sign-in brand panel sits
+on the left and the form on the right (mirrored in LTR), with the theme switch in the outer corner; conversation titles
+follow their own direction, because postcss-preset-env compiles `text-align: start` to `left`, which clipped the start
+of Arabic titles. Builds on 0007 (AuthLayout.tsx).
+
+diff --git a/client/src/components/Auth/AuthLayout.tsx b/client/src/components/Auth/AuthLayout.tsx
+index 6629e2f..e170e4d 100644
+--- a/client/src/components/Auth/AuthLayout.tsx
++++ b/client/src/components/Auth/AuthLayout.tsx
+@@ -62,7 +62,7 @@ function AuthLayout({
+   return (
+     <div className="relative flex min-h-screen flex-col bg-surface-primary">
+       <Banner />
+-      <div className="flex flex-grow flex-col lg:flex-row">
++      <div className="flex flex-grow flex-col lg:flex-row-reverse">
+         {/* EF brand panel (D-04): a band above the form on small screens, a side panel from lg. */}
+         <aside className="efaiw-auth-brand relative flex flex-shrink-0 flex-col gap-6 overflow-hidden px-6 pb-8 pt-7 lg:w-[44%] lg:max-w-[40rem] lg:justify-between lg:p-12">
+           <img
+@@ -92,7 +92,7 @@ function AuthLayout({
+         </aside>
+         <div className="relative flex flex-grow flex-col">
+       <DisplayError />
+-      <div className="absolute bottom-0 left-0 md:m-4">
++      <div className="absolute bottom-0 left-0 md:m-4 rtl:left-auto rtl:right-0">
+         <ThemeSelector />
+       </div>
+ 
+diff --git a/client/src/components/Chat/Header.tsx b/client/src/components/Chat/Header.tsx
+index 1f1b9da..697712c 100644
+--- a/client/src/components/Chat/Header.tsx
++++ b/client/src/components/Chat/Header.tsx
+@@ -9,7 +9,6 @@ import {
+ } from 'librechat-data-provider';
+ import { OpenSidebar, PresetsMenu, NewChat, HeaderMenu } from './Menus';
+ import { TemporaryChat, TemporaryChatIndicator } from './TemporaryChat';
+-import ModelSelector from './Menus/Endpoints/ModelSelector';
+ import { BackgroundTasksButton } from './BackgroundTasks';
+ import { TraceButton, useTraceControl } from './Trace';
+ import { useGetStartupConfig } from '~/data-provider';
+@@ -95,7 +94,6 @@ function Header({
+         {parentConversationId != null && (
+           <SubagentThreadLink threadId={parentConversationId} labelClassName="hidden lg:inline" />
+         )}
+-        {!readOnly && <ModelSelector startupConfig={startupConfig} />}
+         {!readOnly && interfaceConfig.presets === true && interfaceConfig.modelSelect === true && (
+           <PresetsMenu />
+         )}
+diff --git a/client/src/components/Chat/Input/ChatForm.tsx b/client/src/components/Chat/Input/ChatForm.tsx
+index 17fc2c9..4e38fac 100644
+--- a/client/src/components/Chat/Input/ChatForm.tsx
++++ b/client/src/components/Chat/Input/ChatForm.tsx
+@@ -51,6 +51,7 @@ import { useGetStartupConfig } from '~/data-provider';
+ import { mainTextareaId, BadgeItem } from '~/common';
+ import PendingSteerChips from './PendingSteerChips';
+ import PendingQuoteChips from './PendingQuoteChips';
++import ModelSelector from '../Menus/Endpoints/ModelSelector';
+ import AttachFileChat from './Files/AttachFileChat';
+ import CodeWorkspaceMenu from './CodeWorkspaceMenu';
+ import useSteering from '~/hooks/Chat/useSteering';
+@@ -861,6 +862,11 @@ const ChatForm = memo(function ChatForm({
+                     setFilesLoading={setFilesLoading}
+                   />
+                 </div>
++                {index === 0 && (
++                  <div className="min-w-0 shrink">
++                    <ModelSelector startupConfig={startupConfig} variant="composer" />
++                  </div>
++                )}
+                 <BadgeRow
+                   showEphemeralBadges={
+                     !!endpoint &&
+diff --git a/client/src/components/Chat/Menus/Endpoints/CustomMenu.tsx b/client/src/components/Chat/Menus/Endpoints/CustomMenu.tsx
+index 1190a11..f38eb25 100644
+--- a/client/src/components/Chat/Menus/Endpoints/CustomMenu.tsx
++++ b/client/src/components/Chat/Menus/Endpoints/CustomMenu.tsx
+@@ -12,6 +12,8 @@ export interface CustomMenuProps extends Ariakit.MenuButtonProps<'div'> {
+   comboboxLabel?: string;
+   trigger?: Ariakit.MenuButtonProps['render'];
+   defaultOpen?: boolean;
++  /** Root menus only; defaults to 'left'. */
++  placement?: Ariakit.MenuStoreProps['placement'];
+ }
+ 
+ export const CustomMenu = React.forwardRef<HTMLDivElement, CustomMenuProps>(function CustomMenu(
+@@ -26,6 +28,7 @@ export const CustomMenu = React.forwardRef<HTMLDivElement, CustomMenuProps>(func
+     comboboxLabel,
+     trigger,
+     defaultOpen,
++    placement,
+     ...props
+   },
+   ref,
+@@ -35,7 +38,7 @@ export const CustomMenu = React.forwardRef<HTMLDivElement, CustomMenuProps>(func
+ 
+   const menuStore = Ariakit.useMenuStore({
+     showTimeout: 100,
+-    placement: parent ? 'right' : 'left',
++    placement: parent ? 'right' : (placement ?? 'left'),
+     defaultOpen: defaultOpen,
+   });
+   const isOpen = menuStore.useState('open');
+diff --git a/client/src/components/Chat/Menus/Endpoints/ModelSelector.tsx b/client/src/components/Chat/Menus/Endpoints/ModelSelector.tsx
+index c761b02..3df54d0 100644
+--- a/client/src/components/Chat/Menus/Endpoints/ModelSelector.tsx
++++ b/client/src/components/Chat/Menus/Endpoints/ModelSelector.tsx
+@@ -1,4 +1,5 @@
+ import React, { useMemo } from 'react';
++import { ChevronDown } from 'lucide-react';
+ import { TooltipAnchor } from '@librechat/client';
+ import { getConfigDefaults } from 'librechat-data-provider';
+ import type { ModelSelectorProps } from '~/common';
+@@ -18,7 +19,10 @@ import { useLocalize } from '~/hooks';
+ 
+ const defaultInterface = getConfigDefaults().interface;
+ 
+-function ModelSelectorContent() {
++/** 'header': the bordered button at the top of the chat; 'composer': a quiet button in the composer's action row. */
++type ModelSelectorVariant = 'header' | 'composer';
++
++function ModelSelectorContent({ variant }: { variant: ModelSelectorVariant }) {
+   const localize = useLocalize();
+   const modelSelectorHint = useShortcutHint('openModelSelector', localize('com_ui_select_model'));
+   const modelSelectorAriaKey = useShortcutAriaKey('openModelSelector');
+@@ -65,6 +69,7 @@ function ModelSelectorContent() {
+     [localize, agentsMap, modelSpecs, selectedValues, mappedEndpoints],
+   );
+ 
++  const inComposer = variant === 'composer';
+   const trigger = (
+     <TooltipAnchor
+       aria-label={localize('com_ui_select_model')}
+@@ -73,15 +78,20 @@ function ModelSelectorContent() {
+         <button
+           data-testid="model-selector-button"
+           aria-keyshortcuts={modelSelectorAriaKey}
+-          className="my-1 flex h-9 max-w-full items-center gap-2 rounded-xl border border-border-light bg-presentation px-3 py-2 text-sm text-text-primary hover:bg-surface-active-alt"
++          className={
++            inComposer
++              ? 'flex h-9 max-w-full items-center gap-1 rounded-full px-2.5 text-sm font-medium text-text-secondary hover:bg-surface-hover hover:text-text-primary'
++              : 'my-1 flex h-9 max-w-full items-center gap-2 rounded-xl border border-border-light bg-presentation px-3 py-2 text-sm text-text-primary hover:bg-surface-active-alt'
++          }
+           aria-label={localize('com_ui_select_model')}
+         >
+-          {selectedIcon && React.isValidElement(selectedIcon) && (
++          {!inComposer && selectedIcon && React.isValidElement(selectedIcon) && (
+             <div className="flex flex-shrink-0 items-center justify-center overflow-hidden">
+               {selectedIcon}
+             </div>
+           )}
+-          <span className="truncate text-left">{selectedDisplayValue}</span>
++          <span className="truncate text-start">{selectedDisplayValue}</span>
++          {inComposer && <ChevronDown className="size-4 flex-shrink-0" aria-hidden="true" />}
+         </button>
+       }
+     />
+@@ -90,6 +100,10 @@ function ModelSelectorContent() {
+   return (
+     <div className="relative flex min-w-0 max-w-[60vw] flex-col items-center gap-2 sm:max-w-xs">
+       <Menu
++        placement={inComposer ? 'top-start' : undefined}
++        className={
++          inComposer ? '!h-9 !w-auto !border-transparent !bg-transparent !px-0 !py-0' : undefined
++        }
+         values={selectedValues}
+         onValuesChange={(values: Record<string, any>) => {
+           setSelectedValues({
+@@ -98,8 +112,8 @@ function ModelSelectorContent() {
+             modelSpec: values.modelSpec || '',
+           });
+         }}
+-        onSearch={(value) => setSearchValue(value)}
+-        combobox={<input id="model-search" placeholder=" " />}
++        onSearch={inComposer ? undefined : (value) => setSearchValue(value)}
++        combobox={inComposer ? undefined : <input id="model-search" placeholder=" " />}
+         comboboxLabel={localize('com_endpoint_search_models')}
+         trigger={trigger}
+       >
+@@ -129,7 +143,10 @@ function ModelSelectorContent() {
+   );
+ }
+ 
+-export default function ModelSelector({ startupConfig }: ModelSelectorProps) {
++export default function ModelSelector({
++  startupConfig,
++  variant = 'header',
++}: ModelSelectorProps & { variant?: ModelSelectorVariant }) {
+   const interfaceConfig = startupConfig?.interface ?? defaultInterface;
+   const modelSpecs = startupConfig?.modelSpecs?.list ?? [];
+ 
+@@ -141,7 +158,7 @@ export default function ModelSelector({ startupConfig }: ModelSelectorProps) {
+   return (
+     <ModelSelectorChatProvider>
+       <ModelSelectorProvider startupConfig={startupConfig}>
+-        <ModelSelectorContent />
++        <ModelSelectorContent variant={variant} />
+       </ModelSelectorProvider>
+     </ModelSelectorChatProvider>
+   );
+diff --git a/client/src/components/Conversations/ConvoLink.tsx b/client/src/components/Conversations/ConvoLink.tsx
+index d4dbdbf..efa5442 100644
+--- a/client/src/components/Conversations/ConvoLink.tsx
++++ b/client/src/components/Conversations/ConvoLink.tsx
+@@ -149,8 +149,9 @@ const ConvoLink: React.FC<ConvoLinkProps> = ({
+       {children}
+       <span
+         ref={titleRef}
++        dir="auto"
+         className={cn(
+-          'min-w-0 flex-1 overflow-hidden whitespace-nowrap [--convo-title-fade-width:24px] [--convo-title-reveal-duration:800ms] [mask-position:left] [mask-repeat:no-repeat] [mask-size:100%_100%] [text-align:start] [transition-duration:0ms] [transition-property:mask-size] [transition-timing-function:linear] [&:dir(rtl)]:[mask-position:right]',
++          'flex min-w-0 flex-1 justify-start overflow-hidden whitespace-nowrap [--convo-title-fade-width:24px] [--convo-title-reveal-duration:800ms] [mask-position:left] [mask-repeat:no-repeat] [mask-size:100%_100%] [transition-duration:0ms] [transition-property:mask-size] [transition-timing-function:linear] [&:dir(rtl)]:[mask-position:right]',
+           isOverflowing &&
+             '[mask-image:linear-gradient(to_right,currentColor_calc(100%_-_var(--convo-title-fade-width)),transparent)] [&:dir(rtl)]:[mask-image:linear-gradient(to_left,currentColor_calc(100%_-_var(--convo-title-fade-width)),transparent)]',
+           'data-[title-revealed=true]:[mask-size:calc(100%_+_var(--convo-title-fade-width))_100%] data-[title-revealed=true]:[transition-duration:var(--convo-title-reveal-duration)]',
+@@ -164,7 +165,7 @@ const ConvoLink: React.FC<ConvoLinkProps> = ({
+           onRename();
+         }}
+       >
+-        <span ref={textRef} className="inline-block">
++        <span ref={textRef} className="inline-block flex-shrink-0">
+           {displayTitle}
+         </span>
+       </span>
+diff --git a/client/src/store/settings.ts b/client/src/store/settings.ts
+index 90f293b..5c7d92b 100644
+--- a/client/src/store/settings.ts
++++ b/client/src/store/settings.ts
+@@ -42,7 +42,8 @@ function isSmallViewport(): boolean {
+ const localStorageAtoms = {
+   // General settings
+   sidebarExpanded: atomWithLocalStorage(
+-    'unifiedSidebarExpanded',
++    /** EF (#97): a new key, so a panel collapsed before it opened by default starts open once. */
++    'efaiwSidebarExpanded',
+     !isSmallViewport(),
+     /**
+      * The mobile drawer covers the viewport, so a persisted open state would

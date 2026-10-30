@@ -1,0 +1,309 @@
+Production UI (#108, ADR-0013). The platform has one light appearance: dark and system modes, stored or requested,
+resolve to light in ThemeProvider and in index.html's pre-paint script, and the theme setting offers light and high
+contrast only. The desktop side menu labels its icons (a short name under each, the full name stays the tooltip and
+the accessible name), the rail widens from 52 to 72 px for them, and «New chat» is its primary action. Accessibility
+fixes from the QA: a translatable name for the composer's tools button, marketplace tabs that point at their panel, the
+agent cards as a list (a grid without rows), and a memory switch without a nested checkbox. English strings for the new labels; the sign-in note gives the data rule in
+production wording.
+
+diff --git a/client/index.html b/client/index.html
+index 41e14a5..afd2acc 100644
+--- a/client/index.html
++++ b/client/index.html
+@@ -35,6 +35,8 @@
+       } catch (e) {
+         /* Web Storage denied by browser policy: the shell falls back to the system theme. */
+       }
++      /* EF (#108): light appearance only, as ThemeProvider resolves it. */
++      theme = theme === 'high-contrast-dark' || theme === 'high-contrast-light' ? 'high-contrast-light' : 'light';
+       const loadingContainerStyle = document.createElement('style');
+       let backgroundColor;
+ 
+diff --git a/client/src/components/Agents/AgentGrid.tsx b/client/src/components/Agents/AgentGrid.tsx
+index 58517c6..32b5806 100644
+--- a/client/src/components/Agents/AgentGrid.tsx
++++ b/client/src/components/Agents/AgentGrid.tsx
+@@ -185,14 +185,14 @@ const AgentGrid: React.FC<AgentGridProps> = ({
+           {currentAgents && currentAgents.length > 0 && (
+             <div
+               className="mx-4 grid grid-cols-1 gap-6 md:grid-cols-2"
+-              role="grid"
++              role="list"
+               aria-label={localize('com_agents_grid_announcement', {
+                 count: currentAgents.length,
+                 category: getCategoryDisplayName(category),
+               })}
+             >
+               {currentAgents.map((agent: t.Agent, index: number) => (
+-                <div key={`${agent.id}-${index}`} role="gridcell">
++                <div key={`${agent.id}-${index}`} role="listitem">
+                   <AgentCard agent={agent} onSelect={onSelectAgent} />
+                 </div>
+               ))}
+diff --git a/client/src/components/Agents/CategoryTabs.tsx b/client/src/components/Agents/CategoryTabs.tsx
+index 85a7c2a..aa4750a 100644
+--- a/client/src/components/Agents/CategoryTabs.tsx
++++ b/client/src/components/Agents/CategoryTabs.tsx
+@@ -159,7 +159,7 @@ const CategoryTabs: React.FC<CategoryTabsProps> = ({
+             )}
+             role="tab"
+             aria-selected={activeTab === category.value}
+-            aria-controls={`tabpanel-${category.value}`}
++            aria-controls={`category-panel-${category.value}`}
+             tabIndex={activeTab === category.value ? 0 : -1}
+             aria-label={localize('com_agents_category_tab_label', {
+               category: getCategoryDisplayName(category),
+diff --git a/client/src/components/Appearance/Selectors.tsx b/client/src/components/Appearance/Selectors.tsx
+index 2a7257e..85c5430 100644
+--- a/client/src/components/Appearance/Selectors.tsx
++++ b/client/src/components/Appearance/Selectors.tsx
+@@ -23,11 +23,9 @@ export const ThemeSelector = ({
+   const localize = useLocalize();
+ 
+   const themeOptions = [
+-    { value: 'system', label: localize('com_nav_theme_system') },
+-    { value: 'dark', label: localize('com_nav_theme_dark') },
++    /* EF (#108): light appearance only. */
+     { value: 'light', label: localize('com_nav_theme_light') },
+     { value: 'high-contrast-light', label: localize('com_nav_theme_high_contrast_light') },
+-    { value: 'high-contrast-dark', label: localize('com_nav_theme_high_contrast_dark') },
+   ];
+ 
+   const labelId = 'theme-selector-label';
+diff --git a/client/src/components/Chat/Input/ToolsDropdown.tsx b/client/src/components/Chat/Input/ToolsDropdown.tsx
+index 64fc779..2dd19b8 100644
+--- a/client/src/components/Chat/Input/ToolsDropdown.tsx
++++ b/client/src/components/Chat/Input/ToolsDropdown.tsx
+@@ -381,7 +381,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+         <Ariakit.MenuButton
+           disabled={isDisabled}
+           id="tools-dropdown-button"
+-          aria-label="Tools Options"
++          aria-label={localize('com_efaiw_tools_options')}
+           className={cn(
+             'flex size-theme-control items-center justify-center rounded-theme-control-round p-1 transition-colors duration-theme-fast hover:bg-surface-composer-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-primary focus-visible:ring-opacity-50',
+             isPopoverActive && 'bg-surface-composer-hover',
+diff --git a/client/src/components/Nav/AgentMarketplaceButton.tsx b/client/src/components/Nav/AgentMarketplaceButton.tsx
+index c7173ee..53cb03d 100644
+--- a/client/src/components/Nav/AgentMarketplaceButton.tsx
++++ b/client/src/components/Nav/AgentMarketplaceButton.tsx
+@@ -35,7 +35,17 @@ export default function AgentMarketplaceButton({
+          *  keeps it a router Link, so modifier- and middle-clicks still open
+          *  the marketplace in a new tab, and those stay on the current page and
+          *  so must not dismiss. */
+-        <Button asChild variant="ghost" size="icon" className="h-9 w-9 flex-shrink-0">
++        <Button
++          asChild
++          variant="ghost"
++          size="icon"
++          className={
++            /* EF (#108): labelled on the desktop rail, icon-only in the mobile drawer header. */
++            side === 'right'
++              ? 'efaiw-rail-item h-auto w-14 flex-shrink-0 flex-col gap-1 rounded-lg px-0.5 py-1.5'
++              : 'h-9 w-9 flex-shrink-0'
++          }
++        >
+           <Link
+             to="/agents"
+             data-testid="nav-agents-marketplace-button"
+@@ -48,6 +58,11 @@ export default function AgentMarketplaceButton({
+             }}
+           >
+             <LayoutGrid className="h-5 w-5 text-text-primary" aria-hidden="true" />
++            {side === 'right' && (
++              <span className="efaiw-rail-label" aria-hidden="true">
++                {localize('com_efaiw_rail_explore')}
++              </span>
++            )}
+           </Link>
+         </Button>
+       }
+diff --git a/client/src/components/SidePanel/Memories/MemoryPanel.tsx b/client/src/components/SidePanel/Memories/MemoryPanel.tsx
+index 600a31d..6b74153 100644
+--- a/client/src/components/SidePanel/Memories/MemoryPanel.tsx
++++ b/client/src/components/SidePanel/Memories/MemoryPanel.tsx
+@@ -1,10 +1,9 @@
+ import { useMemo, useState, useEffect } from 'react';
+-import { Plus } from 'lucide-react';
++import { Check, Plus } from 'lucide-react';
+ import { matchSorter } from 'match-sorter';
+ import { SystemRoles, PermissionTypes, Permissions } from 'librechat-data-provider';
+ import {
+   Button,
+-  Checkbox,
+   Dropdown,
+   FilterInput,
+   TooltipAnchor,
+@@ -225,13 +224,16 @@ export default function MemoryPanel() {
+                 aria-pressed={referenceSavedMemories}
+                 disabled={updateMemoryPreferencesMutation.isLoading}
+               >
+-                <Checkbox
+-                  checked={referenceSavedMemories}
+-                  tabIndex={-1}
++                {/* EF (#108): a drawn box, not a second control inside the toggle button (axe nested-interactive). */}
++                <span
+                   aria-hidden="true"
+-                  aria-label={localize('com_ui_use_memory')}
+-                  className="pointer-events-none"
+-                />
++                  className={cn(
++                    'flex size-4 items-center justify-center rounded border border-border-heavy',
++                    referenceSavedMemories && 'border-surface-submit bg-surface-submit text-white',
++                  )}
++                >
++                  {referenceSavedMemories && <Check className="size-3" strokeWidth={3} />}
++                </span>
+                 {localize('com_ui_use_memory')}
+               </Button>
+             )}
+diff --git a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
+index 371cb38..6434399 100644
+--- a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
++++ b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
+@@ -4,6 +4,7 @@ import { SquarePen } from 'lucide-react';
+ import { useLocation } from 'react-router-dom';
+ import { Skeleton, Sidebar, Button, TooltipAnchor } from '@librechat/client';
+ import type { NavLink } from '~/common';
++import type { TranslationKeys } from '~/hooks';
+ import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcuts';
+ import { useActivePanel, resolveActivePanel, DEFAULT_PANEL } from '~/Providers';
+ import AgentMarketplaceButton from '~/components/Nav/AgentMarketplaceButton';
+@@ -15,6 +16,18 @@ import store from '~/store';
+ 
+ const AccountSettings = lazy(() => import('~/components/Nav/AccountSettings'));
+ 
++/** EF (#108): short names under the rail icons; the tooltip and the accessible name keep the full title. */
++const RAIL_LABELS: Record<string, TranslationKeys> = {
++  conversations: 'com_efaiw_rail_chats',
++  agents: 'com_efaiw_rail_agents',
++  skills: 'com_efaiw_rail_skills',
++  prompts: 'com_efaiw_rail_prompts',
++  memories: 'com_efaiw_rail_memories',
++  bookmarks: 'com_efaiw_rail_bookmarks',
++  files: 'com_efaiw_rail_files',
++  parameters: 'com_efaiw_rail_parameters',
++};
++
+ const NewChatButton = memo(function NewChatButton({
+   setActive,
+ }: {
+@@ -43,10 +56,15 @@ const NewChatButton = memo(function NewChatButton({
+           data-testid="new-chat-button"
+           aria-label={localize('com_ui_new_chat')}
+           aria-keyshortcuts={ariaKey}
+-          className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-surface-hover"
++          className="efaiw-rail-item efaiw-rail-new flex w-14 flex-col items-center gap-1 rounded-lg py-1.5 transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-primary"
+           onClick={handleNewChatClick}
+         >
+-          <SquarePen className="h-5 w-5 text-text-primary" />
++          <span className="efaiw-rail-new-icon flex h-8 w-8 items-center justify-center rounded-lg">
++            <SquarePen className="h-[18px] w-[18px]" aria-hidden="true" />
++          </span>
++          <span className="efaiw-rail-label" aria-hidden="true">
++            {localize('com_efaiw_rail_new')}
++          </span>
+         </a>
+       }
+     />
+@@ -110,12 +128,15 @@ const NavIconButton = memo(function NavIconButton({
+           disabled={link.disabled}
+           data-testid={`nav-panel-${link.id}`}
+           className={cn(
+-            'h-9 w-9 rounded-lg',
+-            isActive ? 'bg-surface-active-alt text-text-primary' : 'text-text-secondary',
++            'efaiw-rail-item h-auto w-14 flex-col gap-1 rounded-lg px-0.5 py-1.5',
++            isActive ? 'efaiw-rail-active bg-surface-active-alt text-text-primary' : 'text-text-secondary',
+           )}
+           onClick={handleClick}
+         >
+           <link.icon className="h-5 w-5" aria-hidden="true" />
++          <span className="efaiw-rail-label" aria-hidden="true">
++            {localize(RAIL_LABELS[link.id] ?? link.title)}
++          </span>
+         </Button>
+       }
+     />
+diff --git a/client/src/components/UnifiedSidebar/constants.ts b/client/src/components/UnifiedSidebar/constants.ts
+index d586f1b..c8cdf59 100644
+--- a/client/src/components/UnifiedSidebar/constants.ts
++++ b/client/src/components/UnifiedSidebar/constants.ts
+@@ -1,4 +1,5 @@
+-export const COLLAPSED_WIDTH = 52;
++/** EF (#108): 72 px instead of 52 so each icon carries its short label. */
++export const COLLAPSED_WIDTH = 72;
+ export const EXPANDED_MIN = 360;
+ 
+ /**
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index bb2574c..18cb8a6 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -1760,7 +1760,7 @@
+   "com_efaiw_ef_name": "Environment Fund",
+   "com_efaiw_product_name": "Baseer",
+   "com_efaiw_product_tagline": "The Environment Fund's AI workspace",
+-  "com_efaiw_synthetic_notice": "Development and demo environment. Synthetic data only.",
++  "com_efaiw_synthetic_notice": "Do not enter confidential information or personal data.",
+   "com_ui_low": "Low",
+   "com_ui_make_production": "Make Production",
+   "com_ui_manage": "Manage",
+@@ -3062,5 +3062,16 @@
+   "com_insights_invalid_date_range": "Choose an end date after the start date, within {{days}} days.",
+   "com_insights_sparkline_accessibility": "{{label}} over time",
+   "com_nav_mobile_drawer_strip": "Show chat beside the sidebar on mobile",
+-  "com_nav_mobile_drawer_strip_info": "The sidebar stops short of the edge so a strip of the conversation stays visible. Tapping it closes the sidebar."
++  "com_nav_mobile_drawer_strip_info": "The sidebar stops short of the edge so a strip of the conversation stays visible. Tapping it closes the sidebar.",
++  "com_efaiw_rail_new": "New chat",
++  "com_efaiw_rail_explore": "Explore",
++  "com_efaiw_rail_chats": "Chats",
++  "com_efaiw_rail_agents": "Agents",
++  "com_efaiw_rail_skills": "Skills",
++  "com_efaiw_rail_prompts": "Prompts",
++  "com_efaiw_rail_memories": "Memory",
++  "com_efaiw_rail_bookmarks": "Bookmarks",
++  "com_efaiw_rail_files": "Files",
++  "com_efaiw_rail_parameters": "Parameters",
++  "com_efaiw_tools_options": "Tools Options"
+ }
+diff --git a/packages/client/src/theme/context/ThemeProvider.tsx b/packages/client/src/theme/context/ThemeProvider.tsx
+index 75cb86f..04ac70e 100644
+--- a/packages/client/src/theme/context/ThemeProvider.tsx
++++ b/packages/client/src/theme/context/ThemeProvider.tsx
+@@ -217,9 +217,14 @@ const writeStorage = (key: string, value?: string): void => {
+   }
+ };
+ 
++/** EF (#108): the platform has no dark appearance. Dark and system modes, stored or requested, resolve to light;
++ * high contrast keeps its light variant. */
++const toLightMode = (mode: AppearanceMode): AppearanceMode =>
++  mode === 'high-contrast-dark' || mode === 'high-contrast-light' ? 'high-contrast-light' : 'light';
++
+ const getInitialTheme = (): AppearanceMode => {
+   const stored = readStorage(THEME_KEY);
+-  return stored && isAppearanceMode(stored) ? stored : 'system';
++  return toLightMode(stored && isAppearanceMode(stored) ? stored : 'light');
+ };
+ 
+ const getStoredThemeState = (): InitialThemeState => {
+@@ -341,7 +346,7 @@ export function ThemeProvider({
+   }
+ 
+   const initialAppearance =
+-    initialTheme && isAppearanceMode(initialTheme) ? initialTheme : getInitialTheme();
++    initialTheme && isAppearanceMode(initialTheme) ? toLightMode(initialTheme) : getInitialTheme();
+   const [theme, setThemeState] = useState<AppearanceMode>(initialAppearance);
+   /**
+    * Seeded from the mode string alone, never from a media query, so a server
+@@ -468,8 +473,9 @@ export function ThemeProvider({
+     if (!isAppearanceMode(newTheme)) {
+       return;
+     }
+-    setThemeState(newTheme);
+-    writeStorage(THEME_KEY, newTheme);
++    const mode = toLightMode(newTheme);
++    setThemeState(mode);
++    writeStorage(THEME_KEY, mode);
+   }, []);
+ 
+   const setThemeDefinition = useCallback(

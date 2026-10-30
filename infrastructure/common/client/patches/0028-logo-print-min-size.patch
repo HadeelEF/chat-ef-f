@@ -1,0 +1,20 @@
+EF AI Workspace (#163): the blue logo in the print view drawn at its full minimum size. logo.svg declares width and
+height (176 x 62) out of its viewBox's proportion (487.12 x 162.46), so a 15 mm high box drew the artwork at about
+14.2 mm; the box now takes the viewBox's proportion and the symbol is 1.5 cm, the guide's print minimum (p9). The logo
+file is unchanged; the in-app images get the same rule in brand.css.
+
+diff --git a/client/src/utils/efaiwPrint.ts b/client/src/utils/efaiwPrint.ts
+index 8b39d91..200c063 100644
+--- a/client/src/utils/efaiwPrint.ts
++++ b/client/src/utils/efaiwPrint.ts
+@@ -187,7 +187,9 @@ a { color: #0051b1; }
+ .bar button { font: inherit; font-size: 15px; padding: 8px 18px; border-radius: 999px; border: 0; background: #2c3a82; color: #fff; cursor: pointer; }
+ @media print { .bar { display: none; } main { padding: 0; } }
+ .ef-logo { direction: ltr; text-align: right; margin: 0 0 7.5mm; }
+-.ef-logo img { height: 15mm; width: auto; }
++/* #163: the box takes the artwork's viewBox proportion (the file's own width and height are not), so the symbol is
++   drawn at the full 1.5 cm. */
++.ef-logo img { height: 15mm; width: auto; aspect-ratio: 487.12 / 162.46; }
+ `;
+ 
+ /**

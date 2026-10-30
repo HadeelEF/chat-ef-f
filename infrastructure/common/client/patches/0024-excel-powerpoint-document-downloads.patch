@@ -1,0 +1,1487 @@
+Excel and PowerPoint downloads in the Environment Fund identity (#149, #145 Phase A), built in the browser from the
+Markdown of a reply or document like the Word file of #135: Office Open XML in a stored ZIP, no new dependency.
+- Excel (utils/efaiwXlsx.ts): one sheet per table, named after the heading above it.
+  - A number (Western, Arabic-Indic or Persian digits; thousands separators; a percentage; a unit or currency; an
+    accounting negative in parentheses) is stored as a number with its display format, grouped only when it was
+    written grouped. Dates, codes with a leading zero and more than 15 digits stay text.
+  - Header row in the EF palette, frozen, with a filter; columns sized to their text; Arabic sheets right to left;
+    Tahoma.
+- PowerPoint (utils/efaiwPptx.ts): 16:9 deck with the EF palette as its theme.
+  - An EF-blue title slide from the first `#` (the paragraph under it is the subtitle; a reply's lead-in before it is
+    left out); a slide per `##` (per `#` when there is no `##`); `---` ends a slide.
+  - Bullets, numbered lists, sub-headings, quotes, code and tables (primary-blue header, banded rows).
+  - What does not fit continues on the next slide, "(تابع)", and a long table repeats its header.
+  - Real title placeholders; Arabic right to left, numbers kept left to right in their column's alignment; Tahoma.
+- Menus (Chat/Messages/useDocumentDownloads.tsx):
+  - «تنزيل» under a reply now offers Word, PowerPoint, Excel (when the reply has a table), PDF and Markdown.
+  - The side panel's download button on a Markdown document opens the same menu, with the panel's text and edits.
+  - The Markdown item keeps upstream's download; the menu portals into the fullscreen panel.
+- Word (utils/efaiwDocx.ts): two schema errors that the Open XML SDK validator found and Word may repair on opening are
+  fixed. `w:bidi` now comes after the page margins in the section, and the quote border is `w:left`, not `w:start`.
+  `xmlEscape` is exported for the new files.
+
+diff --git a/client/src/components/Artifacts/Artifacts.tsx b/client/src/components/Artifacts/Artifacts.tsx
+index ccdf927..abd863a 100644
+--- a/client/src/components/Artifacts/Artifacts.tsx
++++ b/client/src/components/Artifacts/Artifacts.tsx
+@@ -503,7 +503,10 @@ export default function Artifacts() {
+                   portalElement={isFullscreen ? fullscreenPortalRef.current : undefined}
+                 />
+               ) : (
+-                <DownloadArtifact artifact={currentArtifact} />
++                <DownloadArtifact
++                  artifact={currentArtifact}
++                  portalElement={isFullscreen ? fullscreenPortalRef.current : undefined}
++                />
+               )}
+               <Button
+                 size="icon"
+diff --git a/client/src/components/Artifacts/DownloadArtifact.tsx b/client/src/components/Artifacts/DownloadArtifact.tsx
+index 0ecad38..e08e2d1 100644
+--- a/client/src/components/Artifacts/DownloadArtifact.tsx
++++ b/client/src/components/Artifacts/DownloadArtifact.tsx
+@@ -1,10 +1,72 @@
++import { useCallback, useId, useMemo, useState } from 'react';
++import * as Ariakit from '@ariakit/react';
+ import { Download, CircleCheckBig } from 'lucide';
+-import { Button, MorphIcon } from '@librechat/client';
++import { Download as DownloadIcon } from 'lucide-react';
++import { Button, DropdownPopup, MorphIcon } from '@librechat/client';
+ import type { Artifact } from '~/common';
++import useDocumentDownloads from '~/components/Chat/Messages/useDocumentDownloads';
+ import useArtifactDownload from '~/hooks/Artifacts/useArtifactDownload';
++import { useCodeState } from '~/Providers/EditorContext';
++import { safeFileName } from '~/utils/efaiwDocx';
++import { hasMarkdownTable } from '~/utils/efaiwXlsx';
+ import { useLocalize } from '~/hooks';
+ 
+-const DownloadArtifact = ({ artifact }: { artifact: Artifact }) => {
++/** EF (#149): Markdown documents (model-written or files) open the document menu instead of a single button. */
++const DOCUMENT_TYPES = new Set(['text/markdown', 'text/md']);
++
++/**
++ * EF (#149): «تنزيل» on a Markdown document in the side panel: Word, PowerPoint, Excel when it has a table, PDF and
++ * Markdown, like the reply's menu (useDocumentDownloads.tsx). The panel's text is used, edits included; the Markdown
++ * item keeps upstream's download (the original file, or the edited text).
++ */
++function DocumentDownloadMenu({
++  artifact,
++  portalElement,
++}: {
++  artifact: Artifact;
++  portalElement?: HTMLElement | null;
++}) {
++  const localize = useLocalize();
++  const menuId = useId();
++  const [isOpen, setIsOpen] = useState(false);
++  const { currentCode } = useCodeState();
++  const { handleDownload } = useArtifactDownload(artifact);
++  const text = currentCode ?? artifact.content ?? '';
++  const markdown = useCallback(() => text, [text]);
++  const hasTable = useMemo(() => hasMarkdownTable(text), [text]);
++  const name = safeFileName(artifact.title, localize('com_efaiw_download_default_name'));
++  const onMarkdown = useCallback(
++    (event: React.MouseEvent<HTMLButtonElement | HTMLDivElement>) => {
++      void handleDownload(event as React.MouseEvent<HTMLElement>);
++    },
++    [handleDownload],
++  );
++  const items = useDocumentDownloads({ markdown, name, hasTable, onMarkdown });
++  const label = localize('com_ui_download_artifact');
++
++  return (
++    <DropdownPopup
++      portal={true}
++      portalElement={portalElement ?? undefined}
++      menuId={menuId}
++      focusLoop={true}
++      unmountOnHide={true}
++      isOpen={isOpen}
++      setIsOpen={setIsOpen}
++      trigger={
++        <Ariakit.MenuButton
++          aria-label={label}
++          render={<Button size="icon" variant="ghost" className="h-9 w-9" />}
++        >
++          <DownloadIcon size={16} aria-hidden="true" />
++        </Ariakit.MenuButton>
++      }
++      items={items}
++    />
++  );
++}
++
++function FileDownloadButton({ artifact }: { artifact: Artifact }) {
+   const localize = useLocalize();
+   const { isDownloaded, handleDownload } = useArtifactDownload(artifact);
+ 
+@@ -19,6 +81,19 @@ const DownloadArtifact = ({ artifact }: { artifact: Artifact }) => {
+       <MorphIcon icon={isDownloaded ? CircleCheckBig : Download} size={16} />
+     </Button>
+   );
+-};
++}
++
++const DownloadArtifact = ({
++  artifact,
++  portalElement,
++}: {
++  artifact: Artifact;
++  portalElement?: HTMLElement | null;
++}) =>
++  DOCUMENT_TYPES.has(artifact.type ?? '') ? (
++    <DocumentDownloadMenu artifact={artifact} portalElement={portalElement} />
++  ) : (
++    <FileDownloadButton artifact={artifact} />
++  );
+ 
+ export default DownloadArtifact;
+diff --git a/client/src/components/Chat/Messages/DownloadReply.tsx b/client/src/components/Chat/Messages/DownloadReply.tsx
+index e691aa0..0eafbea 100644
+--- a/client/src/components/Chat/Messages/DownloadReply.tsx
++++ b/client/src/components/Chat/Messages/DownloadReply.tsx
+@@ -1,11 +1,12 @@
+-import { memo, useId, useState } from 'react';
++import { memo, useCallback, useId, useMemo, useState } from 'react';
+ import * as Ariakit from '@ariakit/react';
+-import { Download, FileText, FileCode, Printer } from 'lucide-react';
+-import { DropdownPopup, TooltipAnchor, useToastContext } from '@librechat/client';
++import { Download } from 'lucide-react';
++import { DropdownPopup, TooltipAnchor } from '@librechat/client';
+ import { ContentTypes } from 'librechat-data-provider';
+ import type { TMessage } from 'librechat-data-provider';
+-import { markdownToDocx, safeFileName, saveBlob, stripArtifactDirectives } from '~/utils/efaiwDocx';
+-import { openPrintView } from '~/utils/efaiwPrint';
++import { safeFileName } from '~/utils/efaiwDocx';
++import { hasMarkdownTable } from '~/utils/efaiwXlsx';
++import useDocumentDownloads from './useDocumentDownloads';
+ import { hoverButtonClasses } from './styles';
+ import { useLocalize } from '~/hooks';
+ 
+@@ -32,7 +33,8 @@ export const replyMarkdown = (message: TMessage): string => {
+ /**
+  * EF (#135): «تنزيل» on a reply: the reply as a Word document (.docx, right to left when written in Arabic) or as
+  * Markdown (.md). Built in the browser (utils/efaiwDocx.ts); the file is named after the chat. EF (#138): or as a print
+- * view that the browser saves as PDF (utils/efaiwPrint.ts).
++ * view that the browser saves as PDF (utils/efaiwPrint.ts). EF (#149): or as PowerPoint, and as Excel when the reply
++ * has a table (useDocumentDownloads.tsx).
+  */
+ function DownloadReply({
+   message,
+@@ -44,45 +46,13 @@ function DownloadReply({
+   isLast: boolean;
+ }) {
+   const localize = useLocalize();
+-  const { showToast } = useToastContext();
+   const menuId = useId();
+   const [isOpen, setIsOpen] = useState(false);
+   const label = localize('com_efaiw_download_reply');
+   const name = safeFileName(title, localize('com_efaiw_download_default_name'));
+-
+-  const items = [
+-    {
+-      label: localize('com_efaiw_download_word'),
+-      icon: <FileText className="size-4 text-text-secondary" aria-hidden="true" />,
+-      onClick: () => {
+-        const markdown = replyMarkdown(message);
+-        saveBlob(markdownToDocx(markdown, name), `${name}.docx`);
+-      },
+-    },
+-    {
+-      label: localize('com_efaiw_download_markdown'),
+-      icon: <FileCode className="size-4 text-text-secondary" aria-hidden="true" />,
+-      onClick: () => {
+-        const markdown = stripArtifactDirectives(replyMarkdown(message));
+-        saveBlob(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }), `${name}.md`);
+-      },
+-    },
+-    {
+-      label: localize('com_efaiw_download_pdf'),
+-      icon: <Printer className="size-4 text-text-secondary" aria-hidden="true" />,
+-      onClick: () => {
+-        const root = document.documentElement;
+-        const opened = openPrintView(replyMarkdown(message), name, {
+-          print: localize('com_efaiw_print_save'),
+-          dir: root.dir === 'rtl' ? 'rtl' : 'ltr',
+-          lang: root.lang || 'ar',
+-        });
+-        if (!opened) {
+-          showToast({ message: localize('com_efaiw_print_blocked'), status: 'warning' });
+-        }
+-      },
+-    },
+-  ];
++  const markdown = useCallback(() => replyMarkdown(message), [message]);
++  const hasTable = useMemo(() => hasMarkdownTable(replyMarkdown(message)), [message]);
++  const items = useDocumentDownloads({ markdown, name, hasTable });
+ 
+   return (
+     <DropdownPopup
+diff --git a/client/src/components/Chat/Messages/useDocumentDownloads.tsx b/client/src/components/Chat/Messages/useDocumentDownloads.tsx
+new file mode 100644
+index 0000000..e8ad3c5
+--- /dev/null
++++ b/client/src/components/Chat/Messages/useDocumentDownloads.tsx
+@@ -0,0 +1,90 @@
++import { useMemo } from 'react';
++import { FileCode, FileSpreadsheet, FileText, Presentation, Printer } from 'lucide-react';
++import { useToastContext } from '@librechat/client';
++import { markdownToDocx, saveBlob, stripArtifactDirectives } from '~/utils/efaiwDocx';
++import { markdownToPptx } from '~/utils/efaiwPptx';
++import { markdownToXlsx } from '~/utils/efaiwXlsx';
++import { openPrintView } from '~/utils/efaiwPrint';
++import type { MenuItemProps } from '~/common';
++import { useLocalize } from '~/hooks';
++
++const iconClass = 'size-4 text-text-secondary';
++
++/**
++ * EF (#149): the download choices for a text — a reply (DownloadReply.tsx) or a Markdown document in the side panel
++ * (Artifacts/DownloadArtifact.tsx): Word, PowerPoint, Excel when the text has a table, PDF / print and Markdown. Each
++ * file is built in the browser in the Environment Fund identity (utils/efaiwDocx.ts, efaiwPptx.ts, efaiwXlsx.ts,
++ * efaiwPrint.ts) and named `name`. `onMarkdown` replaces the Markdown item's default save (the panel keeps its own:
++ * the original file, or the edited text).
++ */
++export default function useDocumentDownloads({
++  markdown,
++  name,
++  hasTable,
++  onMarkdown,
++}: {
++  markdown: () => string;
++  name: string;
++  hasTable: boolean;
++  onMarkdown?: MenuItemProps['onClick'];
++}): MenuItemProps[] {
++  const localize = useLocalize();
++  const { showToast } = useToastContext();
++
++  return useMemo(() => {
++    const items: MenuItemProps[] = [
++      {
++        label: localize('com_efaiw_download_word'),
++        icon: <FileText className={iconClass} aria-hidden="true" />,
++        onClick: () => saveBlob(markdownToDocx(markdown(), name), `${name}.docx`),
++      },
++      {
++        label: localize('com_efaiw_download_pptx'),
++        icon: <Presentation className={iconClass} aria-hidden="true" />,
++        onClick: () => saveBlob(markdownToPptx(markdown(), name), `${name}.pptx`),
++      },
++    ];
++    if (hasTable) {
++      items.push({
++        label: localize('com_efaiw_download_excel'),
++        icon: <FileSpreadsheet className={iconClass} aria-hidden="true" />,
++        onClick: () => {
++          const workbook = markdownToXlsx(markdown(), name);
++          if (workbook == null) {
++            showToast({ message: localize('com_efaiw_excel_no_table'), status: 'warning' });
++            return;
++          }
++          saveBlob(workbook, `${name}.xlsx`);
++        },
++      });
++    }
++    items.push(
++      {
++        label: localize('com_efaiw_download_pdf'),
++        icon: <Printer className={iconClass} aria-hidden="true" />,
++        onClick: () => {
++          const root = document.documentElement;
++          const opened = openPrintView(markdown(), name, {
++            print: localize('com_efaiw_print_save'),
++            dir: root.dir === 'rtl' ? 'rtl' : 'ltr',
++            lang: root.lang || 'ar',
++          });
++          if (!opened) {
++            showToast({ message: localize('com_efaiw_print_blocked'), status: 'warning' });
++          }
++        },
++      },
++      {
++        label: localize('com_efaiw_download_markdown'),
++        icon: <FileCode className={iconClass} aria-hidden="true" />,
++        onClick:
++          onMarkdown ??
++          (() => {
++            const text = stripArtifactDirectives(markdown());
++            saveBlob(new Blob([text], { type: 'text/markdown;charset=utf-8' }), `${name}.md`);
++          }),
++      },
++    );
++    return items;
++  }, [localize, showToast, markdown, name, hasTable, onMarkdown]);
++}
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index 7188a64..04a3bb8 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3111,6 +3111,9 @@
+   "com_efaiw_download_word": "Word document (.docx)",
+   "com_efaiw_download_markdown": "Markdown (.md)",
+   "com_efaiw_download_pdf": "PDF / Print",
++  "com_efaiw_download_pptx": "PowerPoint (.pptx)",
++  "com_efaiw_download_excel": "Excel workbook (.xlsx)",
++  "com_efaiw_excel_no_table": "There is no table to export to Excel.",
+   "com_efaiw_print_save": "Print or save as PDF",
+   "com_efaiw_print_blocked": "The browser blocked the print page. Allow pop-ups for this site, then try again.",
+   "com_efaiw_download_default_name": "Baseer reply"
+diff --git a/client/src/utils/efaiwDocx.ts b/client/src/utils/efaiwDocx.ts
+index 0588de2..0f4fc8b 100644
+--- a/client/src/utils/efaiwDocx.ts
++++ b/client/src/utils/efaiwDocx.ts
+@@ -57,7 +57,8 @@ export const isRtlText = (text: string): boolean => {
+   return false;
+ };
+ 
+-const xmlEscape = (text: string): string =>
++/** Text safe inside XML content and attributes (EF #149: shared with the Excel and PowerPoint files). */
++export const xmlEscape = (text: string): string =>
+   text
+     .replace(/&/g, '&amp;')
+     .replace(/</g, '&lt;')
+@@ -350,7 +351,7 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+   )
+   .join(
+     '',
+-  )}<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="60"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="${EF_DOC.code}"/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="19"/><w:szCs w:val="19"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:pPr><w:pBdr><w:start w:val="single" w:sz="18" w:space="8" w:color="${EF_DOC.quoteLine}"/></w:pBdr><w:ind w:start="360"/></w:pPr><w:rPr><w:color w:val="${EF_DOC.quoteText}"/></w:rPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/></w:style></w:styles>`;
++  )}<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="60"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="${EF_DOC.code}"/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="19"/><w:szCs w:val="19"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:pPr><w:pBdr><w:left w:val="single" w:sz="18" w:space="8" w:color="${EF_DOC.quoteLine}"/></w:pBdr><w:ind w:start="360"/></w:pPr><w:rPr><w:color w:val="${EF_DOC.quoteText}"/></w:rPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/></w:style></w:styles>`;
+ 
+ /** The `document.xml` body and its parts for a Markdown text. */
+ export function buildDocxParts(markdown: string, title: string): Record<string, string> {
+@@ -371,7 +372,7 @@ export function buildDocxParts(markdown: string, title: string): Record<string,
+     'docProps/core.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+ <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${titleXml}</dc:title><dc:creator>بصير</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created></cp:coreProperties>`,
+     'word/document.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${body}<w:sectPr>${rtl ? '<w:bidi/>' : ''}<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`,
++<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>${rtl ? '<w:bidi/>' : ''}</w:sectPr></w:body></w:document>`,
+     'word/styles.xml': STYLES,
+     'word/numbering.xml': writer.numberingXml(),
+     'word/_rels/document.xml.rels': writer.relationships(),
+diff --git a/client/src/utils/efaiwPptx.ts b/client/src/utils/efaiwPptx.ts
+new file mode 100644
+index 0000000..c2ca1b0
+--- /dev/null
++++ b/client/src/utils/efaiwPptx.ts
+@@ -0,0 +1,791 @@
++/**
++ * EF (#149): a reply or document as a PowerPoint deck (16:9), built in the browser from its Markdown like the Word file
++ * (utils/efaiwDocx.ts): PresentationML in a stored ZIP, no new dependency.
++ * - Structure: the first `#` heading is the title slide (the paragraph under it, its subtitle); every `##` starts a
++ *   slide (every `#` when there is no `##`), and `---` ends one. Deeper headings, paragraphs, lists, quotes, code and
++ *   tables fill the slide; what does not fit continues on the next slide under the same title, and a long table repeats
++ *   its header row.
++ * - Environment Fund identity (visual identity guide v01, p22-31 and p93: 16:9, title, content and closing slides in
++ *   the palette): an EF-blue title slide with white title and a green subtitle, white content slides with primary-blue
++ *   titles over a green accent, primary-dark text and primary-blue table headers. The palette is the deck's theme, so
++ *   PowerPoint offers it for new shapes. Tahoma (the guide's secondary typeface), as in Word: the presenter's computer is
++ *   not guaranteed to have Aktiv Grotesk. No logo: the letterhead waits for the owner's decision (#145).
++ * - Titles are real title placeholders (slide outline, accessibility checker, navigation). Arabic slides, paragraphs and
++ *   tables run right to left; English and code left to right.
++ */
++import { gfm } from 'micromark-extension-gfm';
++import { gfmFromMarkdown } from 'mdast-util-gfm';
++import { fromMarkdown } from 'mdast-util-from-markdown';
++import { EF_DOC, isRtlText, storedZip, stripArtifactDirectives, xmlEscape } from './efaiwDocx';
++
++type Node = {
++  type: string;
++  value?: string;
++  depth?: number;
++  ordered?: boolean | null;
++  start?: number | null;
++  url?: string;
++  alt?: string | null;
++  align?: Array<string | null>;
++  children?: Node[];
++};
++
++type Inline = { text: string; bold?: boolean; italic?: boolean; code?: boolean; link?: string };
++type Para = {
++  kind: 'para';
++  runs: Inline[];
++  /** null: no letters (numbers, symbols), so the slide's direction applies. */
++  rtl: boolean | null;
++  style: 'body' | 'bullet' | 'number' | 'sub' | 'quote';
++  level: number;
++  number?: number;
++};
++type Table = { kind: 'table'; rows: Inline[][][]; align: Array<string | null>; rtl: boolean };
++type Code = { kind: 'code'; text: string };
++type Block = Para | Table | Code;
++type Slide = { title: string; blocks: Block[] };
++
++/** Environment Fund palette for the deck (hex without #), from the guide (p22-24). */
++const EF = {
++  dark: EF_DOC.text,
++  blue: EF_DOC.heading,
++  blue2: EF_DOC.link,
++  green: 'C0CB6C',
++  brown: 'A18E77',
++  warm: 'F1EEE8',
++  tint: EF_DOC.tint,
++  line: EF_DOC.line,
++  muted: '646A71',
++  white: 'FFFFFF',
++} as const;
++
++const EMU = 914400;
++const PT = 12700;
++const SLIDE_W = 12192000;
++const SLIDE_H = 6858000;
++const MARGIN_X = Math.round(0.65 * EMU);
++const CONTENT_W = SLIDE_W - 2 * MARGIN_X;
++const TITLE_Y = Math.round(0.42 * EMU);
++const TITLE_H = Math.round(0.95 * EMU);
++const ACCENT_Y = TITLE_Y + TITLE_H + Math.round(0.06 * EMU);
++const BODY_Y = ACCENT_Y + Math.round(0.28 * EMU);
++const BODY_BOTTOM = SLIDE_H - Math.round(0.75 * EMU);
++/** Room planned for content, kept below the box so an estimate that runs short still fits. */
++const BODY_CAPACITY = Math.round((BODY_BOTTOM - BODY_Y) * 0.92);
++
++const BODY_PT = 20;
++const TABLE_PT = 14;
++const CODE_PT = 14;
++
++const NS =
++  'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"';
++const ARABIC = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
++const LETTER = /[A-Za-z\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
++/** Direction from the first letter, or null for text without letters (a number lines up with its column). */
++const directionOf = (text: string): boolean | null => (LETTER.test(text) ? isRtlText(text) : null);
++
++// ----------------------------------------------------------------------------------------------------- Markdown
++const inlines = (nodes: Node[] = [], style: Omit<Inline, 'text'> = {}): Inline[] =>
++  nodes.flatMap((node): Inline[] => {
++    switch (node.type) {
++      case 'text':
++        return [{ ...style, text: node.value ?? '' }];
++      case 'strong':
++        return inlines(node.children, { ...style, bold: true });
++      case 'emphasis':
++        return inlines(node.children, { ...style, italic: true });
++      case 'inlineCode':
++        return [{ ...style, code: true, text: node.value ?? '' }];
++      case 'link': {
++        const url = node.url ?? '';
++        return inlines(
++          node.children,
++          /^(https?:|mailto:)/i.test(url) ? { ...style, link: url } : style,
++        );
++      }
++      case 'break':
++        return [{ ...style, text: ' ' }];
++      case 'image':
++        return node.alt ? [{ ...style, italic: true, text: node.alt }] : [];
++      default:
++        if (node.children) {
++          return inlines(node.children, style);
++        }
++        return node.value ? [{ ...style, text: node.value }] : [];
++    }
++  });
++
++const textOf = (runs: Inline[]): string => runs.map((r) => r.text).join('');
++const plain = (node: Node): string => textOf(inlines([node]));
++
++const para = (runs: Inline[], style: Para['style'], level = 0, number?: number): Para => ({
++  kind: 'para',
++  runs,
++  rtl: directionOf(textOf(runs)),
++  style,
++  level,
++  number,
++});
++
++function listBlocks(node: Node, level: number): Block[] {
++  const out: Block[] = [];
++  let n = node.start ?? 1;
++  for (const item of node.children ?? []) {
++    let first = true;
++    for (const child of item.children ?? []) {
++      if (child.type === 'list') {
++        out.push(...listBlocks(child, Math.min(level + 1, 4)));
++      } else if (first) {
++        out.push(
++          para(inlines(child.children ?? [child]), node.ordered ? 'number' : 'bullet', level, n),
++        );
++        first = false;
++      } else {
++        out.push(para(inlines(child.children ?? [child]), 'body', level + 1));
++      }
++    }
++    n += 1;
++  }
++  return out;
++}
++
++const tableBlock = (node: Node): Table => {
++  const rows = (node.children ?? []).map((row) =>
++    (row.children ?? []).map((cell) => inlines(cell.children)),
++  );
++  const columns = Math.max(1, ...rows.map((row) => row.length));
++  const filled = rows.map((row) => [
++    ...row,
++    ...Array.from({ length: columns - row.length }, () => []),
++  ]);
++  return {
++    kind: 'table',
++    rows: filled,
++    align: node.align ?? [],
++    rtl: isRtlText(
++      filled
++        .flat(2)
++        .map((r) => r.text)
++        .join(' '),
++    ),
++  };
++};
++
++/** The deck: its title, subtitle and slides (before pagination). */
++export function markdownToSlides(markdown: string, fallbackTitle: string) {
++  const tree = fromMarkdown(stripArtifactDirectives(markdown), {
++    extensions: [gfm()],
++    mdastExtensions: [gfmFromMarkdown()],
++  }) as unknown as Node;
++  let nodes = (tree.children ?? []).filter((n) => n.type !== 'html' && n.type !== 'definition');
++  /* A reply's lead-in before the document's first `#` ("here is the deck") is chat, not a slide. */
++  const firstHeading = nodes.findIndex((n) => n.type === 'heading');
++  if (
++    firstHeading > 0 &&
++    nodes[firstHeading].depth === 1 &&
++    nodes.slice(0, firstHeading).every((n) => n.type === 'paragraph')
++  ) {
++    nodes = nodes.slice(firstHeading);
++  }
++  const depths = nodes.filter((n) => n.type === 'heading').map((n) => n.depth ?? 1);
++  let i = 0;
++  let title = fallbackTitle;
++  let subtitle = '';
++  if (nodes[0]?.type === 'heading' && nodes[0].depth === 1) {
++    title = plain(nodes[0]).trim() || fallbackTitle;
++    i = 1;
++  }
++  const h1After = depths.filter((d) => d === 1).length - (i === 1 ? 1 : 0);
++  let splitDepth = h1After > 0 ? 1 : 0;
++  if (depths.includes(2)) {
++    splitDepth = 2;
++  }
++  if (splitDepth > 0 && nodes[i]?.type === 'paragraph') {
++    subtitle = plain(nodes[i]).trim();
++    i += 1;
++  }
++
++  const slides: Slide[] = [];
++  let current: Slide | null = null;
++  const open = (slideTitle: string) => {
++    current = { title: slideTitle, blocks: [] };
++    slides.push(current);
++  };
++  const add = (block: Block) => {
++    if (!current) {
++      open(title);
++    }
++    (current as unknown as Slide).blocks.push(block);
++  };
++  for (; i < nodes.length; i++) {
++    const node = nodes[i];
++    switch (node.type) {
++      case 'heading':
++        if ((node.depth ?? 1) <= splitDepth) {
++          open(plain(node).trim() || title);
++        } else {
++          add(para(inlines(node.children), 'sub'));
++        }
++        break;
++      case 'thematicBreak': {
++        const next = nodes[i + 1];
++        if (next && next.type !== 'heading') {
++          open((current as Slide | null)?.title ?? title);
++        } else {
++          current = null;
++        }
++        break;
++      }
++      case 'paragraph':
++        add(para(inlines(node.children), 'body'));
++        break;
++      case 'list':
++        listBlocks(node, 0).forEach(add);
++        break;
++      case 'blockquote':
++        for (const child of node.children ?? []) {
++          add(para(inlines(child.children ?? [child]), 'quote'));
++        }
++        break;
++      case 'table':
++        add(tableBlock(node));
++        break;
++      case 'code':
++      case 'math':
++        add({ kind: 'code', text: node.value ?? '' });
++        break;
++      default:
++        if (node.children) {
++          add(para(inlines(node.children), 'body'));
++        }
++    }
++  }
++  return {
++    title,
++    subtitle,
++    rtl: isRtlText(markdown),
++    slides: slides.filter((s) => s.blocks.length > 0),
++  };
++}
++
++// ----------------------------------------------------------------------------------------------------- layout
++const lineHeight = (pt: number) => Math.round(pt * 1.22 * PT);
++/** Characters on one line of `width` EMU at `pt` points (an average glyph is about half an em). */
++const charsPerLine = (width: number, pt: number) =>
++  Math.max(8, Math.floor(width / PT / (pt * 0.52)));
++const linesOf = (text: string, width: number, pt: number) =>
++  Math.max(
++    1,
++    text
++      .split('\n')
++      .reduce(
++        (sum, line) => sum + Math.max(1, Math.ceil(line.length / charsPerLine(width, pt))),
++        0,
++      ),
++  );
++
++const PARA_GAP = Math.round(6 * PT);
++const indentOf = (p: Para) =>
++  (p.style === 'bullet' || p.style === 'number' ? 342900 : 0) + p.level * 342900;
++const paraPt = (p: Para) => (p.style === 'sub' ? BODY_PT + 2 : BODY_PT);
++const paraHeight = (p: Para) =>
++  linesOf(textOf(p.runs), CONTENT_W - indentOf(p) - 182880, paraPt(p)) * lineHeight(paraPt(p)) +
++  PARA_GAP;
++
++const TABLE_PAD = Math.round(0.12 * EMU);
++const rowHeight = (row: Inline[][], columns: number) => {
++  const width = CONTENT_W / columns - 182880;
++  const lines = Math.max(1, ...row.map((cell) => linesOf(textOf(cell), width, TABLE_PT)));
++  return Math.max(Math.round(0.4 * EMU), lines * lineHeight(TABLE_PT) + TABLE_PAD);
++};
++const codeHeight = (c: Code) =>
++  linesOf(c.text, CONTENT_W - 182880, CODE_PT) * lineHeight(CODE_PT) + TABLE_PAD + PARA_GAP;
++const GAP = Math.round(0.15 * EMU);
++
++/** Pages of one slide: blocks that fit the body, a long table split with its header repeated. */
++function paginate(slide: Slide): Block[][] {
++  const pages: Block[][] = [[]];
++  let used = 0;
++  const page = () => pages[pages.length - 1];
++  const fresh = () => {
++    if (page().length > 0) {
++      pages.push([]);
++      used = 0;
++    }
++  };
++  for (const block of slide.blocks) {
++    if (block.kind === 'para') {
++      const h = paraHeight(block);
++      if (used + h > BODY_CAPACITY) {
++        fresh();
++      }
++      page().push(block);
++      used += h;
++    } else if (block.kind === 'code') {
++      const h = codeHeight(block) + GAP;
++      if (used + h > BODY_CAPACITY) {
++        fresh();
++      }
++      page().push(block);
++      used += h;
++    } else {
++      const columns = block.rows[0]?.length ?? 1;
++      const [header, ...body] = block.rows;
++      const headerH = header ? rowHeight(header, columns) : 0;
++      let rows: Inline[][][] = [];
++      let rowsH = 0;
++      const flush = () => {
++        if (rows.length > 0) {
++          page().push({ ...block, rows: header ? [header, ...rows] : rows });
++          used += headerH + rowsH + GAP;
++          rows = [];
++          rowsH = 0;
++        }
++      };
++      if (used + headerH + (body[0] ? rowHeight(body[0], columns) : 0) > BODY_CAPACITY) {
++        fresh();
++      }
++      for (const row of body) {
++        const h = rowHeight(row, columns);
++        if (used + headerH + rowsH + h > BODY_CAPACITY && rows.length > 0) {
++          flush();
++          fresh();
++        }
++        rows.push(row);
++        rowsH += h;
++      }
++      if (body.length === 0 && header) {
++        page().push(block);
++        used += headerH + GAP;
++      }
++      flush();
++    }
++  }
++  return pages.filter((p) => p.length > 0);
++}
++
++// ----------------------------------------------------------------------------------------------------- XML
++class SlideXml {
++  private shapes: string[] = [];
++  private nextId = 2;
++  links: string[] = [];
++
++  constructor(private readonly rtl: boolean) {}
++
++  private id(): number {
++    return this.nextId++;
++  }
++
++  private linkId(url: string): string {
++    this.links.push(url);
++    return `rId${this.links.length + 1}`;
++  }
++
++  run(
++    inline: Inline,
++    pt: number,
++    color: string,
++    extra: { bold?: boolean; italic?: boolean } = {},
++  ): string {
++    const text = inline.text;
++    if (text === '') {
++      return '';
++    }
++    const lang = ARABIC.test(text) ? ' lang="ar-SA" altLang="en-US"' : ' lang="en-US"';
++    const bold = inline.bold || extra.bold ? ' b="1"' : '';
++    const italic = inline.italic || extra.italic ? ' i="1"' : '';
++    const fill = `<a:solidFill><a:srgbClr val="${inline.link ? EF.blue2 : color}"/></a:solidFill>`;
++    const font = inline.code
++      ? '<a:latin typeface="Consolas"/><a:cs typeface="Consolas"/>'
++      : `<a:latin typeface="${EF_DOC.font}"/><a:cs typeface="${EF_DOC.font}"/>`;
++    const link = inline.link ? `<a:hlinkClick r:id="${this.linkId(inline.link)}"/>` : '';
++    const underline = inline.link ? ' u="sng"' : '';
++    return `<a:r><a:rPr${lang} sz="${pt * 100}"${bold}${italic}${underline} dirty="0">${fill}${font}${link}</a:rPr><a:t>${xmlEscape(text)}</a:t></a:r>`;
++  }
++
++  paragraph(p: Para, color = EF.dark): string {
++    const pt = paraPt(p);
++    const dir = p.rtl ?? this.rtl;
++    const algn = dir ? 'r' : 'l';
++    const rtl = dir ? ' rtl="1"' : '';
++    const spacing = `<a:spcBef><a:spcPts val="0"/></a:spcBef><a:spcAft><a:spcPts val="600"/></a:spcAft>`;
++    let bullet = '<a:buNone/>';
++    let mar = p.level * 342900;
++    let indent = 0;
++    if (p.style === 'bullet' || p.style === 'number') {
++      mar += 342900;
++      indent = -342900;
++      bullet =
++        `<a:buClr><a:srgbClr val="${EF.blue}"/></a:buClr><a:buSzPct val="100000"/>` +
++        (p.style === 'number'
++          ? `<a:buFont typeface="+mj-lt"/><a:buAutoNum type="arabicPeriod" startAt="${p.number ?? 1}"/>`
++          : `<a:buFont typeface="Arial"/><a:buChar char="${p.level % 2 === 0 ? '•' : '–'}"/>`);
++    }
++    const quote = p.style === 'quote';
++    const sub = p.style === 'sub';
++    let runColor = quote ? '373F48' : color;
++    if (sub) {
++      runColor = EF.blue;
++    }
++    const runs = p.runs
++      .map((r) => this.run(r, pt, runColor, { bold: sub, italic: quote }))
++      .join('');
++    return `<a:p><a:pPr marL="${mar}" indent="${indent}" algn="${algn}"${rtl}>${spacing}${bullet}</a:pPr>${runs || `<a:endParaRPr lang="en-US" sz="${pt * 100}" dirty="0"/>`}</a:p>`;
++  }
++
++  /** A title placeholder of the layout, positioned and styled here so the slide does not depend on the master. */
++  placeholder(
++    ph: string,
++    name: string,
++    x: number,
++    y: number,
++    w: number,
++    h: number,
++    text: string,
++    pt: number,
++    color: string,
++    anchor: 't' | 'b' | 'ctr',
++    bold: boolean,
++  ): void {
++    const strong = directionOf(text);
++    const rtl = strong === true;
++    const right = strong ?? this.rtl;
++    const runs = this.run({ text }, pt, color, { bold });
++    this.shapes.push(
++      `<p:sp><p:nvSpPr><p:cNvPr id="${this.id()}" name="${name}"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr>${ph}</p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${w}" cy="${h}"/></a:xfrm></p:spPr><p:txBody><a:bodyPr wrap="square" lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="${anchor}"><a:normAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="${right ? 'r' : 'l'}"${rtl ? ' rtl="1"' : ''}/>${runs}</a:p></p:txBody></p:sp>`,
++    );
++  }
++
++  rect(x: number, y: number, w: number, h: number, color: string, name: string): void {
++    this.shapes.push(
++      `<p:sp><p:nvSpPr><p:cNvPr id="${this.id()}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${w}" cy="${h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="${color}"/></a:solidFill><a:ln><a:noFill/></a:ln></p:spPr></p:sp>`,
++    );
++  }
++
++  textBox(
++    x: number,
++    y: number,
++    w: number,
++    h: number,
++    paragraphs: string,
++    name: string,
++    fill?: string,
++  ): void {
++    const background = fill
++      ? `<a:solidFill><a:srgbClr val="${fill}"/></a:solidFill>`
++      : '<a:noFill/>';
++    this.shapes.push(
++      `<p:sp><p:nvSpPr><p:cNvPr id="${this.id()}" name="${name}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${w}" cy="${h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${background}</p:spPr><p:txBody><a:bodyPr wrap="square" lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="t"><a:normAutofit/></a:bodyPr><a:lstStyle/>${paragraphs}</p:txBody></p:sp>`,
++    );
++  }
++
++  table(t: Table, x: number, y: number): number {
++    const columns = t.rows[0]?.length ?? 1;
++    const colW = Math.floor(CONTENT_W / columns);
++    const border = (side: string) =>
++      `<a:${side} w="12700" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:srgbClr val="${EF.line}"/></a:solidFill><a:prstDash val="solid"/></a:${side}>`;
++    let height = 0;
++    const rowsXml = t.rows
++      .map((row, r) => {
++        const h = rowHeight(row, columns);
++        height += h;
++        const cells = row
++          .map((cell, c) => {
++            /* A number keeps left-to-right order (-3% stays -3%) and lines up with its column's side. */
++            const strong = directionOf(textOf(cell));
++            const rtl = strong === true;
++            const side = (strong ?? t.rtl) ? 'r' : 'l';
++            const align = t.align[c] === 'center' ? 'ctr' : side;
++            const header = r === 0;
++            const runs = cell
++              .map((inline) =>
++                this.run(inline, TABLE_PT, header ? EF.white : EF.dark, { bold: header }),
++              )
++              .join('');
++            const band = r % 2 === 0 ? EF.tint : EF.white;
++            const fill = header ? EF.blue : band;
++            return `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr algn="${align}"${rtl ? ' rtl="1"' : ''}/>${runs || `<a:endParaRPr lang="en-US" sz="${TABLE_PT * 100}" dirty="0"/>`}</a:p></a:txBody><a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">${border('lnL')}${border('lnR')}${border('lnT')}${border('lnB')}<a:solidFill><a:srgbClr val="${fill}"/></a:solidFill></a:tcPr></a:tc>`;
++          })
++          .join('');
++        return `<a:tr h="${h}">${cells}</a:tr>`;
++      })
++      .join('');
++    const grid = Array.from({ length: columns }, () => `<a:gridCol w="${colW}"/>`).join('');
++    this.shapes.push(
++      `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${this.id()}" name="Table ${this.nextId}"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${colW * columns}" cy="${height}"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr firstRow="1" bandRow="1"${t.rtl ? ' rtl="1"' : ''}/><a:tblGrid>${grid}</a:tblGrid>${rowsXml}</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`,
++    );
++    return height;
++  }
++
++  xml(background?: string): string {
++    const bg = background
++      ? `<p:bg><p:bgPr><a:solidFill><a:srgbClr val="${background}"/></a:solidFill><a:effectLst/></p:bgPr></p:bg>`
++      : '';
++    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<p:sld ${NS}><p:cSld>${bg}<p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>${this.shapes.join('')}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`;
++  }
++
++  rels(layout: number): string {
++    const links = this.links
++      .map(
++        (url, i) =>
++          `<Relationship Id="rId${i + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${xmlEscape(url)}" TargetMode="External"/>`,
++      )
++      .join('');
++    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout${layout}.xml"/>${links}</Relationships>`;
++  }
++}
++
++function titleSlide(title: string, subtitle: string, rtl: boolean): SlideXml {
++  const s = new SlideXml(rtl);
++  const titlePt = title.length > 60 ? 32 : 40;
++  s.placeholder(
++    '<p:ph type="ctrTitle"/>',
++    'Title 1',
++    MARGIN_X,
++    Math.round(2.0 * EMU),
++    CONTENT_W,
++    Math.round(1.9 * EMU),
++    title,
++    titlePt,
++    EF.white,
++    'b',
++    true,
++  );
++  const barW = Math.round(1.6 * EMU);
++  s.rect(
++    rtl ? SLIDE_W - MARGIN_X - barW : MARGIN_X,
++    Math.round(4.05 * EMU),
++    barW,
++    Math.round(0.07 * EMU),
++    EF.green,
++    'Accent 2',
++  );
++  if (subtitle) {
++    s.placeholder(
++      '<p:ph type="subTitle" idx="1"/>',
++      'Subtitle 3',
++      MARGIN_X,
++      Math.round(4.3 * EMU),
++      CONTENT_W,
++      Math.round(1.2 * EMU),
++      subtitle,
++      20,
++      EF.green,
++      't',
++      false,
++    );
++  }
++  return s;
++}
++
++function contentSlide(title: string, blocks: Block[], number: number, deckRtl: boolean): SlideXml {
++  const s = new SlideXml(deckRtl);
++  const titleRtl = directionOf(title) ?? deckRtl;
++  s.placeholder(
++    '<p:ph type="title"/>',
++    'Title 1',
++    MARGIN_X,
++    TITLE_Y,
++    CONTENT_W,
++    TITLE_H,
++    title,
++    title.length > 55 ? 24 : 28,
++    EF.blue,
++    'b',
++    true,
++  );
++  const barW = Math.round(1.2 * EMU);
++  s.rect(
++    titleRtl ? SLIDE_W - MARGIN_X - barW : MARGIN_X,
++    ACCENT_Y,
++    barW,
++    Math.round(0.06 * EMU),
++    EF.green,
++    'Accent 2',
++  );
++  let y = BODY_Y;
++  let pending: Para[] = [];
++  const flushText = () => {
++    if (pending.length === 0) {
++      return;
++    }
++    const h = Math.min(
++      BODY_BOTTOM - y,
++      pending.reduce((sum, p) => sum + paraHeight(p), 0) + Math.round(0.1 * EMU),
++    );
++    s.textBox(
++      MARGIN_X,
++      y,
++      CONTENT_W,
++      h,
++      pending.map((p) => s.paragraph(p)).join(''),
++      `Content ${y}`,
++    );
++    y += h;
++    pending = [];
++  };
++  for (const block of blocks) {
++    if (block.kind === 'para') {
++      pending.push(block);
++      continue;
++    }
++    flushText();
++    if (block.kind === 'code') {
++      const h = Math.min(BODY_BOTTOM - y, codeHeight(block) - PARA_GAP);
++      const lines = block.text
++        .split('\n')
++        .map(
++          (line) =>
++            `<a:p><a:pPr algn="l"/>${s.run({ text: line || ' ', code: true }, CODE_PT, EF.dark)}</a:p>`,
++        )
++        .join('');
++      s.textBox(MARGIN_X, y, CONTENT_W, h, lines, `Code ${y}`, EF.warm);
++      y += h + GAP;
++    } else {
++      y += s.table(block, MARGIN_X, y) + GAP;
++    }
++  }
++  flushText();
++  const numberW = Math.round(0.8 * EMU);
++  s.textBox(
++    deckRtl ? MARGIN_X : SLIDE_W - MARGIN_X - numberW,
++    SLIDE_H - Math.round(0.6 * EMU),
++    numberW,
++    Math.round(0.4 * EMU),
++    `<a:p><a:pPr algn="${deckRtl ? 'l' : 'r'}"/>${s.run({ text: String(number) }, 12, EF.muted)}</a:p>`,
++    'Slide Number',
++  );
++  return s;
++}
++
++const THEME = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Environment Fund"><a:themeElements><a:clrScheme name="Environment Fund"><a:dk1><a:srgbClr val="${EF.dark}"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="${EF.blue}"/></a:dk2><a:lt2><a:srgbClr val="${EF.warm}"/></a:lt2><a:accent1><a:srgbClr val="${EF.blue}"/></a:accent1><a:accent2><a:srgbClr val="${EF.blue2}"/></a:accent2><a:accent3><a:srgbClr val="${EF.green}"/></a:accent3><a:accent4><a:srgbClr val="${EF.brown}"/></a:accent4><a:accent5><a:srgbClr val="4E61C8"/></a:accent5><a:accent6><a:srgbClr val="87952E"/></a:accent6><a:hlink><a:srgbClr val="${EF.blue2}"/></a:hlink><a:folHlink><a:srgbClr val="1E285F"/></a:folHlink></a:clrScheme><a:fontScheme name="Environment Fund"><a:majorFont><a:latin typeface="${EF_DOC.font}"/><a:ea typeface=""/><a:cs typeface="${EF_DOC.font}"/></a:majorFont><a:minorFont><a:latin typeface="${EF_DOC.font}"/><a:ea typeface=""/><a:cs typeface="${EF_DOC.font}"/></a:minorFont></a:fontScheme><a:fmtScheme name="Environment Fund"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln w="6350" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln><a:ln w="12700" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln><a:ln w="19050" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements><a:objectDefaults/><a:extraClrSchemeLst/></a:theme>`;
++
++const level = (n: number, pt: number, bold: boolean) =>
++  `<a:lvl${n}pPr marL="${(n - 1) * 342900}" indent="0" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0" hangingPunct="1"><a:spcBef><a:spcPts val="0"/></a:spcBef><a:buNone/><a:defRPr sz="${pt * 100}" kern="1200"${bold ? ' b="1"' : ''}><a:solidFill><a:schemeClr val="tx1"/></a:solidFill><a:latin typeface="+mn-lt"/><a:ea typeface="+mn-ea"/><a:cs typeface="+mn-cs"/></a:defRPr></a:lvl${n}pPr>`;
++
++const GROUP = `<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>`;
++
++const phShape = (
++  id: number,
++  name: string,
++  ph: string,
++  x: number,
++  y: number,
++  w: number,
++  h: number,
++) =>
++  `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr>${ph}</p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${w}" cy="${h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="en-US"/></a:p></p:txBody></p:sp>`;
++
++const MASTER = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<p:sldMaster ${NS}><p:cSld><p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg><p:spTree>${GROUP}${phShape(2, 'Title Placeholder 1', '<p:ph type="title"/>', MARGIN_X, TITLE_Y, CONTENT_W, TITLE_H)}${phShape(3, 'Text Placeholder 2', '<p:ph type="body" idx="1"/>', MARGIN_X, BODY_Y, CONTENT_W, BODY_BOTTOM - BODY_Y)}</p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/><p:sldLayoutId id="2147483650" r:id="rId2"/></p:sldLayoutIdLst><p:txStyles><p:titleStyle>${level(1, 28, true).replace('<a:solidFill><a:schemeClr val="tx1"/>', '<a:solidFill><a:schemeClr val="tx2"/>').replace(/\+mn-/g, '+mj-')}</p:titleStyle><p:bodyStyle>${[1, 2, 3].map((n) => level(n, BODY_PT, false)).join('')}</p:bodyStyle><p:otherStyle>${level(1, 18, false)}</p:otherStyle></p:txStyles></p:sldMaster>`;
++
++const layout = (
++  type: string,
++  name: string,
++  shapes: string,
++) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<p:sldLayout ${NS} type="${type}" preserve="1"><p:cSld name="${name}"><p:spTree>${GROUP}${shapes}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>`;
++
++const LAYOUT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>`;
++
++export function buildPptxParts(markdown: string, fallbackTitle: string): Record<string, string> {
++  const deck = markdownToSlides(markdown, fallbackTitle);
++  const slides: Array<{ xml: string; rels: string }> = [];
++  const first = titleSlide(deck.title, deck.subtitle, deck.rtl);
++  slides.push({ xml: first.xml(EF.blue), rels: first.rels(1) });
++  for (const slide of deck.slides) {
++    paginate(slide).forEach((blocks, page) => {
++      const continued =
++        page === 0
++          ? slide.title
++          : `${slide.title} ${isRtlText(slide.title) || deck.rtl ? '(تابع)' : '(cont.)'}`;
++      const s = contentSlide(continued, blocks, slides.length + 1, deck.rtl);
++      slides.push({ xml: s.xml(), rels: s.rels(2) });
++    });
++  }
++  const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
++  const parts: Record<string, string> = {
++    '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/><Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/slideLayouts/slideLayout2.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/><Override PartName="/ppt/presProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presProps+xml"/><Override PartName="/ppt/viewProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.viewProps+xml"/><Override PartName="/ppt/tableStyles.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/>${slides
++      .map(
++        (_, i) =>
++          `<Override PartName="/ppt/slides/slide${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`,
++      )
++      .join(
++        '',
++      )}<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`,
++    '_rels/.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`,
++    'docProps/core.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${xmlEscape(deck.title)}</dc:title><dc:creator>بصير</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created></cp:coreProperties>`,
++    'docProps/app.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Baseer</Application><Slides>${slides.length}</Slides></Properties>`,
++    'ppt/presentation.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<p:presentation ${NS} saveSubsetFonts="1"${deck.rtl ? ' rtl="1"' : ''}><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst>${slides
++      .map((_, i) => `<p:sldId id="${256 + i}" r:id="rId${10 + i}"/>`)
++      .join(
++        '',
++      )}</p:sldIdLst><p:sldSz cx="${SLIDE_W}" cy="${SLIDE_H}"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`,
++    'ppt/_rels/presentation.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/presProps" Target="presProps.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/viewProps" Target="viewProps.xml"/><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles" Target="tableStyles.xml"/>${slides
++      .map(
++        (_, i) =>
++          `<Relationship Id="rId${10 + i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${i + 1}.xml"/>`,
++      )
++      .join('')}</Relationships>`,
++    'ppt/presProps.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<p:presentationPr ${NS}/>`,
++    'ppt/viewProps.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<p:viewPr ${NS}/>`,
++    'ppt/tableStyles.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<a:tblStyleLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" def="{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}"/>`,
++    'ppt/theme/theme1.xml': THEME,
++    'ppt/slideMasters/slideMaster1.xml': MASTER,
++    'ppt/slideMasters/_rels/slideMaster1.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/></Relationships>`,
++    'ppt/slideLayouts/slideLayout1.xml': layout(
++      'title',
++      'Title Slide',
++      phShape(
++        2,
++        'Title 1',
++        '<p:ph type="ctrTitle"/>',
++        MARGIN_X,
++        Math.round(2.0 * EMU),
++        CONTENT_W,
++        Math.round(1.9 * EMU),
++      ) +
++        phShape(
++          3,
++          'Subtitle 2',
++          '<p:ph type="subTitle" idx="1"/>',
++          MARGIN_X,
++          Math.round(4.3 * EMU),
++          CONTENT_W,
++          Math.round(1.2 * EMU),
++        ),
++    ),
++    'ppt/slideLayouts/_rels/slideLayout1.xml.rels': LAYOUT_RELS,
++    'ppt/slideLayouts/slideLayout2.xml': layout(
++      'titleOnly',
++      'Title Only',
++      phShape(2, 'Title 1', '<p:ph type="title"/>', MARGIN_X, TITLE_Y, CONTENT_W, TITLE_H),
++    ),
++    'ppt/slideLayouts/_rels/slideLayout2.xml.rels': LAYOUT_RELS,
++  };
++  slides.forEach((slide, i) => {
++    parts[`ppt/slides/slide${i + 1}.xml`] = slide.xml;
++    parts[`ppt/slides/_rels/slide${i + 1}.xml.rels`] = slide.rels;
++  });
++  return parts;
++}
++
++export function markdownToPptx(markdown: string, title: string): Blob {
++  return new Blob([storedZip(buildPptxParts(markdown, title)).buffer as ArrayBuffer], {
++    type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
++  });
++}
+diff --git a/client/src/utils/efaiwXlsx.ts b/client/src/utils/efaiwXlsx.ts
+new file mode 100644
+index 0000000..fc56459
+--- /dev/null
++++ b/client/src/utils/efaiwXlsx.ts
+@@ -0,0 +1,323 @@
++/**
++ * EF (#149): the tables of a reply or document as an Excel workbook, built in the browser from its Markdown like the
++ * Word file (utils/efaiwDocx.ts): SpreadsheetML in a stored ZIP, no new dependency. One sheet per table, named after
++ * the heading above it. A cell that is a number (Western, Arabic-Indic or Persian digits, thousands separators, a
++ * percentage, a unit or currency before or after it) is stored as a number and shown with its unit, so the sheet can be
++ * summed and sorted; dates, codes and phone numbers stay text. Header row in the Environment Fund palette (visual
++ * identity guide v01: the lightest primary-blue shade, primary dark text, neutral borders), frozen, with a filter;
++ * columns sized to their text; Arabic sheets run right to left. Tahoma, the guide's secondary typeface, as in Word.
++ */
++import { gfm } from 'micromark-extension-gfm';
++import { gfmFromMarkdown } from 'mdast-util-gfm';
++import { fromMarkdown } from 'mdast-util-from-markdown';
++import { EF_DOC, isRtlText, storedZip, stripArtifactDirectives, xmlEscape } from './efaiwDocx';
++
++type Node = {
++  type: string;
++  value?: string;
++  depth?: number;
++  alt?: string | null;
++  children?: Node[];
++};
++
++export type SheetTable = { name: string; rows: string[][]; rtl: boolean };
++
++const plain = (node: Node): string => {
++  if (node.type === 'image') {
++    return node.alt ?? '';
++  }
++  if (node.type === 'break') {
++    return ' ';
++  }
++  return node.value ?? (node.children ?? []).map(plain).join('');
++};
++
++/** Excel forbids these in sheet names, and a name of more than 31 characters. */
++const sheetName = (text: string, index: number, rtl: boolean, used: Set<string>): string => {
++  const base =
++    text
++      .replace(/[[\]:*?/\\]/g, ' ')
++      .replace(/\s+/g, ' ')
++      .trim()
++      .replace(/^'+|'+$/g, '')
++      .slice(0, 31)
++      .trim() || (rtl ? `جدول ${index}` : `Table ${index}`);
++  let name = base;
++  for (let n = 2; used.has(name.toLowerCase()); n++) {
++    const suffix = ` (${n})`;
++    name = base.slice(0, 31 - suffix.length) + suffix;
++  }
++  used.add(name.toLowerCase());
++  return name;
++};
++
++/** Every GFM table of the Markdown, with the text of the nearest heading above it. */
++export function markdownTables(markdown: string): SheetTable[] {
++  const tree = fromMarkdown(stripArtifactDirectives(markdown), {
++    extensions: [gfm()],
++    mdastExtensions: [gfmFromMarkdown()],
++  }) as unknown as Node;
++  const tables: SheetTable[] = [];
++  const used = new Set<string>();
++  let heading = '';
++  const walk = (nodes: Node[] = []) => {
++    for (const node of nodes) {
++      if (node.type === 'heading') {
++        heading = plain(node).trim();
++      } else if (node.type === 'table') {
++        const rows = (node.children ?? []).map((row) =>
++          (row.children ?? []).map((cell) => plain(cell).trim()),
++        );
++        const columns = Math.max(0, ...rows.map((row) => row.length));
++        if (rows.length === 0 || columns === 0) {
++          continue;
++        }
++        const filled = rows.map((row) => [...row, ...Array(columns - row.length).fill('')]);
++        const rtl = isRtlText(`${heading} ${filled.flat().join(' ')}`);
++        tables.push({ name: sheetName(heading, tables.length + 1, rtl, used), rows: filled, rtl });
++      } else if (node.children && node.type !== 'paragraph') {
++        walk(node.children);
++      }
++    }
++  };
++  walk(tree.children);
++  return tables;
++}
++
++/** A cheap check for a GFM table (its delimiter row), for menus drawn on every reply; markdownTables is exact. */
++export const hasMarkdownTable = (markdown: string): boolean =>
++  /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/m.test(markdown);
++
++const DIGITS: Record<string, string> = {};
++'٠١٢٣٤٥٦٧٨٩'.split('').forEach((d, i) => (DIGITS[d] = String(i)));
++'۰۱۲۳۴۵۶۷۸۹'.split('').forEach((d, i) => (DIGITS[d] = String(i)));
++
++type NumberCell = { value: number; format: string };
++
++/** A unit or currency written next to a number: letters and symbols, no digits, short. */
++const UNIT = /^[^\d\s\u0660-\u0669\u06F0-\u06F9][^\d\u0660-\u0669\u06F0-\u06F9]{0,11}$/;
++
++/**
++ * The cell as a number with its display format, or null when it must stay text: a date, a code with a leading zero
++ * (a phone or account number), more than 15 significant digits (Excel would round it), or other text.
++ */
++export function parseNumberCell(text: string): NumberCell | null {
++  let t = text
++    .trim()
++    .replace(/[\u0660-\u0669\u06F0-\u06F9]/g, (d) => DIGITS[d])
++    .replace(/[\u066C\u060C]/g, ',')
++    .replace(/\u066B/g, '.')
++    .replace(/[\u00A0\u202F\u2009]/g, ' ')
++    .replace(/\u2212/g, '-');
++  if (t === '') {
++    return null;
++  }
++  let negative = false;
++  const paren = t.match(/^\((.*)\)$/);
++  if (paren) {
++    negative = true;
++    t = paren[1].trim();
++  }
++  /* An accounting negative, (5), keeps its parentheses. */
++  const signed = (format: string): string => (paren ? `${format};(${format})` : format);
++  const sign = t.match(/^([-+])\s*/);
++  if (sign) {
++    negative = negative !== (sign[1] === '-');
++    t = t.slice(sign[0].length);
++  }
++  const m = t.match(
++    /^(?:([^\d\s][^\d]{0,11}?)(\s*))?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(\s*)(%|[^\d\s][^\d]{0,11})?$/,
++  );
++  if (!m) {
++    return null;
++  }
++  const [, prefixRaw, prefixGap, intPart, fraction, suffixGap, suffixRaw] = m;
++  const prefix = prefixRaw?.trim() ?? '';
++  const suffix = suffixRaw?.trim() ?? '';
++  if ((prefix && !UNIT.test(prefix)) || (suffix && suffix !== '%' && !UNIT.test(suffix))) {
++    return null;
++  }
++  if (prefix && suffix) {
++    return null;
++  }
++  const grouping = intPart.includes(',');
++  const digits = intPart.replace(/,/g, '');
++  const leadingZero = digits.length > 1 && digits.startsWith('0') && !grouping;
++  if (leadingZero || digits.length + (fraction?.length ?? 0) > 15) {
++    return null;
++  }
++  let value = Number(`${digits}${fraction ? `.${fraction}` : ''}`);
++  if (!Number.isFinite(value)) {
++    return null;
++  }
++  if (negative) {
++    value = -value;
++  }
++  /* The number keeps how it was written: grouped only when the author grouped it (a year stays 2026). */
++  const decimals = fraction ? Math.min(fraction.length, 4) : 0;
++  const places = decimals > 0 ? `.${'0'.repeat(decimals)}` : '';
++  const base = `${grouping ? '#,##0' : '0'}${places}`;
++  if (suffix === '%') {
++    return { value: value / 100, format: signed(`0${places}%`) };
++  }
++  const quote = (unit: string) => `"${unit.replace(/"/g, '')}"`;
++  if (prefix) {
++    return { value, format: signed(`${quote(`${prefix}${prefixGap ? ' ' : ''}`)}${base}`) };
++  }
++  if (suffix) {
++    return { value, format: signed(`${base}${quote(`${suffixGap ? ' ' : ''}${suffix}`)}`) };
++  }
++  return { value, format: signed(base) };
++}
++
++/** Built-in number formats; anything else gets a custom id from 164 on. */
++const BUILTIN_FORMATS: Record<string, number> = {
++  '0': 1,
++  '0.00': 2,
++  '#,##0': 3,
++  '#,##0.00': 4,
++  '0%': 9,
++  '0.00%': 10,
++};
++
++const columnName = (index: number): string => {
++  let name = '';
++  for (let n = index + 1; n > 0; n = Math.floor((n - 1) / 26)) {
++    name = String.fromCharCode(65 + ((n - 1) % 26)) + name;
++  }
++  return name;
++};
++
++/** A column width (Excel's unit: about one digit) fitting the longest cell, within 8 and 60. */
++const columnWidth = (cells: string[]): number => {
++  const longest = Math.max(0, ...cells.map((cell) => cell.length));
++  return Math.min(60, Math.max(8, Math.ceil(longest * 1.15) + 2));
++};
++
++const quoteSheet = (name: string): string => `'${name.replace(/'/g, "''")}'`;
++
++export function buildXlsxParts(tables: SheetTable[], title: string): Record<string, string> {
++  const formats = new Map<string, number>();
++  const formatId = (code: string): number => {
++    if (BUILTIN_FORMATS[code] != null) {
++      return BUILTIN_FORMATS[code];
++    }
++    if (!formats.has(code)) {
++      formats.set(code, 164 + formats.size);
++    }
++    return formats.get(code) as number;
++  };
++  /** cellXfs: 0 default, 1 header, 2 body text; then one body style per number format. */
++  const numberStyles = new Map<number, number>();
++  const styleFor = (code: string): number => {
++    const id = formatId(code);
++    if (!numberStyles.has(id)) {
++      numberStyles.set(id, 3 + numberStyles.size);
++    }
++    return numberStyles.get(id) as number;
++  };
++
++  const sheets = tables.map((table, sheetIndex) => {
++    const columns = table.rows[0].length;
++    const last = `${columnName(columns - 1)}${table.rows.length}`;
++    const rowsXml = table.rows
++      .map((row, r) => {
++        const cells = row
++          .map((text, c) => {
++            const ref = `${columnName(c)}${r + 1}`;
++            if (text === '') {
++              return r === 0 ? `<c r="${ref}" s="1"/>` : `<c r="${ref}" s="2"/>`;
++            }
++            const number = r === 0 ? null : parseNumberCell(text);
++            if (number) {
++              return `<c r="${ref}" s="${styleFor(number.format)}"><v>${number.value}</v></c>`;
++            }
++            return `<c r="${ref}" s="${r === 0 ? 1 : 2}" t="inlineStr"><is><t xml:space="preserve">${xmlEscape(text)}</t></is></c>`;
++          })
++          .join('');
++        return `<row r="${r + 1}">${cells}</row>`;
++      })
++      .join('');
++    const cols = Array.from(
++      { length: columns },
++      (_, c) =>
++        `<col min="${c + 1}" max="${c + 1}" width="${columnWidth(table.rows.map((row) => row[c]))}" customWidth="1"/>`,
++    ).join('');
++    const pane =
++      table.rows.length > 1
++        ? '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/>'
++        : '';
++    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0"${table.rtl ? ' rightToLeft="1"' : ''}${sheetIndex === 0 ? ' tabSelected="1"' : ''}>${pane}</sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols>${cols}</cols><sheetData>${rowsXml}</sheetData><autoFilter ref="A1:${last}"/><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/><pageSetup orientation="landscape" paperSize="9"/></worksheet>`;
++  });
++
++  const border = `<border><left style="thin"><color rgb="FF${EF_DOC.line}"/></left><right style="thin"><color rgb="FF${EF_DOC.line}"/></right><top style="thin"><color rgb="FF${EF_DOC.line}"/></top><bottom style="thin"><color rgb="FF${EF_DOC.line}"/></bottom><diagonal/></border>`;
++  const numFmts = [...formats.entries()]
++    .map(([code, id]) => `<numFmt numFmtId="${id}" formatCode="${xmlEscape(code)}"/>`)
++    .join('');
++  const numberXfs = [...numberStyles.keys()]
++    .map(
++      (id) =>
++        `<xf numFmtId="${id}" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment vertical="top"/></xf>`,
++    )
++    .join('');
++  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${numFmts ? `<numFmts count="${formats.size}">${numFmts}</numFmts>` : ''}<fonts count="2"><font><sz val="11"/><color rgb="FF${EF_DOC.text}"/><name val="${EF_DOC.font}"/><family val="2"/></font><font><b/><sz val="11"/><color rgb="FF${EF_DOC.text}"/><name val="${EF_DOC.font}"/><family val="2"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF${EF_DOC.tint}"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>${border}</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${3 + numberStyles.size}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>${numberXfs}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
++
++  const filters = tables
++    .map((table, i) => {
++      const last = `$${columnName(table.rows[0].length - 1)}$${table.rows.length}`;
++      return `<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">${xmlEscape(quoteSheet(table.name))}!$A$1:${last}</definedName>`;
++    })
++    .join('');
++  const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
++  const parts: Record<string, string> = {
++    '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${tables
++      .map(
++        (_, i) =>
++          `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`,
++      )
++      .join(
++        '',
++      )}<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`,
++    '_rels/.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`,
++    'docProps/core.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${xmlEscape(title)}</dc:title><dc:creator>بصير</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created></cp:coreProperties>`,
++    'docProps/app.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Baseer</Application></Properties>`,
++    'xl/workbook.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="0"/></bookViews><sheets>${tables
++      .map(
++        (table, i) =>
++          `<sheet name="${xmlEscape(table.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`,
++      )
++      .join('')}</sheets><definedNames>${filters}</definedNames></workbook>`,
++    'xl/_rels/workbook.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${tables
++      .map(
++        (_, i) =>
++          `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`,
++      )
++      .join(
++        '',
++      )}<Relationship Id="rId${tables.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
++    'xl/styles.xml': styles,
++  };
++  sheets.forEach((xml, i) => {
++    parts[`xl/worksheets/sheet${i + 1}.xml`] = xml;
++  });
++  return parts;
++}
++
++/** The workbook of the Markdown's tables, or null when it has none. */
++export function markdownToXlsx(markdown: string, title: string): Blob | null {
++  const tables = markdownTables(markdown);
++  if (tables.length === 0) {
++    return null;
++  }
++  return new Blob([storedZip(buildXlsxParts(tables, title)).buffer as ArrayBuffer], {
++    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
++  });
++}

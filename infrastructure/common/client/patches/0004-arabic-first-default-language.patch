@@ -1,0 +1,36 @@
+Arabic-first (#89, ADR-0013): without a saved language choice the interface opens in Arabic instead of the
+browser language. Settings -> General -> Language still switches and remembers the choice.
+
+diff --git a/client/src/locales/i18n.ts b/client/src/locales/i18n.ts
+index 02f1d0e..3eb195b 100644
+--- a/client/src/locales/i18n.ts
++++ b/client/src/locales/i18n.ts
+@@ -218,7 +218,8 @@ export function normalizeLocale(locale?: string | null): SupportedLocale {
+ export function detectInitialLanguage() {
+   const cookieLang = readCookie('lang');
+   const storedLang = readStoredLanguage();
+-  return normalizeLocale(cookieLang || storedLang || getNavigatorLanguage());
++  /** EF AI Workspace is Arabic-first: no saved choice means Arabic, not the browser language. */
++  return normalizeLocale(cookieLang || storedLang || 'ar');
+ }
+ 
+ export async function ensureLocale(locale?: string | null): Promise<SupportedLocale> {
+diff --git a/client/src/store/language.ts b/client/src/store/language.ts
+index f49ee99..4b41d08 100644
+--- a/client/src/store/language.ts
++++ b/client/src/store/language.ts
+@@ -20,12 +20,8 @@ const readStoredLang = () => {
+   }
+ };
+ 
+-const defaultLang = () => {
+-  const userLang =
+-    (typeof navigator !== 'undefined' ? navigator.language || navigator.languages?.[0] : null) ??
+-    'en';
+-  return Cookies.get('lang') || readStoredLang() || userLang;
+-};
++/** EF AI Workspace is Arabic-first: no saved choice means Arabic, not the browser language. */
++const defaultLang = () => Cookies.get('lang') || readStoredLang() || 'ar';
+ 
+ const lang = atomWithLocalStorage('lang', defaultLang());
+ const languageLoading = atom<boolean>({

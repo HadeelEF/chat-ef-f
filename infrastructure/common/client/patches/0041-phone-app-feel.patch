@@ -1,0 +1,685 @@
+EF AI Workspace: the web client behaves like a phone app (#238). Owner decision 2026-10-26, after an audit of the
+installed app on an iPhone 13 Pro Max (items 1-6 of the audit; brand.css holds the touch-screen styles).
+
+- index.html: `viewport-fit=cover`, so iPhone applies the safe-area spacing the drawer, the sheets, the top bar and the
+  composer already ask for (env(safe-area-inset-*) is 0 without it).
+- utils/efaiwApp.ts: keeps the browser's install offer (`beforeinstallprompt`, Android and desktop Chromium), which can
+  arrive before the app mounts (main.jsx imports it first); `useEfInstall` for the menu row; iPhone and installed-app
+  detection.
+- Account menu (Nav/AccountSettings.tsx): «تثبيت التطبيق» when the browser offers installation (its dialog) or on
+  iPhone (the hint); never inside the installed app.
+- components/EfApp/EfAppShell.tsx, mounted in routes/Root.tsx:
+  - the iPhone hint: once, outside the installed app, «اضغط زر المشاركة ثم إضافة إلى الشاشة الرئيسية». Its state lives
+    in utils/efaiwApp.ts so the skills tip (Chat/Input/EfSkillsTip.tsx) waits while it is open: one card at a time;
+  - the new-version bar: a new service worker took over an open page (upstream's sw-heal reloads only pages that
+    stop answering), so «نسخة جديدة من بصير متاحة — تحديث»; back in the foreground the worker is re-checked at most
+    every ten minutes.
+- Sign-in and sign-up (Auth/LoginForm.tsx, Auth/Registration.tsx): the e-mail keyboard, no capital first letter, no
+  autocorrect.
+- Strings: six `com_efaiw_*` keys (English here, Arabic in ar.json).
+- Tests: utils/__tests__/efaiwApp.test.ts, components/EfApp/__tests__/EfAppShell.spec.tsx.
+
+diff --git a/client/index.html b/client/index.html
+index e000310..ab4bee0 100644
+--- a/client/index.html
++++ b/client/index.html
+@@ -21,7 +21,7 @@
+     <link rel="stylesheet" href="/assets/ef-chat.css" />
+     <meta
+       name="viewport"
+-      content="width=device-width, initial-scale=1, interactive-widget=resizes-content"
++      content="width=device-width, initial-scale=1, interactive-widget=resizes-content, viewport-fit=cover"
+     />
+     <style>
+       html,
+diff --git a/client/src/components/Auth/LoginForm.tsx b/client/src/components/Auth/LoginForm.tsx
+index 79ebcbe..a8ebdad 100644
+--- a/client/src/components/Auth/LoginForm.tsx
++++ b/client/src/components/Auth/LoginForm.tsx
+@@ -100,6 +100,11 @@ const LoginForm: React.FC<TLoginFormProps> = ({ onSubmit, startupConfig, error,
+               type="text"
+               id="email"
+               autoComplete={useUsernameLogin ? 'username' : 'email'}
++              /* EF (#238): the phone keyboard for an address, without a capital first letter or autocorrect. */
++              inputMode={useUsernameLogin ? undefined : 'email'}
++              autoCapitalize="none"
++              autoCorrect="off"
++              spellCheck={false}
+               aria-label={localize('com_auth_email')}
+               {...register('email', {
+                 required: localize('com_auth_email_required'),
+diff --git a/client/src/components/Auth/Registration.tsx b/client/src/components/Auth/Registration.tsx
+index fe2ebee..9f29d2b 100644
+--- a/client/src/components/Auth/Registration.tsx
++++ b/client/src/components/Auth/Registration.tsx
+@@ -102,6 +102,10 @@ const Registration: React.FC = () => {
+                 id={id}
+                 type={type}
+                 autoComplete={id}
++                /* EF (#238): addresses and user names without a capital first letter or autocorrect. */
++                {...(id === 'email' || id === 'username'
++                  ? { autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false }
++                  : {})}
+                 aria-label={fieldLabel}
+                 {...field}
+                 aria-invalid={!!errors[id]}
+diff --git a/client/src/components/Chat/Input/EfSkillsTip.tsx b/client/src/components/Chat/Input/EfSkillsTip.tsx
+index ee84d60..4931613 100644
+--- a/client/src/components/Chat/Input/EfSkillsTip.tsx
++++ b/client/src/components/Chat/Input/EfSkillsTip.tsx
+@@ -2,6 +2,7 @@ import { memo, useState } from 'react';
+ import { useRecoilValue } from 'recoil';
+ import { Permissions, PermissionTypes } from 'librechat-data-provider';
+ import { useAgentCapabilities, useGetAgentsConfig, useHasAccess, useLocalize } from '~/hooks';
++import { useInstallHintOpen } from '~/utils/efaiwApp';
+ import store from '~/store';
+ 
+ const SEEN_KEY = 'efaiw:skills-tip-seen';
+@@ -16,7 +17,7 @@ const wasSeen = () => {
+ 
+ /**
+  * EF (chat design #224): once, above the message box of a new chat, how to use a skill; «فهمت» hides it for good on
+- * this browser. Only where «$» works.
++ * this browser. Only where «$» works, and not while the iPhone install hint is open (#238: one card at a time).
+  */
+ function EfSkillsTip() {
+   const localize = useLocalize();
+@@ -28,8 +29,9 @@ function EfSkillsTip() {
+   });
+   const { agentsConfig } = useGetAgentsConfig();
+   const { skillsEnabled } = useAgentCapabilities(agentsConfig?.capabilities);
++  const installHintOpen = useInstallHintOpen();
+ 
+-  if (hidden || !dollarCommandEnabled || !canUseSkills || !skillsEnabled) {
++  if (hidden || installHintOpen || !dollarCommandEnabled || !canUseSkills || !skillsEnabled) {
+     return null;
+   }
+   return (
+diff --git a/client/src/components/EfApp/EfAppShell.tsx b/client/src/components/EfApp/EfAppShell.tsx
+new file mode 100644
+index 0000000..d030a9c
+--- /dev/null
++++ b/client/src/components/EfApp/EfAppShell.tsx
+@@ -0,0 +1,104 @@
++import { memo, useEffect, useState } from 'react';
++import { Share } from 'lucide-react';
++import { dismissInstallHint, useInstallHintOpen } from '~/utils/efaiwApp';
++import { useLocalize } from '~/hooks';
++
++/** The browser re-checks the service worker on each page load only; an installed app may stay open for days. */
++const UPDATE_CHECK_MS = 10 * 60 * 1000;
++
++/**
++ * EF (#238): on iPhone, outside the installed app, once: how to put «بصير» on the home screen (iPhone has no install
++ * button). «فهمت» hides it for good on this browser; the account menu's «تثبيت التطبيق» shows it again.
++ */
++function EfInstallHint() {
++  const localize = useLocalize();
++  const open = useInstallHintOpen();
++
++  if (!open) {
++    return null;
++  }
++  return (
++    <div className="efaiw-install-hint" role="note" aria-labelledby="efaiw-install-hint-title">
++      <span className="efaiw-install-hint-icon" aria-hidden="true">
++        <Share className="h-5 w-5" />
++      </span>
++      <div className="efaiw-install-hint-text">
++        <b id="efaiw-install-hint-title">{localize('com_efaiw_install_hint_title')}</b>
++        <span>{localize('com_efaiw_install_hint_body')}</span>
++      </div>
++      <button type="button" data-testid="efaiw-install-hint-ok" onClick={dismissInstallHint}>
++        {localize('com_efaiw_install_hint_ok')}
++      </button>
++    </div>
++  );
++}
++
++/**
++ * EF (#238): a new version deployed while the app is open. The new service worker takes over at once (skipWaiting,
++ * clientsClaim) but the page keeps running the old build, so the employee is told and chooses when to reload. The
++ * first take-over after a fresh install is not an update and stays silent. When the app comes back to the
++ * foreground, the worker is re-checked at most every ten minutes.
++ */
++function EfUpdateBar() {
++  const localize = useLocalize();
++  const [ready, setReady] = useState(false);
++
++  useEffect(() => {
++    const sw = typeof navigator !== 'undefined' ? navigator.serviceWorker : undefined;
++    if (sw == null) {
++      return;
++    }
++    let hadController = sw.controller != null;
++    const onControllerChange = () => {
++      if (hadController) {
++        setReady(true);
++      }
++      hadController = true;
++    };
++    let lastCheck = Date.now();
++    const onVisible = () => {
++      if (document.visibilityState !== 'visible' || Date.now() - lastCheck < UPDATE_CHECK_MS) {
++        return;
++      }
++      lastCheck = Date.now();
++      sw.getRegistration()
++        .then((registration) => registration?.update())
++        .catch(() => {
++          /* Offline or no worker: the next return to the foreground tries again. */
++        });
++    };
++    sw.addEventListener('controllerchange', onControllerChange);
++    document.addEventListener('visibilitychange', onVisible);
++    return () => {
++      sw.removeEventListener('controllerchange', onControllerChange);
++      document.removeEventListener('visibilitychange', onVisible);
++    };
++  }, []);
++
++  if (!ready) {
++    return null;
++  }
++  return (
++    <div className="efaiw-update-bar" role="status">
++      <span>{localize('com_efaiw_update_available')}</span>
++      <button
++        type="button"
++        data-testid="efaiw-update-reload"
++        onClick={() => window.location.reload()}
++      >
++        {localize('com_efaiw_update_reload')}
++      </button>
++    </div>
++  );
++}
++
++function EfAppShell() {
++  return (
++    <>
++      <EfInstallHint />
++      <EfUpdateBar />
++    </>
++  );
++}
++
++export default memo(EfAppShell);
+diff --git a/client/src/components/EfApp/__tests__/EfAppShell.spec.tsx b/client/src/components/EfApp/__tests__/EfAppShell.spec.tsx
+new file mode 100644
+index 0000000..9ba9444
+--- /dev/null
++++ b/client/src/components/EfApp/__tests__/EfAppShell.spec.tsx
+@@ -0,0 +1,123 @@
++import React from 'react';
++import '@testing-library/jest-dom/extend-expect';
++import { act, fireEvent, render, screen } from '@testing-library/react';
++
++jest.mock('~/hooks', () => ({
++  useLocalize: () => (key: string) => key,
++}));
++
++import { dismissInstallHint, openInstallHint } from '~/utils/efaiwApp';
++import EfAppShell from '../EfAppShell';
++
++const IPHONE =
++  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
++const ANDROID =
++  'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36';
++
++const setNavigator = (key: string, value: unknown) =>
++  Object.defineProperty(window.navigator, key, { value, configurable: true });
++
++class FakeServiceWorker extends EventTarget {
++  controller: object | null;
++  update = jest.fn(() => Promise.resolve());
++  getRegistration = jest.fn(() => Promise.resolve({ update: this.update }));
++  constructor(controller: object | null) {
++    super();
++    this.controller = controller;
++  }
++}
++
++describe('EfAppShell: the iPhone install hint (#238)', () => {
++  beforeEach(() => {
++    localStorage.clear();
++    setNavigator('serviceWorker', undefined);
++    setNavigator('standalone', undefined);
++    setNavigator('platform', '');
++  });
++  afterEach(() => {
++    act(() => dismissInstallHint());
++    localStorage.clear();
++  });
++
++  it('iPhone browser: shown once; «فهمت» hides it for good; the menu row shows it again', () => {
++    setNavigator('userAgent', IPHONE);
++    const { unmount } = render(<EfAppShell />);
++    expect(screen.getByRole('note')).toHaveTextContent('com_efaiw_install_hint_title');
++    expect(screen.getByRole('note')).toHaveTextContent('com_efaiw_install_hint_body');
++
++    fireEvent.click(screen.getByTestId('efaiw-install-hint-ok'));
++    expect(screen.queryByRole('note')).toBeNull();
++    expect(localStorage.getItem('efaiw:install-hint-seen')).toBe('1');
++
++    unmount();
++    render(<EfAppShell />);
++    expect(screen.queryByRole('note')).toBeNull();
++    act(() => openInstallHint());
++    expect(screen.getByRole('note')).toBeInTheDocument();
++  });
++
++  it('never inside the installed app, and not on Android (it has the browser dialog)', () => {
++    setNavigator('userAgent', IPHONE);
++    setNavigator('standalone', true);
++    const { unmount } = render(<EfAppShell />);
++    expect(screen.queryByRole('note')).toBeNull();
++    unmount();
++
++    setNavigator('standalone', undefined);
++    setNavigator('userAgent', ANDROID);
++    render(<EfAppShell />);
++    expect(screen.queryByRole('note')).toBeNull();
++  });
++});
++
++describe('EfAppShell: the new-version bar (#238)', () => {
++  beforeEach(() => {
++    setNavigator('userAgent', ANDROID);
++  });
++
++  it('a new worker taking over an open page shows «تحديث»', () => {
++    const sw = new FakeServiceWorker({});
++    setNavigator('serviceWorker', sw);
++    render(<EfAppShell />);
++    expect(screen.queryByRole('status')).toBeNull();
++    act(() => {
++      sw.dispatchEvent(new Event('controllerchange'));
++    });
++    expect(screen.getByRole('status')).toHaveTextContent('com_efaiw_update_available');
++    expect(screen.getByTestId('efaiw-update-reload')).toHaveTextContent('com_efaiw_update_reload');
++  });
++
++  it('the first take-over after a fresh install is silent', () => {
++    const sw = new FakeServiceWorker(null);
++    setNavigator('serviceWorker', sw);
++    render(<EfAppShell />);
++    act(() => {
++      sw.dispatchEvent(new Event('controllerchange'));
++    });
++    expect(screen.queryByRole('status')).toBeNull();
++    act(() => {
++      sw.dispatchEvent(new Event('controllerchange'));
++    });
++    expect(screen.getByRole('status')).toBeInTheDocument();
++  });
++
++  it('back in the foreground: re-checks the worker at most every ten minutes', async () => {
++    const sw = new FakeServiceWorker({});
++    setNavigator('serviceWorker', sw);
++    const now = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
++    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
++    render(<EfAppShell />);
++
++    now.mockReturnValue(1_000_000 + 5 * 60 * 1000);
++    document.dispatchEvent(new Event('visibilitychange'));
++    expect(sw.getRegistration).not.toHaveBeenCalled();
++
++    now.mockReturnValue(1_000_000 + 11 * 60 * 1000);
++    await act(async () => {
++      document.dispatchEvent(new Event('visibilitychange'));
++    });
++    expect(sw.getRegistration).toHaveBeenCalledTimes(1);
++    expect(sw.update).toHaveBeenCalledTimes(1);
++    now.mockRestore();
++  });
++});
+diff --git a/client/src/components/Nav/AccountSettings.tsx b/client/src/components/Nav/AccountSettings.tsx
+index be97547..69ddae5 100644
+--- a/client/src/components/Nav/AccountSettings.tsx
++++ b/client/src/components/Nav/AccountSettings.tsx
+@@ -11,11 +11,13 @@ import {
+   LogOut,
+   Scale,
+   ShieldCheck,
++  Smartphone,
+ } from 'lucide-react';
+ import { ArchivedChatsModal } from '~/components/Nav/SettingsTabs/General/ArchivedChatsModal';
+ import { useGetStartupConfig, useGetUserBalance } from '~/data-provider';
+ import { useAuthContext } from '~/hooks/AuthContext';
+ import { openInNewTab } from '~/utils';
++import { openInstallHint, promptInstall, useEfInstall } from '~/utils/efaiwApp';
+ import { useLocalize } from '~/hooks';
+ import Settings from './Settings';
+ import store from '~/store';
+@@ -102,6 +104,7 @@ function AccountSettings({ collapsed = false }: { collapsed?: boolean }) {
+   const setShowShortcutsDialog = useSetRecoilState(store.showShortcutsDialog);
+   const [showArchived, setShowArchived] = useState(false);
+   const accountSettingsButtonRef = useRef<HTMLButtonElement>(null);
++  const install = useEfInstall();
+ 
+   return (
+     <Menu.MenuProvider placement={collapsed ? 'right-end' : undefined}>
+@@ -170,6 +173,17 @@ function AccountSettings({ collapsed = false }: { collapsed?: boolean }) {
+           <GearIcon className="icon-md" aria-hidden="true" />
+           {localize('com_nav_settings')}
+         </Menu.MenuItem>
++        {/* EF (#238): install as a phone app; Android/desktop get the browser's dialog, iPhone the hint. */}
++        {install.show && (
++          <Menu.MenuItem
++            onClick={() => (install.canInstall ? promptInstall() : openInstallHint())}
++            className="select-item text-sm"
++            data-testid="efaiw-install-app"
++          >
++            <Smartphone className="icon-md" aria-hidden="true" />
++            {localize('com_efaiw_install_app')}
++          </Menu.MenuItem>
++        )}
+         <DropdownMenuSeparator />
+         <Menu.MenuItem onClick={() => logout()} className="select-item text-sm">
+           <LogOut className="icon-md" aria-hidden="true" />
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index 4404d58..b0850e3 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3227,5 +3227,11 @@
+   "com_efaiw_skills_tip_body": "Type $ or tap + then “Skill”, pick an expertise such as “Writing minutes”, then write your request as usual.",
+   "com_efaiw_skills_tip_ok": "Got it",
+   "com_efaiw_skill_brand": "EF brand identity",
+-  "com_efaiw_redo_with": "Retry with {{0}}"
++  "com_efaiw_redo_with": "Retry with {{0}}",
++  "com_efaiw_install_app": "Install app",
++  "com_efaiw_install_hint_title": "Install Baseer on your phone",
++  "com_efaiw_install_hint_body": "Tap Share, then “Add to Home Screen”. Baseer then opens like an app, without the browser bar.",
++  "com_efaiw_install_hint_ok": "Got it",
++  "com_efaiw_update_available": "A new version of Baseer is available.",
++  "com_efaiw_update_reload": "Update"
+ }
+diff --git a/client/src/main.jsx b/client/src/main.jsx
+index 945b89f..cc92cae 100644
+--- a/client/src/main.jsx
++++ b/client/src/main.jsx
+@@ -1,5 +1,7 @@
+ import './polyfills/storage';
+ import './polyfills/regeneratorRuntime';
++/** EF (#238): keeps the browser's install offer, which can arrive before the app mounts. */
++import './utils/efaiwApp';
+ import { createRoot } from 'react-dom/client';
+ import { initializeI18n } from './locales/i18n';
+ import App from './App';
+diff --git a/client/src/routes/Root.tsx b/client/src/routes/Root.tsx
+index 0051f7e..ad0d7cd 100644
+--- a/client/src/routes/Root.tsx
++++ b/client/src/routes/Root.tsx
+@@ -41,6 +41,7 @@ import { TermsAndConditionsModal } from '~/components/ui';
+ import useDrawerSwipe from '~/hooks/Nav/useDrawerSwipe';
+ import { useHealthCheck } from '~/data-provider';
+ import { Banner } from '~/components/Banners';
++import EfAppShell from '~/components/EfApp/EfAppShell';
+ import store from '~/store';
+ 
+ /** Isolates keyboard shortcut listeners so they only mount after auth. */
+@@ -207,6 +208,8 @@ export default function Root() {
+                 </div>
+               </PromptGroupsProvider>
+               <KeyboardShortcutsProvider />
++              {/* EF (#238): the iPhone install hint and the new-version bar. */}
++              <EfAppShell />
+             </AgentsMapContext.Provider>
+             {config?.interface?.termsOfService?.modalAcceptance === true && (
+               <TermsAndConditionsModal
+diff --git a/client/src/utils/__tests__/efaiwApp.test.ts b/client/src/utils/__tests__/efaiwApp.test.ts
+new file mode 100644
+index 0000000..f602ddc
+--- /dev/null
++++ b/client/src/utils/__tests__/efaiwApp.test.ts
+@@ -0,0 +1,119 @@
++import { act, renderHook } from '@testing-library/react';
++import {
++  dismissInstallHint,
++  isIOSDevice,
++  isStandaloneApp,
++  openInstallHint,
++  promptInstall,
++  useEfInstall,
++  useInstallHintOpen,
++} from '../efaiwApp';
++
++const IPHONE =
++  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
++const ANDROID =
++  'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36';
++
++const setNavigator = (key: string, value: unknown) =>
++  Object.defineProperty(window.navigator, key, { value, configurable: true });
++
++/** What Chromium dispatches when the page is installable. */
++function offerInstall(outcome: 'accepted' | 'dismissed' = 'accepted') {
++  const event = new Event('beforeinstallprompt', { cancelable: true }) as Event & {
++    prompt: jest.Mock;
++    userChoice: Promise<{ outcome: string }>;
++  };
++  event.prompt = jest.fn(() => Promise.resolve());
++  event.userChoice = Promise.resolve({ outcome });
++  act(() => {
++    window.dispatchEvent(event);
++  });
++  return event;
++}
++
++describe('efaiwApp: installing the phone app (#238)', () => {
++  beforeEach(() => {
++    setNavigator('userAgent', ANDROID);
++    setNavigator('platform', 'Linux armv8l');
++    setNavigator('maxTouchPoints', 5);
++    setNavigator('standalone', undefined);
++    act(() => {
++      window.dispatchEvent(new Event('appinstalled'));
++    });
++  });
++
++  it('keeps the browser offer, hides its own banner, and prompts once from the menu', async () => {
++    const { result } = renderHook(() => useEfInstall());
++    expect(result.current.show).toBe(false);
++
++    const event = offerInstall('accepted');
++    expect(event.defaultPrevented).toBe(true);
++    expect(result.current).toEqual({ show: true, canInstall: true, ios: false });
++
++    let accepted = false;
++    await act(async () => {
++      accepted = await promptInstall();
++    });
++    expect(accepted).toBe(true);
++    expect(event.prompt).toHaveBeenCalledTimes(1);
++    expect(result.current.canInstall).toBe(false);
++    await expect(promptInstall()).resolves.toBe(false);
++  });
++
++  it('drops the offer once the app is installed', () => {
++    const { result } = renderHook(() => useEfInstall());
++    offerInstall();
++    expect(result.current.canInstall).toBe(true);
++    act(() => {
++      window.dispatchEvent(new Event('appinstalled'));
++    });
++    expect(result.current.show).toBe(false);
++  });
++
++  it('iPhone and iPad: no browser offer, the row opens the hint; never inside the installed app', () => {
++    setNavigator('userAgent', IPHONE);
++    expect(isIOSDevice()).toBe(true);
++    expect(renderHook(() => useEfInstall()).result.current).toEqual({
++      show: true,
++      canInstall: false,
++      ios: true,
++    });
++
++    setNavigator('standalone', true);
++    expect(isStandaloneApp()).toBe(true);
++    expect(renderHook(() => useEfInstall()).result.current.show).toBe(false);
++
++    setNavigator('standalone', undefined);
++    setNavigator(
++      'userAgent',
++      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15',
++    );
++    setNavigator('platform', 'MacIntel');
++    expect(isIOSDevice()).toBe(true);
++    setNavigator('maxTouchPoints', 0);
++    expect(isIOSDevice()).toBe(false);
++  });
++
++  it('the iPhone hint: open on a first visit, closed for good after «فهمت», back from the menu row', () => {
++    localStorage.clear();
++    setNavigator('userAgent', IPHONE);
++    const { result } = renderHook(() => useInstallHintOpen());
++    expect(result.current).toBe(true);
++
++    act(() => dismissInstallHint());
++    expect(result.current).toBe(false);
++    expect(localStorage.getItem('efaiw:install-hint-seen')).toBe('1');
++    expect(renderHook(() => useInstallHintOpen()).result.current).toBe(false);
++
++    act(() => openInstallHint());
++    expect(result.current).toBe(true);
++    act(() => dismissInstallHint());
++
++    localStorage.clear();
++    setNavigator('standalone', true);
++    expect(renderHook(() => useInstallHintOpen()).result.current).toBe(false);
++    setNavigator('standalone', undefined);
++    setNavigator('userAgent', ANDROID);
++    expect(renderHook(() => useInstallHintOpen()).result.current).toBe(false);
++  });
++});
+diff --git a/client/src/utils/efaiwApp.ts b/client/src/utils/efaiwApp.ts
+new file mode 100644
+index 0000000..ae2a920
+--- /dev/null
++++ b/client/src/utils/efaiwApp.ts
+@@ -0,0 +1,124 @@
++import { useSyncExternalStore } from 'react';
++
++/**
++ * EF (phone app feel, #238): what makes the installed web app behave like a phone app.
++ *
++ * Chromium browsers (Android, desktop) offer installation once per page load with `beforeinstallprompt`, often
++ * before React mounts, so the offer is kept here from the first module load (main.jsx imports this file before the
++ * app). iPhone browsers have no such event: installation is Share → «Add to Home Screen», which the hint explains.
++ */
++type InstallPromptEvent = Event & {
++  prompt: () => Promise<void>;
++  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
++};
++
++const HINT_SEEN_KEY = 'efaiw:install-hint-seen';
++
++let deferredPrompt: InstallPromptEvent | null = null;
++/** The menu row asked for the hint again. */
++let hintForced = false;
++/** «فهمت» in a browser that refuses storage: hidden for this visit. */
++let hintDismissed = false;
++const listeners = new Set<() => void>();
++const notify = () => listeners.forEach((listener) => listener());
++
++if (typeof window !== 'undefined') {
++  window.addEventListener('beforeinstallprompt', (event) => {
++    /** Keeps Chrome's own mini-infobar away; the menu row offers the same prompt when the employee wants it. */
++    event.preventDefault();
++    deferredPrompt = event as InstallPromptEvent;
++    notify();
++  });
++  window.addEventListener('appinstalled', () => {
++    deferredPrompt = null;
++    notify();
++  });
++}
++
++/** Opened from the home screen: display-mode for Chromium and newer Safari, `navigator.standalone` for older iOS. */
++export function isStandaloneApp(): boolean {
++  if (typeof window === 'undefined') {
++    return false;
++  }
++  const iosStandalone = (navigator as Navigator & { standalone?: boolean }).standalone === true;
++  return iosStandalone || window.matchMedia?.('(display-mode: standalone)').matches === true;
++}
++
++/** iPhone, iPod and iPad (iPadOS reports itself as a Mac with a touch screen). */
++export function isIOSDevice(): boolean {
++  if (typeof navigator === 'undefined') {
++    return false;
++  }
++  return (
++    /iPhone|iPad|iPod/.test(navigator.userAgent) ||
++    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
++  );
++}
++
++const hintSeen = () => {
++  try {
++    return localStorage.getItem(HINT_SEEN_KEY) === '1';
++  } catch {
++    return true;
++  }
++};
++
++const subscribe = (listener: () => void) => {
++  listeners.add(listener);
++  return () => {
++    listeners.delete(listener);
++  };
++};
++const canPrompt = () => deferredPrompt != null;
++const isHintOpen = () =>
++  hintForced || (!hintDismissed && isIOSDevice() && !isStandaloneApp() && !hintSeen());
++
++/** Shows the browser's install dialog; false when there is no offer (already used, or not installable). */
++export async function promptInstall(): Promise<boolean> {
++  const event = deferredPrompt;
++  if (event == null) {
++    return false;
++  }
++  /** One offer, one prompt: Chromium rejects a second `prompt()` on the same event. */
++  deferredPrompt = null;
++  notify();
++  await event.prompt();
++  const { outcome } = await event.userChoice;
++  return outcome === 'accepted';
++}
++
++/** The menu row on iPhone: the hint again, even after «فهمت». */
++export function openInstallHint() {
++  hintForced = true;
++  notify();
++}
++
++/** «فهمت»: the hint stays hidden on this browser. */
++export function dismissInstallHint() {
++  hintForced = false;
++  try {
++    localStorage.setItem(HINT_SEEN_KEY, '1');
++  } catch {
++    hintDismissed = true;
++  }
++  notify();
++}
++
++/**
++ * The iPhone hint: once, outside the installed app. Other first-visit tips (the skills tip) wait while it is open, so
++ * a new employee meets one card at a time.
++ */
++export function useInstallHintOpen() {
++  return useSyncExternalStore(subscribe, isHintOpen, () => false);
++}
++
++/**
++ * The menu row: on Android and desktop when the browser offers installation, on iPhone always (it opens the hint);
++ * never inside the installed app.
++ */
++export function useEfInstall() {
++  const canInstall = useSyncExternalStore(subscribe, canPrompt, () => false);
++  const standalone = isStandaloneApp();
++  const ios = isIOSDevice();
++  return { show: !standalone && (canInstall || ios), canInstall, ios };
++}

@@ -1,0 +1,75 @@
+# ---------------------------------------------------------------
+# EF AI Workspace — .gitignore
+# Policy: secrets, runtime data, and real documents NEVER enter Git.
+# See SECURITY.md and docs/security/data-handling.md.
+# ---------------------------------------------------------------
+
+# Secrets & environment files (templates ending in .example are allowed)
+.env
+.env.*
+!.env.example
+!**/.env.example
+!**/.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.jks
+**/secrets/*
+!**/secrets/README.md
+
+# LibreChat / service runtime data (persisted in Docker volumes, never in Git).
+# Anchored to the repo root and infrastructure/ so planned folders such as assets/brand/images/,
+# tests/fixtures/ and ai/knowledge/synthetic/ are NOT ignored.
+/data/
+/data-node/
+/meili_data*/
+/uploads/
+/images/
+/logs/
+/infrastructure/**/data/
+/infrastructure/**/data-node/
+/infrastructure/**/meili_data*/
+/infrastructure/**/uploads/
+/infrastructure/**/images/
+/infrastructure/**/logs/
+# On-premises TLS certificate/key directory (enterprise CA material, never in Git)
+/infrastructure/**/tls/
+mongo_data*/
+pgdata*/
+*.log
+
+# Backups and database dumps
+/backups/
+/infrastructure/**/backups/
+*.dump
+*.bson
+*.archive
+*.sql.gz
+*.tar.gz
+
+# Real (non-synthetic) knowledge documents must never be committed
+ai/knowledge/**/private/
+ai/knowledge/**/confidential/
+
+# Claude Code local-only settings and memory
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Tooling caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+node_modules/
+.cache/
+.pytest_cache/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp

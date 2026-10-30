@@ -1,0 +1,453 @@
+EF AI Workspace: PowerPoint downloads with the guide's presentation backgrounds (visual identity guide v01, p93:
+title, content and closing slides on the brand's backgrounds). Owner decision 2026-10-26.
+
+- Brand files (utils/efaiwBrandAssets.ts): two of the guide's backgrounds, the original JPEG files from
+  brand/assets: EF-BG-09 (blue, the radial on the left) and EF-BG-07 (blue, a faint radial at the bottom left).
+  Fetched with the font and logos, but on their own: if they fail, the deck keeps the font and logo.
+- Title slide (utils/efaiwPptx.ts): EF-BG-09 as the slide background (a background, not a picture, so nothing on the
+  slide moves it); the title, green rule and subtitle on its calm right side, from 45% of the width; the white logo at
+  the top right as before. The title steps down to 32 pt over 44 characters and 28 pt over 85 on that narrower side.
+  The background is not mirrored for English: images do not follow the reading direction.
+- Closing slide: a last `## الخلاصة` / `## الخطوات التالية` (as the brand skill asks; also الخاتمة, Summary,
+  Conclusion, Next steps, numbered or not) that fits one slide and has text only: EF-BG-07 behind it, white title and
+  text, green rule, bullets and subheadings, links white, the slide number in the guide's light blue C3C9EC. Without
+  the backgrounds it is solid primary blue, like the title slide.
+- Content slides stay white, as the brand reference recommends for dense content.
+- Tests: utils/__tests__/efaiwBrandAssets.test.ts (backgrounds, closing slide, fallbacks, titles that do not close).
+
+diff --git a/client/src/utils/__tests__/efaiwBrandAssets.test.ts b/client/src/utils/__tests__/efaiwBrandAssets.test.ts
+index dc02fb7..098a495 100644
+--- a/client/src/utils/__tests__/efaiwBrandAssets.test.ts
++++ b/client/src/utils/__tests__/efaiwBrandAssets.test.ts
+@@ -184,3 +184,71 @@ describe('Word and PowerPoint with the brand files (#157)', () => {
+     expect(parts['ppt/slides/slide1.xml']).not.toContain('<p:pic>');
+   });
+ });
++
++describe('PowerPoint backgrounds', () => {
++  const backgrounds = {
++    title: new Uint8Array([0xff, 0xd8, 0xff, 9]),
++    closing: new Uint8Array([0xff, 0xd8, 0xff, 7]),
++  };
++  const withBackgrounds = (): EfOfficeAssets => ({ ...assets(), backgrounds });
++  const deck =
++    '# خطة اصطناعية للتشجير\n\nعرض للمراجعة\n\n## الوضع الحالي\n\n- بند أول\n\n## الخلاصة\n\n- نقطة **أولى**\n- [رابط](https://example.com)';
++  const titleX = (xml: string) => xml.match(/name="Title 1"[\s\S]*?<a:off x="(\d+)"/)?.[1];
++
++  it('puts EF-BG-09 behind the title slide and the title on its calm side', () => {
++    const parts = buildPptxParts(deck, 'خطة', withBackgrounds());
++    const slide = parts['ppt/slides/slide1.xml'] as string;
++    expect(slide).toContain(
++      '<p:bg><p:bgPr><a:blipFill dpi="0" rotWithShape="1"><a:blip r:embed="rIdBg"/>',
++    );
++    expect(slide).not.toContain(
++      '<a:solidFill><a:srgbClr val="2C3A82"/></a:solidFill><a:effectLst/>',
++    );
++    expect(titleX(slide)).toBe(String(Math.round(12192000 * 0.45)));
++    expect(parts['ppt/slides/_rels/slide1.xml.rels']).toContain('Target="../media/bg-title.jpg"');
++    expect(parts['ppt/media/bg-title.jpg']).toBe(backgrounds.title);
++    expect(parts['[Content_Types].xml']).toContain(
++      '<Default Extension="jpg" ContentType="image/jpeg"/>',
++    );
++    expect(parts['ppt/slides/slide2.xml']).not.toContain('<p:bg>');
++  });
++
++  it('turns a last «الخلاصة» into the closing slide: EF-BG-07, white text, green bullets', () => {
++    const parts = buildPptxParts(deck, 'خطة', withBackgrounds());
++    const slide = parts['ppt/slides/slide3.xml'] as string;
++    expect(slide).toContain('<a:blip r:embed="rIdBg"/>');
++    expect(parts['ppt/slides/_rels/slide3.xml.rels']).toContain('Target="../media/bg-closing.jpg"');
++    expect(parts['ppt/media/bg-closing.jpg']).toBe(backgrounds.closing);
++    expect(slide).toMatch(/<a:srgbClr val="FFFFFF"\/><\/a:solidFill>[^]*?<a:t>الخلاصة<\/a:t>/);
++    expect(slide).toContain('<a:buClr><a:srgbClr val="C0CB6C"/></a:buClr>');
++    expect(slide).not.toContain('val="0F1822"');
++    expect(slide).not.toContain('val="0051B1"');
++  });
++
++  it('keeps a closing slide on solid blue when the backgrounds are missing', () => {
++    for (const brand of [{ ...assets(), backgrounds: null }, null]) {
++      const parts = buildPptxParts(deck, 'خطة', brand);
++      const closing = parts['ppt/slides/slide3.xml'] as string;
++      expect(closing).toContain(
++        '<p:bg><p:bgPr><a:solidFill><a:srgbClr val="2C3A82"/></a:solidFill>',
++      );
++      expect(closing).toContain('<a:buClr><a:srgbClr val="C0CB6C"/></a:buClr>');
++      expect(titleX(parts['ppt/slides/slide1.xml'] as string)).toBe(
++        String(Math.round(0.65 * 914400)),
++      );
++      expect(Object.keys(parts).some((name) => name.endsWith('.jpg'))).toBe(false);
++    }
++  });
++
++  it('finds the closing slide numbered and in English, and only as the last text slide', () => {
++    const closingOf = (md: string) => {
++      const parts = buildPptxParts(md, 'Deck', withBackgrounds());
++      return 'ppt/media/bg-closing.jpg' in parts;
++    };
++    expect(closingOf('# Plan\n\n## Scope\n\n- one\n\n## Next steps\n\n- two')).toBe(true);
++    expect(closingOf('# خطة\n\n## النطاق\n\n- بند\n\n## 4. الخطوات التالية\n\n- بند')).toBe(true);
++    expect(closingOf('# خطة\n\n## الخلاصة\n\n- بند\n\n## الملاحق\n\n- بند')).toBe(false);
++    expect(closingOf('# خطة\n\n## الخلاصة\n\n| أ | ب |\n|---|---|\n| 1 | 2 |')).toBe(false);
++    expect(closingOf('# خطة\n\n## خلاصة القول في المشروع\n\n- بند')).toBe(false);
++  });
++});
+diff --git a/client/src/utils/efaiwBrandAssets.ts b/client/src/utils/efaiwBrandAssets.ts
+index 3bb5f41..ffbe1e2 100644
+--- a/client/src/utils/efaiwBrandAssets.ts
++++ b/client/src/utils/efaiwBrandAssets.ts
+@@ -7,9 +7,18 @@
+  * - The horizontal logos (blue for white pages, white for the blue title slide), drawn to PNG at print resolution
+  *   from the original SVG. Only the viewport is sized to the artwork's own viewBox, so nothing is stretched or redrawn.
+  * Any failure gives null, and the files are written as before: Tahoma, no logo.
++ * - EF (PowerPoint backgrounds): two of the guide's presentation backgrounds (JPEG, about 16:9), the original files,
++ *   for the title and closing slides. On their own: if they fail, the deck keeps the font and logo on solid blue.
+  */
+ export type EfLogo = { png: Uint8Array; width: number; height: number };
+ 
++export type EfSlideBackgrounds = {
++  /** EF-BG-09: blue, the radial on the left and the right side calm for the title. */
++  title: Uint8Array;
++  /** EF-BG-07: blue, a faint radial at the bottom left under the closing slide's points. */
++  closing: Uint8Array;
++};
++
+ export type EfOfficeAssets = {
+   /** The family name in the font files, which Word and PowerPoint match against. */
+   font: string;
+@@ -17,6 +26,7 @@ export type EfOfficeAssets = {
+   bold: Uint8Array;
+   logo: EfLogo;
+   logoWhite: EfLogo;
++  backgrounds?: EfSlideBackgrounds | null;
+ };
+ 
+ export const EF_OFFICE_FONT = 'Aktiv Grotesk';
+@@ -73,19 +83,30 @@ async function logoPng(path: string): Promise<EfLogo> {
+ 
+ let assets: Promise<EfOfficeAssets | null> | null = null;
+ 
++const slideBackgrounds = (): Promise<EfSlideBackgrounds | null> =>
++  Promise.all([
++    bytes('/assets/ef-ppt-bg-09-navy-radial-left.jpg'),
++    bytes('/assets/ef-ppt-bg-07-navy-radial-bottom-left.jpg'),
++  ]).then(
++    ([title, closing]) => ({ title, closing }),
++    () => null,
++  );
++
+ export function loadEfOfficeAssets(): Promise<EfOfficeAssets | null> {
+   assets ??= Promise.all([
+     bytes('/assets/fonts/aktiv-grotesk-regular.otf'),
+     bytes('/assets/fonts/aktiv-grotesk-bold.otf'),
+     logoPng('/assets/logo.svg'),
+     logoPng('/assets/logo-dark.svg'),
++    slideBackgrounds(),
+   ]).then(
+-    ([regular, bold, logo, logoWhite]) => ({
++    ([regular, bold, logo, logoWhite, backgrounds]) => ({
+       font: EF_OFFICE_FONT,
+       regular,
+       bold,
+       logo,
+       logoWhite,
++      backgrounds,
+     }),
+     () => {
+       assets = null;
+diff --git a/client/src/utils/efaiwPptx.ts b/client/src/utils/efaiwPptx.ts
+index 0d76a17..399d37d 100644
+--- a/client/src/utils/efaiwPptx.ts
++++ b/client/src/utils/efaiwPptx.ts
+@@ -12,6 +12,13 @@
+  * - EF (#157): Aktiv Grotesk embedded in the deck (Regular and Bold as Embedded OpenType, PowerPoint's own form), so a
+  *   presenter without the font sees it too, and the white logo at the top right of the title slide (guide p17). Without
+  *   the brand files the deck is set in Tahoma, the guide's secondary typeface, and has no logo, as in Word.
++ * - EF (PowerPoint backgrounds): the guide's presentation backgrounds as the title slide's background (EF-BG-09, the
++ *   title and subtitle on its calm right side) and the closing slide's (EF-BG-07). The closing slide is a last
++ *   `## الخلاصة` or `## الخطوات التالية` (as the brand skill asks; Summary or Next steps in English) that fits one slide
++ *   and has text only: white text, green bullets. Content slides stay white, as the brand reference recommends for
++ *   dense content. The backgrounds are slide backgrounds, not pictures, so nothing on the slide moves them, and they
++ *   are not mirrored for English (images do not follow the reading direction). Without them the title slide is solid
++ *   primary blue in its full-width layout, and the closing slide solid primary blue.
+  * - Titles are real title placeholders (slide outline, accessibility checker, navigation). Arabic slides, paragraphs and
+  *   tables run right to left; English and code left to right.
+  */
+@@ -60,6 +67,8 @@ const EF = {
+   tint: EF_DOC.tint,
+   line: EF_DOC.line,
+   muted: '646A71',
++  /** The guide's light blue shade (p24), for quiet text on primary blue. */
++  pale: 'C3C9EC',
+   white: 'FFFFFF',
+ } as const;
+ 
+@@ -373,7 +382,10 @@ class SlideXml {
+   private shapes: string[] = [];
+   private nextId = 2;
+   private logo = false;
++  private image: 'title' | 'closing' | null = null;
+   links: string[] = [];
++  /** Text on primary blue (the closing slide): white runs and links, green bullets and subheadings. */
++  dark = false;
+ 
+   constructor(
+     private readonly rtl: boolean,
+@@ -402,7 +414,8 @@ class SlideXml {
+     const lang = ARABIC.test(text) ? ' lang="ar-SA" altLang="en-US"' : ' lang="en-US"';
+     const bold = inline.bold || extra.bold ? ' b="1"' : '';
+     const italic = inline.italic || extra.italic ? ' i="1"' : '';
+-    const fill = `<a:solidFill><a:srgbClr val="${inline.link ? EF.blue2 : color}"/></a:solidFill>`;
++    const linkColor = this.dark ? EF.white : EF.blue2;
++    const fill = `<a:solidFill><a:srgbClr val="${inline.link ? linkColor : color}"/></a:solidFill>`;
+     const font = inline.code
+       ? '<a:latin typeface="Consolas"/><a:cs typeface="Consolas"/>'
+       : `<a:latin typeface="${this.font}"/><a:cs typeface="${this.font}"/>`;
+@@ -411,12 +424,13 @@ class SlideXml {
+     return `<a:r><a:rPr${lang} sz="${pt * 100}"${bold}${italic}${underline} dirty="0">${fill}${font}${link}</a:rPr><a:t>${xmlEscape(text)}</a:t></a:r>`;
+   }
+ 
+-  paragraph(p: Para, color = EF.dark): string {
++  paragraph(p: Para, color: string = EF.dark): string {
+     const pt = paraPt(p);
+     const dir = p.rtl ?? this.rtl;
+     const algn = dir ? 'r' : 'l';
+     const rtl = dir ? ' rtl="1"' : '';
+     const spacing = `<a:spcBef><a:spcPts val="0"/></a:spcBef><a:spcAft><a:spcPts val="600"/></a:spcAft>`;
++    const accent = this.dark ? EF.green : EF.blue;
+     let bullet = '<a:buNone/>';
+     let mar = p.level * 342900;
+     let indent = 0;
+@@ -424,16 +438,19 @@ class SlideXml {
+       mar += 342900;
+       indent = -342900;
+       bullet =
+-        `<a:buClr><a:srgbClr val="${EF.blue}"/></a:buClr><a:buSzPct val="100000"/>` +
++        `<a:buClr><a:srgbClr val="${accent}"/></a:buClr><a:buSzPct val="100000"/>` +
+         (p.style === 'number'
+           ? `<a:buFont typeface="+mj-lt"/><a:buAutoNum type="arabicPeriod" startAt="${p.number ?? 1}"/>`
+           : `<a:buFont typeface="Arial"/><a:buChar char="${p.level % 2 === 0 ? '•' : '–'}"/>`);
+     }
+     const quote = p.style === 'quote';
+     const sub = p.style === 'sub';
+-    let runColor = quote ? '373F48' : color;
++    let runColor = color;
++    if (quote) {
++      runColor = this.dark ? EF.pale : '373F48';
++    }
+     if (sub) {
+-      runColor = EF.blue;
++      runColor = accent;
+     }
+     const runs = p.runs
+       .map((r) => this.run(r, pt, runColor, { bold: sub, italic: quote }))
+@@ -533,10 +550,18 @@ class SlideXml {
+     return height;
+   }
+ 
++  /** The slide's background picture, `ppt/media/bg-<name>.jpg`, stretched to the slide (both are about 16:9). */
++  backgroundImage(name: 'title' | 'closing'): void {
++    this.image = name;
++  }
++
+   xml(background?: string): string {
+-    const bg = background
++    let bg = background
+       ? `<p:bg><p:bgPr><a:solidFill><a:srgbClr val="${background}"/></a:solidFill><a:effectLst/></p:bgPr></p:bg>`
+       : '';
++    if (this.image) {
++      bg = `<p:bg><p:bgPr><a:blipFill dpi="0" rotWithShape="1"><a:blip r:embed="rIdBg"/><a:srcRect/><a:stretch><a:fillRect/></a:stretch></a:blipFill><a:effectLst/></p:bgPr></p:bg>`;
++    }
+     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+ <p:sld ${NS}><p:cSld>${bg}<p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>${this.shapes.join('')}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`;
+   }
+@@ -551,22 +576,39 @@ class SlideXml {
+     const logo = this.logo
+       ? '<Relationship Id="rIdLogo" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/logo-white.png"/>'
+       : '';
++    const image = this.image
++      ? `<Relationship Id="rIdBg" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/bg-${this.image}.jpg"/>`
++      : '';
+     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout${layout}.xml"/>${logo}${links}</Relationships>`;
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout${layout}.xml"/>${logo}${image}${links}</Relationships>`;
+   }
+ }
+ 
+ /** The white logo's height on the title slide: 1.6 cm, above the print minimum (guide p9). */
+ const LOGO_H = Math.round((1.6 / 2.54) * EMU);
+ 
++/** Where the calm side of the title background starts: its radial reaches about 41% of the width (EF-BG-09). */
++const CALM_X = Math.round(SLIDE_W * 0.45);
++
++/** The closing slide the brand skill asks for, numbered or not («5. الخلاصة»). */
++const CLOSING_TITLE =
++  /^(?:[\d٠-٩]+\s*[.):–-]?\s*)?(?:الخلاصة|الخاتمة|الخطوات التالية|الخطوات القادمة|summary|conclusions?|next steps)\s*[:.]?$/i;
++
+ function titleSlide(
+   title: string,
+   subtitle: string,
+   rtl: boolean,
+   font: string,
+   logo?: EfOfficeAssets['logoWhite'],
++  background = false,
+ ): SlideXml {
+   const s = new SlideXml(rtl, font);
++  // On the background, the title block keeps to its calm side; on solid blue it has the full width.
++  const x = background ? CALM_X : MARGIN_X;
++  const w = SLIDE_W - MARGIN_X - x;
++  if (background) {
++    s.backgroundImage('title');
++  }
+   if (logo) {
+     const w = Math.round((LOGO_H * logo.width) / logo.height);
+     // Top right whatever the language (guide p17), inside the slide margin, clear of the title below it.
+@@ -579,13 +621,19 @@ function titleSlide(
+       rtl ? 'صندوق البيئة' : 'Environment Fund',
+     );
+   }
+-  const titlePt = title.length > 60 ? 32 : 40;
++  // Two lines of 40 pt fit the box; the narrower calm side steps down sooner.
++  let titlePt = title.length > 60 ? 32 : 40;
++  if (background && title.length > 85) {
++    titlePt = 28;
++  } else if (background) {
++    titlePt = title.length > 44 ? 32 : 40;
++  }
+   s.placeholder(
+     '<p:ph type="ctrTitle"/>',
+     'Title 1',
+-    MARGIN_X,
++    x,
+     Math.round(2.0 * EMU),
+-    CONTENT_W,
++    w,
+     Math.round(1.9 * EMU),
+     title,
+     titlePt,
+@@ -595,7 +643,7 @@ function titleSlide(
+   );
+   const barW = Math.round(1.6 * EMU);
+   s.rect(
+-    rtl ? SLIDE_W - MARGIN_X - barW : MARGIN_X,
++    rtl ? SLIDE_W - MARGIN_X - barW : x,
+     Math.round(4.05 * EMU),
+     barW,
+     Math.round(0.07 * EMU),
+@@ -606,9 +654,9 @@ function titleSlide(
+     s.placeholder(
+       '<p:ph type="subTitle" idx="1"/>',
+       'Subtitle 3',
+-      MARGIN_X,
++      x,
+       Math.round(4.3 * EMU),
+-      CONTENT_W,
++      w,
+       Math.round(1.2 * EMU),
+       subtitle,
+       20,
+@@ -626,8 +674,11 @@ function contentSlide(
+   number: number,
+   deckRtl: boolean,
+   font: string,
++  closing = false,
+ ): SlideXml {
+   const s = new SlideXml(deckRtl, font);
++  s.dark = closing;
++  const text = closing ? EF.white : EF.dark;
+   const titleRtl = directionOf(title) ?? deckRtl;
+   s.placeholder(
+     '<p:ph type="title"/>',
+@@ -638,7 +689,7 @@ function contentSlide(
+     TITLE_H,
+     title,
+     title.length > 55 ? 24 : 28,
+-    EF.blue,
++    closing ? EF.white : EF.blue,
+     'b',
+     true,
+   );
+@@ -666,7 +717,7 @@ function contentSlide(
+       y,
+       CONTENT_W,
+       h,
+-      pending.map((p) => s.paragraph(p)).join(''),
++      pending.map((p) => s.paragraph(p, text)).join(''),
+       `Content ${y}`,
+     );
+     y += h;
+@@ -700,7 +751,7 @@ function contentSlide(
+     SLIDE_H - Math.round(0.6 * EMU),
+     numberW,
+     Math.round(0.4 * EMU),
+-    `<a:p><a:pPr algn="${deckRtl ? 'l' : 'r'}"/>${s.run({ text: String(number) }, 12, EF.muted)}</a:p>`,
++    `<a:p><a:pPr algn="${deckRtl ? 'l' : 'r'}"/>${s.run({ text: String(number) }, 12, closing ? EF.pale : EF.muted)}</a:p>`,
+     'Slide Number',
+   );
+   return s;
+@@ -746,19 +797,38 @@ export function buildPptxParts(
+ ): Record<string, string | Uint8Array> {
+   const deck = markdownToSlides(markdown, fallbackTitle);
+   const font = assets ? xmlEscape(assets.font) : EF_DOC.font;
++  const backgrounds = assets?.backgrounds ?? null;
++  let closingImage = false;
+   const slides: Array<{ xml: string; rels: string }> = [];
+-  const first = titleSlide(deck.title, deck.subtitle, deck.rtl, font, assets?.logoWhite);
++  const first = titleSlide(
++    deck.title,
++    deck.subtitle,
++    deck.rtl,
++    font,
++    assets?.logoWhite,
++    backgrounds != null,
++  );
+   slides.push({ xml: first.xml(EF.blue), rels: first.rels(1) });
+-  for (const slide of deck.slides) {
+-    paginate(slide).forEach((blocks, page) => {
++  deck.slides.forEach((slide, index) => {
++    const pages = paginate(slide);
++    const closing =
++      index === deck.slides.length - 1 &&
++      pages.length === 1 &&
++      CLOSING_TITLE.test(slide.title.trim()) &&
++      slide.blocks.every((block) => block.kind === 'para');
++    pages.forEach((blocks, page) => {
+       const continued =
+         page === 0
+           ? slide.title
+           : `${slide.title} ${isRtlText(slide.title) || deck.rtl ? '(تابع)' : '(cont.)'}`;
+-      const s = contentSlide(continued, blocks, slides.length + 1, deck.rtl, font);
+-      slides.push({ xml: s.xml(), rels: s.rels(2) });
++      const s = contentSlide(continued, blocks, slides.length + 1, deck.rtl, font, closing);
++      if (closing && backgrounds) {
++        s.backgroundImage('closing');
++        closingImage = true;
++      }
++      slides.push({ xml: s.xml(closing ? EF.blue : undefined), rels: s.rels(2) });
+     });
+-  }
++  });
+   const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+   const fonts = assets
+     ? `<p:embeddedFontLst><p:embeddedFont><p:font typeface="${font}" pitchFamily="34" charset="0"/><p:regular r:id="rIdFontR"/><p:bold r:id="rIdFontB"/></p:embeddedFont></p:embeddedFontLst>`
+@@ -768,7 +838,7 @@ export function buildPptxParts(
+     : '';
+   const parts: Record<string, string | Uint8Array> = {
+     '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${assets ? '<Default Extension="fntdata" ContentType="application/x-fontdata"/><Default Extension="png" ContentType="image/png"/>' : ''}<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/><Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/slideLayouts/slideLayout2.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/><Override PartName="/ppt/presProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presProps+xml"/><Override PartName="/ppt/viewProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.viewProps+xml"/><Override PartName="/ppt/tableStyles.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/>${slides
++<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${assets ? '<Default Extension="fntdata" ContentType="application/x-fontdata"/><Default Extension="png" ContentType="image/png"/>' : ''}${backgrounds ? '<Default Extension="jpg" ContentType="image/jpeg"/>' : ''}<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/><Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/slideLayouts/slideLayout2.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/><Override PartName="/ppt/presProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presProps+xml"/><Override PartName="/ppt/viewProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.viewProps+xml"/><Override PartName="/ppt/tableStyles.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/>${slides
+       .map(
+         (_, i) =>
+           `<Override PartName="/ppt/slides/slide${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`,
+@@ -844,6 +914,12 @@ export function buildPptxParts(
+     parts['ppt/fonts/font2.fntdata'] = embeddedOpenType(assets.bold);
+     parts['ppt/media/logo-white.png'] = assets.logoWhite.png;
+   }
++  if (backgrounds) {
++    parts['ppt/media/bg-title.jpg'] = backgrounds.title;
++  }
++  if (backgrounds && closingImage) {
++    parts['ppt/media/bg-closing.jpg'] = backgrounds.closing;
++  }
+   return parts;
+ }
+ 

@@ -1,0 +1,314 @@
+EF AI Workspace (#175): the employee's chat journey on a laptop and a phone — new chat, talk to «بصير», manage chats.
+Owner request 2026-10-24: quality and UX tests of that journey in a laptop and a phone browser; fix every problem.
+
+- Chat list order (utils/convos.ts, upstream defect): a new chat's own state carries `createdAt: ''` and
+  `updatedAt: ''`, and the sidebar wrote them over the row. The list reads an empty date as "now" on every render, so
+  every chat started in the session stayed above the chat the employee had just continued, until a reload. An empty
+  date no longer replaces a known one (convos.spec.ts).
+- Phone composer (Chat/Input/TokenUsage): after the first reply the context gauge joined the row and pushed the send
+  button onto a second row (the composer grew by 52 px, the send and stop button jumped to the other side, and an
+  opened chat's last reply sat behind the composer). On phones the gauge appears once half the context is used. Its
+  track is lighter, so a nearly empty gauge no longer reads as a loading spinner.
+- Phone keyboard (store/settings.ts): on a touch screen Return starts a new line and the send button sends, as in
+  ChatGPT and Claude (phone keyboards have no Shift+Enter, so a request could not have two lines). Settings → Chat
+  keeps the switch per device.
+- Share dialog (ConvoOptions/ShareButton.tsx): while the link loaded, the default focus went to the title's info
+  button and its card covered the dialog; the dialog itself takes the focus.
+- Accessible names = visible names (WCAG 2.5.3): the side-menu rail (ExpandedPanel.tsx; «الدردشات» was announced
+  «سجل الدردشة», «المحفوظة» «الإشارات المرجعية», «المعلمات» «معلمات النموذج») and the phone drawer's panel button
+  (mobile/Switcher.tsx; «سجل الدردشة» was announced «لوحة التحكم», now «سجل الدردشة، اختر لوحة»; the new key's English
+  source in locales/en). ExpandedPanel.spec.tsx finds the rail buttons by their visible names.
+
+diff --git a/client/src/components/Chat/Input/TokenUsage/Gauge.tsx b/client/src/components/Chat/Input/TokenUsage/Gauge.tsx
+index 8a763fd..cf9df21 100644
+--- a/client/src/components/Chat/Input/TokenUsage/Gauge.tsx
++++ b/client/src/components/Chat/Input/TokenUsage/Gauge.tsx
+@@ -37,13 +37,14 @@ export default function Gauge({ percent, indeterminate }: GaugeProps) {
+       aria-hidden="true"
+       focusable="false"
+     >
++      {/* EF (#175): a light track, so a nearly empty gauge does not read as a loading spinner. */}
+       <circle
+         cx={SIZE / 2}
+         cy={SIZE / 2}
+         r={RADIUS}
+         fill="transparent"
+         strokeWidth={STROKE_WIDTH}
+-        className="stroke-border-heavy"
++        className="stroke-border-medium"
+         strokeDasharray={indeterminate ? '2 4' : undefined}
+       />
+       <circle
+diff --git a/client/src/components/Chat/Input/TokenUsage/index.tsx b/client/src/components/Chat/Input/TokenUsage/index.tsx
+index f64de3e..ec81703 100644
+--- a/client/src/components/Chat/Input/TokenUsage/index.tsx
++++ b/client/src/components/Chat/Input/TokenUsage/index.tsx
+@@ -23,6 +23,9 @@ interface TokenUsageProps {
+  *  the card open, and a grace period for the pointer to travel into it. */
+ const SHOW_DELAY_MS = 100;
+ const HIDE_DELAY_MS = 150;
++/** EF (#175): below this share of the context the gauge stays off phone screens, where it pushed the send button onto
++ *  a second row of the composer; it appears once the chat is half full, when it starts to matter. */
++const PHONE_MIN_PERCENT = 50;
+ 
+ function TokenUsageIndicator({
+   index,
+@@ -144,6 +147,7 @@ function TokenUsageIndicator({
+     ? localize('com_ui_context_compacting')
+     : usageAriaLabel;
+   const showCompactingIndicator = compaction.isCompacting && !popoverOpen;
++  const hiddenOnPhones = !compaction.isCompacting && (!hasMax || view.percent < PHONE_MIN_PERCENT);
+ 
+   return (
+     <>
+@@ -195,6 +199,7 @@ function TokenUsageIndicator({
+           'flex size-theme-control items-center justify-center rounded-theme-control-round transition-colors',
+           'hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-primary',
+           'duration-300 animate-in fade-in zoom-in-95',
++          hiddenOnPhones && 'max-md:hidden',
+         )}
+       >
+         {showCompactingIndicator ? (
+diff --git a/client/src/components/Conversations/ConvoOptions/ShareButton.tsx b/client/src/components/Conversations/ConvoOptions/ShareButton.tsx
+index 8382a6c..93e8daa 100644
+--- a/client/src/components/Conversations/ConvoOptions/ShareButton.tsx
++++ b/client/src/components/Conversations/ConvoOptions/ShareButton.tsx
+@@ -123,10 +123,10 @@ export default function ShareButton({
+       <OGDialogContent
+         className="flex max-h-[90vh] w-11/12 max-w-md flex-col gap-0 overflow-hidden p-0 shadow-2xl"
+         onOpenAutoFocus={(event) => {
+-          if (shareFilesSwitchRef.current) {
+-            event.preventDefault();
+-            shareFilesSwitchRef.current.focus();
+-          }
++          /* EF (#175): while the link loads there is no switch yet, and the default focus went to the title's info
++             button, whose card then covered the dialog; the dialog itself takes the focus instead. */
++          event.preventDefault();
++          (shareFilesSwitchRef.current ?? (event.currentTarget as HTMLElement | null))?.focus();
+         }}
+       >
+         <OGDialogHeader className="shrink-0 px-6 pb-0 pr-14 pt-6 text-left">
+diff --git a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
+index 6434399..b8f5d24 100644
+--- a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
++++ b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
+@@ -16,7 +16,8 @@ import store from '~/store';
+ 
+ const AccountSettings = lazy(() => import('~/components/Nav/AccountSettings'));
+ 
+-/** EF (#108): short names under the rail icons; the tooltip and the accessible name keep the full title. */
++/** EF (#108): short names under the rail icons; the tooltip keeps the full title. #175: the accessible name is the
++ *  visible name (WCAG 2.5.3), so "الدردشات" is not announced as "سجل الدردشة". */
+ const RAIL_LABELS: Record<string, TranslationKeys> = {
+   conversations: 'com_efaiw_rail_chats',
+   agents: 'com_efaiw_rail_agents',
+@@ -91,6 +92,7 @@ const NavIconButton = memo(function NavIconButton({
+   onLeaveInsights?: () => void;
+ }) {
+   const localize = useLocalize();
++  const label = localize(RAIL_LABELS[link.id] ?? link.title);
+ 
+   const handleClick = useCallback(
+     (e: React.MouseEvent<HTMLButtonElement>) => {
+@@ -123,7 +125,7 @@ const NavIconButton = memo(function NavIconButton({
+         <Button
+           size="icon"
+           variant="ghost"
+-          aria-label={localize(link.title)}
++          aria-label={label}
+           aria-pressed={isActive}
+           disabled={link.disabled}
+           data-testid={`nav-panel-${link.id}`}
+@@ -135,7 +137,7 @@ const NavIconButton = memo(function NavIconButton({
+         >
+           <link.icon className="h-5 w-5" aria-hidden="true" />
+           <span className="efaiw-rail-label" aria-hidden="true">
+-            {localize(RAIL_LABELS[link.id] ?? link.title)}
++            {label}
+           </span>
+         </Button>
+       }
+diff --git a/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx b/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx
+index feab690..bc94805 100644
+--- a/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx
++++ b/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx
+@@ -155,14 +155,14 @@ describe('ExpandedPanel', () => {
+   describe('NavIconButton collapse toggle', () => {
+     it('collapses sidebar when clicking the active icon while expanded', () => {
+       const { onCollapse } = renderPanel({ expanded: true });
+-      const activeButton = screen.getByRole('button', { name: 'com_ui_chat_history' });
++      const activeButton = screen.getByRole('button', { name: 'com_efaiw_rail_chats' });
+       fireEvent.click(activeButton);
+       expect(onCollapse).toHaveBeenCalledTimes(1);
+     });
+ 
+     it('switches panel when clicking an inactive icon while expanded', () => {
+       const { onCollapse } = renderPanel({ expanded: true });
+-      const inactiveButton = screen.getByRole('button', { name: 'com_ui_prompts' });
++      const inactiveButton = screen.getByRole('button', { name: 'com_efaiw_rail_prompts' });
+       fireEvent.click(inactiveButton);
+       expect(onCollapse).not.toHaveBeenCalled();
+       expect(localStorage.getItem('side:active-panel')).toBe('prompts');
+@@ -170,14 +170,14 @@ describe('ExpandedPanel', () => {
+ 
+     it('expands sidebar when clicking any icon while collapsed', () => {
+       const { onExpand } = renderPanel({ expanded: false });
+-      const activeButton = screen.getByRole('button', { name: 'com_ui_chat_history' });
++      const activeButton = screen.getByRole('button', { name: 'com_efaiw_rail_chats' });
+       fireEvent.click(activeButton);
+       expect(onExpand).toHaveBeenCalledTimes(1);
+     });
+ 
+     it('sets active panel and expands when clicking an inactive icon while collapsed', () => {
+       const { onExpand } = renderPanel({ expanded: false });
+-      const inactiveButton = screen.getByRole('button', { name: 'com_ui_prompts' });
++      const inactiveButton = screen.getByRole('button', { name: 'com_efaiw_rail_prompts' });
+       fireEvent.click(inactiveButton);
+       expect(onExpand).toHaveBeenCalledTimes(1);
+       expect(localStorage.getItem('side:active-panel')).toBe('prompts');
+diff --git a/client/src/components/UnifiedSidebar/mobile/Switcher.tsx b/client/src/components/UnifiedSidebar/mobile/Switcher.tsx
+index aada78e..12fd4ca 100644
+--- a/client/src/components/UnifiedSidebar/mobile/Switcher.tsx
++++ b/client/src/components/UnifiedSidebar/mobile/Switcher.tsx
+@@ -80,7 +80,8 @@ function Switcher({
+       trigger={
+         <Ariakit.MenuButton
+           data-testid="panel-switcher-button"
+-          aria-label={localize('com_nav_control_panel')}
++          /* EF (#175): the name starts with the panel it shows (WCAG 2.5.3), like the model button (#133). */
++          aria-label={localize('com_efaiw_panel_switcher_label', { panel: localize(activeLink.title) })}
+           aria-expanded={isOpen}
+           /**
+            * The drawer's primary navigation control, so it takes the shared
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index cb79af2..8533bca 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3120,5 +3120,6 @@
+   "com_efaiw_artifact_open_tab": "Open in new tab",
+   "com_efaiw_print_save": "Print or save as PDF",
+   "com_efaiw_print_blocked": "The browser blocked the print page. Allow pop-ups for this site, then try again.",
+-  "com_efaiw_download_default_name": "Baseer reply"
++  "com_efaiw_download_default_name": "Baseer reply",
++  "com_efaiw_panel_switcher_label": "{{panel}}, choose a panel"
+ }
+diff --git a/client/src/store/settings.ts b/client/src/store/settings.ts
+index 4991ae2..335e82e 100644
+--- a/client/src/store/settings.ts
++++ b/client/src/store/settings.ts
+@@ -62,7 +62,12 @@ const localStorageAtoms = {
+   chatTitleInTab: atomWithLocalStorage(CHAT_TITLE_IN_TAB_KEY, true),
+ 
+   // Chat settings
+-  enterToSend: atomWithLocalStorage('enterToSend', true),
++  /** EF (#175): on a touch screen the keyboard's Return key starts a new line (phone keyboards have no Shift+Enter)
++   *  and the send button sends, as in ChatGPT and Claude; Settings → Chat still switches it per device. */
++  enterToSend: atomWithLocalStorage(
++    'enterToSend',
++    typeof window === 'undefined' || window.matchMedia?.('(pointer: coarse)')?.matches !== true,
++  ),
+   /** What Enter does while a run is generating: steer (inject mid-run) or queue (send after). */
+   duringRunDefaultAction: atomWithLocalStorage<'steer' | 'queue'>(
+     'duringRunDefaultAction',
+diff --git a/client/src/utils/convos.spec.ts b/client/src/utils/convos.spec.ts
+index 544ffcd..bfbdb2b 100644
+--- a/client/src/utils/convos.spec.ts
++++ b/client/src/utils/convos.spec.ts
+@@ -1015,6 +1015,23 @@ describe('Conversation Utilities', () => {
+         expect(data!.pages[0].conversations.map((c) => c.conversationId)).toEqual(['b', 'a']);
+       });
+ 
++      it('an empty date from a new chat state never replaces the row dates (EF #175)', () => {
++        /* A new chat's own state carries `createdAt: ''` and `updatedAt: ''`; written over the row, the list read the
++           empty date as "now" on every render and kept that chat above every chat used after it. */
++        const fresh = { ...convoA, createdAt: '', updatedAt: '', title: 'From the chat state' } as TConversation;
++        upsertConvoInAllQueries(queryClient, fresh, false);
++        updateConvoInAllQueries(queryClient, 'a', () => fresh);
++        const row = queryClient.getQueryData<InfiniteData<any>>(['allConversations'])!.pages[0].conversations[0];
++        expect(row.title).toBe('From the chat state');
++        expect(row.createdAt).toBe('2024-01-01T10:00:00Z');
++        expect(row.updatedAt).toBe('2024-01-01T12:00:00Z');
++
++        upsertConvoInAllQueries(queryClient, { ...fresh, conversationId: 'b' } as TConversation);
++        const inserted = queryClient.getQueryData<InfiniteData<any>>(['allConversations'])!.pages[0].conversations[0];
++        expect(inserted.conversationId).toBe('b');
++        expect(Date.parse(inserted.updatedAt)).not.toBeNaN();
++      });
++
+       it('updateConvoInAllQueries updates correct convo', () => {
+         updateConvoInAllQueries(queryClient, 'a', (c) => ({ ...c, model: 'gpt-4' }));
+         const data = queryClient.getQueryData<InfiniteData<any>>(['allConversations']);
+diff --git a/client/src/utils/convos.ts b/client/src/utils/convos.ts
+index 19ef139..8f5d08f 100644
+--- a/client/src/utils/convos.ts
++++ b/client/src/utils/convos.ts
+@@ -646,8 +646,8 @@ export function upsertConvoInAllQueries(
+     conversationId,
+     (found) => ({
+       ...found,
+-      ...listConvo,
+-      updatedAt: listConvo.updatedAt ?? (moveToTop ? new Date().toISOString() : found.updatedAt),
++      ...keepListDates(listConvo, found),
++      updatedAt: listConvo.updatedAt || (moveToTop ? new Date().toISOString() : found.updatedAt),
+     }),
+     moveToTop,
+   );
+@@ -689,7 +689,7 @@ export function upsertConvoInAllQueries(
+             {
+               ...firstPage,
+               conversations: [
+-                { ...listConvo, updatedAt: listConvo.updatedAt ?? now },
++                { ...listConvo, updatedAt: listConvo.updatedAt || now },
+                 ...firstPage.conversations,
+               ],
+             },
+@@ -701,8 +701,8 @@ export function upsertConvoInAllQueries(
+       const found = oldData.pages[pageIdx].conversations[convoIdx];
+       const updated = {
+         ...found,
+-        ...listConvo,
+-        updatedAt: listConvo.updatedAt ?? (moveToTop ? now : found.updatedAt),
++        ...keepListDates(listConvo, found),
++        updatedAt: listConvo.updatedAt || (moveToTop ? now : found.updatedAt),
+       };
+ 
+       if (!conversationBelongsToListQuery(query.queryKey, updated)) {
+@@ -795,6 +795,20 @@ function preserveListFlags(next: TConversation, found: TConversation): TConversa
+   return merged;
+ }
+ 
++/**
++ * EF (#175): a new chat's own state carries `createdAt: ''` and `updatedAt: ''` until the server stamps them, and the
++ * list reads an empty date as "now" on every render, so a chat started in this session stayed above every chat used
++ * after it until a reload. An empty date never replaces a known one.
++ */
++function keepListDates(next: TConversation, found: TConversation): TConversation {
++  const createdAt = next.createdAt || found.createdAt;
++  const updatedAt = next.updatedAt || found.updatedAt;
++  if (createdAt === next.createdAt && updatedAt === next.updatedAt) {
++    return next;
++  }
++  return { ...next, createdAt, updatedAt };
++}
++
+ /**
+  * A chat's conversation state snapshots the sidebar flags when the chat is opened and never
+  * hears about a later change, so pinning an open chat leaves a stale `pinned: false` on it.
+@@ -840,7 +854,7 @@ function updatePinnedConvosQuery(
+       }
+       const found = oldData.conversations[index];
+       const updated = updater(found);
+-      const merged = updated && preserveListFlags(updated, found);
++      const merged = updated && keepListDates(preserveListFlags(updated, found), found);
+       if (!merged || merged.pinned !== true) {
+         return {
+           ...oldData,
+@@ -911,7 +925,7 @@ export function updateConvoInAllQueries(
+       /** Callers that swap in a server response or the chat's own state wholesale (rename,
+        * pin, SSE updates) omit the sidebar-only flags, which would otherwise drop the
+        * shared badge and push a pinned chat back into the date groups. */
+-      const merged = preserveListFlags(updater(found), found);
++      const merged = keepListDates(preserveListFlags(updater(found), found), found);
+       const updated = moveToTop ? { ...merged, updatedAt: new Date().toISOString() } : merged;
+ 
+       if (!conversationBelongsToListQuery(query.queryKey, updated)) {

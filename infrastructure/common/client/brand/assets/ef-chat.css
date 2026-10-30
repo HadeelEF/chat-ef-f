@@ -1,0 +1,129 @@
+/*
+ * EF AI Workspace: reply styles that follow each reply's own direction (#115, ADR-0013).
+ * Linked from index.html (patch 0013) and served as is: the client's PostCSS compiles :dir() to an ancestor [dir]
+ * test, but every reply sets dir="auto", so an English reply in the Arabic interface is LTR.
+ * Colours: EF primary blue #2C3A82, secondary green (darkest shade) #87952E; product roles, PROVISIONAL (#7).
+ */
+
+/* Lists: the number or bullet stays on the start side of the reply's direction, in EF primary blue. */
+.message-render .markdown :is(ol, ul) {
+  padding-inline-start: 1.6em;
+  padding-inline-end: 0;
+}
+.message-render .markdown :is(ol, ul) > li {
+  padding-inline-start: 0.3em;
+  padding-inline-end: 0;
+}
+/* Items align with their list, not with their own first word (each item reorders its words itself, brand.css U-01),
+   whatever the interface language: brand.css's fallback follows the interface direction only. */
+.message-render .markdown :is(ol, ul):dir(rtl) > li {
+  text-align: right;
+}
+.message-render .markdown :is(ol, ul):dir(ltr) > li {
+  text-align: left;
+}
+.message-render .agent-turn .markdown li::marker {
+  color: #2c3a82;
+  font-weight: 600;
+}
+
+/* Quotes: an EF green bar on the start side (3.2:1 on the warm grey, a non-text mark) over the EF warm grey. */
+.message-render .agent-turn .markdown blockquote {
+  border-inline-start: 3px solid #87952e;
+  border-inline-end: 0;
+  padding-inline: 0.9em 0.75em;
+}
+
+/* Principal UX/UI audit (#123). Rules that need :dir() or :has(), so they live here, outside PostCSS. */
+/* UX-02: inline code takes the direction of its first strong letter: «24°C» stays 24°C inside an Arabic sentence.
+   Not code blocks (their <code> sits in a <div>, not directly in <pre>): there a line opening with an Arabic comment
+   turned right to left and «//» moved to its end (#127). */
+.message-render :not(pre) > code:not(pre code) {
+  unicode-bidi: plaintext;
+}
+/* #127: math is laid out left to right in any reply; inherited RTL reversed it («²mc = E»). */
+.message-render .katex {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+/* UX-05: upstream's `text-left` means «start» in an LTR interface; in Arabic it is the right side. Code and anything
+   inside dir="ltr" keep their direction, so they are not matched. */
+.text-left:dir(rtl) {
+  text-align: right;
+}
+/* UX-12: settings that mislead or do not concern employees: chat direction (the composer and editors follow the text),
+   the «@» endpoint switcher and mid-chat endpoint switching (both bypass the three Baseer models), badges, prompt
+   versions. */
+[role='tabpanel'] div:has(> [data-testid='chatDirection']),
+[role='tabpanel'] div:has(> div > [data-testid='chatDirection']),
+[role='tabpanel'] div:has(> [id='atCommand']),
+[role='tabpanel'] div:has(> [id='modularChat']),
+[role='tabpanel'] div:has(> [id='showBadges']),
+[role='tabpanel'] div:has(> [id='alwaysMakeProd']) {
+  display: none;
+}
+/* UX-17: no message navigator. Its marks are 6 px targets (WCAG 2.2 target size), it sat on the start side of Arabic
+   text and covered replies on tablets; scrolling reaches every message. */
+nav[aria-keyshortcuts='Shift+Alt+M'] {
+  display: none !important;
+}
+/* UX-20: no pin button next to the three Baseer models. */
+[role='menuitem']:has(img[src$='ef-baseer-icon.svg']) > button {
+  display: none;
+}
+/* UX-05 (QA): the history list is virtualized with an inline `direction: ltr`, so in Arabic the date groups («اليوم»,
+   «أمس») sat on the left, away from the titles. */
+[data-testid='convo-list-row'] h2:dir(rtl) {
+  text-align: right;
+  padding-left: 0;
+  padding-right: 0.25rem;
+}
+
+/* Full Arabic RTL test (#127). */
+/* Search results are virtualized with the same inline `direction: ltr`: in Arabic each row turns back to RTL, so the
+   reply header and the link to its chat sit on the right, as in the chat itself. */
+[dir='rtl'] [data-testid='search-result-row'] {
+  direction: rtl;
+}
+/* Free-text fields take each line's direction from its first strong letter, like the message box (dir=auto): an
+   Arabic title typed in the sidebar rename field no longer runs left to right, and an e-mail address stays LTR. */
+input:is([type='text'], [type='search'], [type='email'], :not([type])),
+textarea {
+  unicode-bidi: plaintext;
+}
+/* Numbers in number fields keep their sign on the left: «-45», not «45-». */
+.rc-input-number-input {
+  direction: ltr;
+}
+/* Upstream labels break anywhere (`break-all`), which split Arabic words mid-word in the narrow parameter columns. */
+[dir='rtl'] label.break-all {
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+
+/* Sidebar v4 (#204, owner-approved Concept 2) and v5 (#221): the direction-dependent spacing of the rail, the chats
+   panel and the phone drawer. */
+.efaiw-rail {
+  border-inline-end: 1px solid #e3ddd3;
+}
+.efaiw-chats:not(.efaiw-chats-mobile) {
+  border-inline-end: 1px solid #e8e4dc;
+}
+.efaiw-chats-head {
+  padding-inline: 18px 10px;
+}
+#mobile-drawer .efaiw-chats-head {
+  padding-block: calc(10px + env(safe-area-inset-top, 0px)) 6px;
+  padding-inline: 14px 8px;
+}
+.efaiw-chats-tools {
+  padding-inline: 12px;
+  padding-block-end: 4px;
+}
+.efaiw-side-panel {
+  margin-inline: 6px;
+}
+.efaiw-dock {
+  padding-inline: 14px;
+}

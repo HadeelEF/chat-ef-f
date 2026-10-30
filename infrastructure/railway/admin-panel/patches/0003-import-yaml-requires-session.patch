@@ -1,0 +1,85 @@
+diff --git a/src/server/config.ts b/src/server/config.ts
+index 6f576ef..fa9336f 100644
+--- a/src/server/config.ts
++++ b/src/server/config.ts
+@@ -30,7 +30,7 @@ import {
+ import { BLOCK_UNSAFE_CONFIG_KEYS, APP_SERVICE_KEY_ALIASES, getConfigSection } from '@/constants';
+ import { BASE_CONFIG_PRINCIPAL_ID } from './constants';
+ import { safeFieldPath } from './utils/validation';
+-import { apiFetch } from './utils/api';
++import { apiFetch, requireAdminBearer } from './utils/api';
+ 
+ /** Hide the Langfuse section when LibreChat reports fanout is disabled. When the
+  *  fanout state is unknown (older backends), the schema-provided section is kept. */
+@@ -786,9 +786,13 @@ export function parseConfigYaml(yamlContent: string): t.ImportParseResult {
+ 
+ export const parseImportedYaml = createServerFn({ method: 'POST' })
+   .inputValidator(z.object({ yamlContent: z.string() }))
+-  .handler(async ({ data }: { data: { yamlContent: string } }) =>
+-    parseConfigYaml(data.yamlContent),
+-  );
++  .handler(async ({ data }: { data: { yamlContent: string } }) => {
++    // EF AI Workspace (#165): this function never calls the LibreChat API, so no session was
++    // checked, and the posted YAML reaches the config schema's Zod 3 validation
++    // (CVE-2023-54404, no fixed 3.x). Signed-in admins only.
++    await requireAdminBearer();
++    return parseConfigYaml(data.yamlContent);
++  });
+ 
+ function getFieldDefault(schema: t.ZodSchemaLike): { hasDefault: boolean; value: unknown } {
+   let current = schema;
+diff --git a/src/server/utils/api.test.ts b/src/server/utils/api.test.ts
+index d858aec..31d487a 100644
+--- a/src/server/utils/api.test.ts
++++ b/src/server/utils/api.test.ts
+@@ -8,7 +8,7 @@ vi.mock('./refresh', () => ({
+   refreshOn401: (...args: unknown[]) => refreshOn401(...args),
+ }));
+ 
+-import { apiFetch } from './api';
++import { apiFetch, requireAdminBearer } from './api';
+ 
+ const fetchMock = vi.fn();
+ 
+@@ -122,3 +122,18 @@ describe('apiFetch', () => {
+     expect(headers['X-Custom']).toBe('keep-me');
+   });
+ });
++
++describe('requireAdminBearer (#165)', () => {
++  it('throws without a session bearer', async () => {
++    ensureFreshBearer.mockResolvedValueOnce(undefined);
++    await expect(requireAdminBearer()).rejects.toThrow(/No admin session token/);
++    expect(fetchMock).not.toHaveBeenCalled();
++  });
++
++  it('passes with a session bearer and makes no request', async () => {
++    ensureFreshBearer.mockResolvedValueOnce('jwt-fresh');
++    await expect(requireAdminBearer()).resolves.toBeUndefined();
++    expect(ensureFreshBearer).toHaveBeenCalledWith(30_000);
++    expect(fetchMock).not.toHaveBeenCalled();
++  });
++});
+diff --git a/src/server/utils/api.ts b/src/server/utils/api.ts
+index 0227426..e9dcefe 100644
+--- a/src/server/utils/api.ts
++++ b/src/server/utils/api.ts
+@@ -44,6 +44,18 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
+   return fetch(url, buildInit(refreshedToken));
+ }
+ 
++/**
++ * EF AI Workspace (#165): the session check {@link apiFetch} makes, for a server function that
++ * never calls the LibreChat API.
++ *
++ * @throws {Error} If no session bearer is available even after a refresh attempt.
++ */
++export async function requireAdminBearer(): Promise<void> {
++  if (!(await ensureFreshBearer(PROACTIVE_REFRESH_SKEW_MS))) {
++    throw new Error('No admin session token available');
++  }
++}
++
+ /**
+  * Extract an error message from a failed API response and throw.
+  * Handles both `{ error }` and `{ message }` response shapes.

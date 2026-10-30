@@ -1,0 +1,53 @@
+# Dependabot version updates. Pull requests still require human review (no auto-merge).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "pip"
+    directory: "/scripts/validate"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+
+  # Proposes digest/tag updates for infrastructure/compose/*.yaml. The Railway Dockerfiles (infrastructure/railway/)
+  # must be bumped to the same digests in the SAME pull request — scripts/validate/railway_checks.py fails until they
+  # match. LibreChat upgrades still follow the upgrade runbook (docs/operations/runbook.md): smoke tests + backup +
+  # owner approval.
+  - package-ecosystem: "docker-compose"
+    directory: "/infrastructure/compose"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # ADR-0007 pins the MongoDB 8.0 series: only 8.0.x patches are proposed here. A minor or major move (8.0 -> 8.3,
+      # 9.0) changes the feature compatibility version and needs the coordinated evaluation in #62, not a Compose-only
+      # bump (PRs #19 and #177 proposed 8.3.x for Compose alone).
+      - dependency-name: "mongo"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+
+  # Railway IaC SDK (.railway/package.json, exact pins + lockfile). Check SDK/CLI compatibility before merging.
+  - package-ecosystem: "npm"
+    directory: "/.railway"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"

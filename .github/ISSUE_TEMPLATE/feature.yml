@@ -1,0 +1,91 @@
+name: Feature / task
+description: A platform capability, configuration, infrastructure or documentation task.
+title: "[R?][P?] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use synthetic examples only. Never paste secrets, real employee data or confidential documents.
+        Note: required-field validation is enforced by GitHub only on public repositories.
+  - type: dropdown
+    id: product_release
+    attributes:
+      label: Product release (R = outcome, not Git tag)
+      options:
+        - R0.1 Foundation
+        - R0.2 AI Activation
+        - R0.3 Brand and UX
+        - R0.4 Controlled Preview
+        - R0.5 EF Intelligence
+        - R0.6 Specialized Assistants
+        - R1.0 Enterprise Production
+        - Cross-cutting governance
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - P0 Critical path or safety gate
+        - P1 Important
+        - P2 Later
+    validations:
+      required: true
+  - type: dropdown
+    id: milestone
+    attributes:
+      label: Engineering milestone (M0-M8)
+      options:
+        - M0 Repository Foundation & Governance
+        - M1 LibreChat Platform Foundation & Multi-Environment Hosting
+        - M2 Branding & Bilingual UX
+        - M3 Models, Chat & AI Capabilities
+        - M4 Knowledge, RAG & Artifacts
+        - M5 Agents, Skills & MCP
+        - M6 Security, Governance & Operations
+        - M7 Specialized Assistants
+        - M8 Pilot & Production Readiness
+    validations:
+      required: true
+  - type: input
+    id: requirements
+    attributes:
+      label: Linked requirements
+      description: FR-/NFR- IDs from docs/product/, or "none" with a reason.
+      placeholder: FR-002, NFR-SEC-02
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal / problem
+      description: What outcome is needed and why.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Testable criteria. Each will need evidence in the PR.
+      placeholder: |
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Out of scope / constraints
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and open decisions
+      description: D-xx / OD-xx from docs/product/scope.md, other Issues.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: This issue contains no secrets, real personal data or confidential documents.
+          required: true

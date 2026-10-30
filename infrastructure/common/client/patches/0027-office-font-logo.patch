@@ -1,0 +1,1048 @@
+EF AI Workspace (#157): Word and PowerPoint downloads in Aktiv Grotesk, with the logo. Owner decisions 2026-10-23:
+embed Aktiv in Word and PowerPoint (a reader without the font gets a read-only file, about 2 MB more per file; Excel
+stays Tahoma) and put the logo in the files (the letterhead and date format stay open, #145).
+
+- Brand files (utils/efaiwBrandAssets.ts): Aktiv Regular and Bold, fetched from the platform as they are, and the blue
+  and white horizontal logos drawn to PNG from their SVG at print resolution, the viewport sized to the artwork's own
+  viewBox. Fetched once per page while a download menu is open; any failure gives the files as before (Tahoma, no logo).
+- Word (utils/efaiwDocx.ts): both faces embedded as Word does (obfuscated .odttf, ECMA-376 §17.8.1; font table, the
+  embedTrueTypeFonts setting), the styles set in Aktiv, and the blue logo at the top right of the first page, its
+  symbol 1.5 cm high with half that as clear space below (guide p9, p13, p17), as in the PDF.
+- PowerPoint (utils/efaiwPptx.ts): both faces embedded as Embedded OpenType (.fntdata, the font unchanged after the
+  header), the theme and runs in Aktiv, and the white logo at the top right of the title slide.
+- The fonts' licence flag (fsType 4, preview and print) is kept: Word and PowerPoint open such a file read-only where
+  the font is not installed. LibreOffice ignores embedded fonts that do not allow editing and shows its own.
+- The Arabic letter range in efaiwDocx.ts is written with \u escapes (same ranges; eslint no-irregular-whitespace).
+- Tests: utils/__tests__/efaiwBrandAssets.test.ts.
+
+diff --git a/client/src/components/Artifacts/DownloadArtifact.tsx b/client/src/components/Artifacts/DownloadArtifact.tsx
+index e08e2d1..933181b 100644
+--- a/client/src/components/Artifacts/DownloadArtifact.tsx
++++ b/client/src/components/Artifacts/DownloadArtifact.tsx
+@@ -41,7 +41,7 @@ function DocumentDownloadMenu({
+     },
+     [handleDownload],
+   );
+-  const items = useDocumentDownloads({ markdown, name, hasTable, onMarkdown });
++  const items = useDocumentDownloads({ markdown, name, hasTable, onMarkdown, isOpen });
+   const label = localize('com_ui_download_artifact');
+ 
+   return (
+diff --git a/client/src/components/Chat/Messages/DownloadReply.tsx b/client/src/components/Chat/Messages/DownloadReply.tsx
+index 0eafbea..27a09c7 100644
+--- a/client/src/components/Chat/Messages/DownloadReply.tsx
++++ b/client/src/components/Chat/Messages/DownloadReply.tsx
+@@ -52,7 +52,7 @@ function DownloadReply({
+   const name = safeFileName(title, localize('com_efaiw_download_default_name'));
+   const markdown = useCallback(() => replyMarkdown(message), [message]);
+   const hasTable = useMemo(() => hasMarkdownTable(replyMarkdown(message)), [message]);
+-  const items = useDocumentDownloads({ markdown, name, hasTable });
++  const items = useDocumentDownloads({ markdown, name, hasTable, isOpen });
+ 
+   return (
+     <DropdownPopup
+diff --git a/client/src/components/Chat/Messages/useDocumentDownloads.tsx b/client/src/components/Chat/Messages/useDocumentDownloads.tsx
+index e8ad3c5..78e4c5f 100644
+--- a/client/src/components/Chat/Messages/useDocumentDownloads.tsx
++++ b/client/src/components/Chat/Messages/useDocumentDownloads.tsx
+@@ -1,6 +1,7 @@
+-import { useMemo } from 'react';
++import { useEffect, useMemo } from 'react';
+ import { FileCode, FileSpreadsheet, FileText, Presentation, Printer } from 'lucide-react';
+ import { useToastContext } from '@librechat/client';
++import { loadEfOfficeAssets } from '~/utils/efaiwBrandAssets';
+ import { markdownToDocx, saveBlob, stripArtifactDirectives } from '~/utils/efaiwDocx';
+ import { markdownToPptx } from '~/utils/efaiwPptx';
+ import { markdownToXlsx } from '~/utils/efaiwXlsx';
+@@ -16,32 +17,48 @@ const iconClass = 'size-4 text-text-secondary';
+  * file is built in the browser in the Environment Fund identity (utils/efaiwDocx.ts, efaiwPptx.ts, efaiwXlsx.ts,
+  * efaiwPrint.ts) and named `name`. `onMarkdown` replaces the Markdown item's default save (the panel keeps its own:
+  * the original file, or the edited text).
++ * EF (#157): Word and PowerPoint embed Aktiv Grotesk and carry the logo; their files are fetched while the menu is
++ * open (`isOpen`), once per page, so a click rarely waits. Without them the file is written in Tahoma, without logo.
+  */
+ export default function useDocumentDownloads({
+   markdown,
+   name,
+   hasTable,
+   onMarkdown,
++  isOpen,
+ }: {
+   markdown: () => string;
+   name: string;
+   hasTable: boolean;
+   onMarkdown?: MenuItemProps['onClick'];
++  isOpen: boolean;
+ }): MenuItemProps[] {
+   const localize = useLocalize();
+   const { showToast } = useToastContext();
+ 
++  useEffect(() => {
++    if (isOpen) {
++      void loadEfOfficeAssets();
++    }
++  }, [isOpen]);
++
+   return useMemo(() => {
+     const items: MenuItemProps[] = [
+       {
+         label: localize('com_efaiw_download_word'),
+         icon: <FileText className={iconClass} aria-hidden="true" />,
+-        onClick: () => saveBlob(markdownToDocx(markdown(), name), `${name}.docx`),
++        onClick: async () => {
++          const text = markdown();
++          saveBlob(markdownToDocx(text, name, await loadEfOfficeAssets()), `${name}.docx`);
++        },
+       },
+       {
+         label: localize('com_efaiw_download_pptx'),
+         icon: <Presentation className={iconClass} aria-hidden="true" />,
+-        onClick: () => saveBlob(markdownToPptx(markdown(), name), `${name}.pptx`),
++        onClick: async () => {
++          const text = markdown();
++          saveBlob(markdownToPptx(text, name, await loadEfOfficeAssets()), `${name}.pptx`);
++        },
+       },
+     ];
+     if (hasTable) {
+diff --git a/client/src/utils/__tests__/efaiwBrandAssets.test.ts b/client/src/utils/__tests__/efaiwBrandAssets.test.ts
+new file mode 100644
+index 0000000..dc02fb7
+--- /dev/null
++++ b/client/src/utils/__tests__/efaiwBrandAssets.test.ts
+@@ -0,0 +1,186 @@
++import { embeddedOpenType, fontKey, obfuscateFont } from '../efaiwBrandAssets';
++import type { EfOfficeAssets } from '../efaiwBrandAssets';
++import { buildDocxParts } from '../efaiwDocx';
++import { buildPptxParts } from '../efaiwPptx';
++
++/** A minimal TrueType file: the OS/2, head and name tables the EOT header is read from, then filler. */
++function sfnt({ weight = 400, fsType = 4, italic = false } = {}): Uint8Array {
++  const names: Array<[number, string]> = [
++    [1, 'Test Sans'],
++    [2, weight === 700 ? 'Bold' : 'Regular'],
++    [4, `Test Sans ${weight === 700 ? 'Bold' : 'Regular'}`],
++    [5, 'Version 1.000'],
++  ];
++  const utf16be = (text: string) =>
++    Uint8Array.from([...text].flatMap((ch) => [ch.charCodeAt(0) >> 8, ch.charCodeAt(0) & 0xff]));
++  const strings = names.map(([, text]) => utf16be(text));
++  const nameSize = 6 + names.length * 12 + strings.reduce((sum, s) => sum + s.length, 0);
++  const os2At = 12 + 3 * 16;
++  const headAt = os2At + 96;
++  const nameAt = headAt + 54;
++  const font = new Uint8Array(nameAt + nameSize + 100).fill(0x5a);
++  const view = new DataView(font.buffer);
++  view.setUint32(0, 0x00010000);
++  view.setUint16(4, 3);
++  [
++    ['OS/2', os2At],
++    ['head', headAt],
++    ['name', nameAt],
++  ].forEach(([tag, offset], i) => {
++    font.set(
++      [...(tag as string)].map((ch) => ch.charCodeAt(0)),
++      12 + i * 16,
++    );
++    view.setUint32(12 + i * 16 + 8, offset as number);
++  });
++  view.setUint16(os2At + 4, weight);
++  view.setUint16(os2At + 8, fsType);
++  font.set([2, 11, 5, 3, 0, 0, 0, 0, 0, 0], os2At + 32);
++  view.setUint32(os2At + 42, 0x8000202f);
++  view.setUint16(os2At + 62, italic ? 0x21 : 0x40);
++  view.setUint32(os2At + 78, 0x20000001);
++  view.setUint32(headAt + 8, 0x12345678);
++  view.setUint16(nameAt, 0);
++  view.setUint16(nameAt + 2, names.length);
++  view.setUint16(nameAt + 4, 6 + names.length * 12);
++  let offset = 0;
++  names.forEach(([id], i) => {
++    const at = nameAt + 6 + i * 12;
++    [3, 1, 0x409, id, strings[i].length, offset].forEach((v, j) => view.setUint16(at + j * 2, v));
++    font.set(strings[i], nameAt + 6 + names.length * 12 + offset);
++    offset += strings[i].length;
++  });
++  return font;
++}
++
++const assets = (): EfOfficeAssets => ({
++  font: 'Test Sans',
++  regular: sfnt(),
++  bold: sfnt({ weight: 700 }),
++  logo: { png: new Uint8Array([137, 80, 78, 71]), width: 300, height: 100 },
++  logoWhite: { png: new Uint8Array([137, 80, 78, 71, 1]), width: 300, height: 64 },
++});
++
++describe('fontKey and obfuscateFont (ECMA-376 §17.8.1)', () => {
++  it('makes a braced, upper-case GUID', () => {
++    expect(fontKey()).toMatch(/^\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\}$/);
++    expect(fontKey()).not.toBe(fontKey());
++  });
++
++  it('XORs the first 32 bytes with the GUID bytes read from the end', () => {
++    const font = new Uint8Array(40);
++    const out = obfuscateFont(font, '{00112233-4455-6677-8899-AABBCCDDEEFF}');
++    expect(Array.from(out.subarray(0, 16))).toEqual([
++      0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11,
++      0x00,
++    ]);
++    expect(Array.from(out.subarray(16, 32))).toEqual(Array.from(out.subarray(0, 16)));
++    expect(Array.from(out.subarray(32))).toEqual(new Array(8).fill(0));
++  });
++
++  it('gives the original font back with the same key, and leaves the input alone', () => {
++    const font = sfnt();
++    const key = fontKey();
++    const copy = font.slice();
++    expect(obfuscateFont(obfuscateFont(font, key), key)).toEqual(copy);
++    expect(font).toEqual(copy);
++  });
++});
++
++describe('embeddedOpenType', () => {
++  it('wraps the font unchanged under a header from its own tables', () => {
++    const font = sfnt({ weight: 700, italic: true });
++    const eot = embeddedOpenType(font);
++    const view = new DataView(eot.buffer);
++    expect(view.getUint32(0, true)).toBe(eot.length);
++    expect(view.getUint32(4, true)).toBe(font.length);
++    expect(view.getUint32(8, true)).toBe(0x00020001);
++    expect(Array.from(eot.subarray(16, 26))).toEqual([2, 11, 5, 3, 0, 0, 0, 0, 0, 0]);
++    expect(eot[26]).toBe(1);
++    expect(eot[27]).toBe(1);
++    expect(view.getUint32(28, true)).toBe(700);
++    expect(view.getUint16(32, true)).toBe(4);
++    expect(view.getUint16(34, true)).toBe(0x504c);
++    expect(view.getUint32(36, true)).toBe(0x8000202f);
++    expect(view.getUint32(52, true)).toBe(0x20000001);
++    expect(view.getUint32(60, true)).toBe(0x12345678);
++    const strings: string[] = [];
++    let at = 82;
++    for (let i = 0; i < 4; i++) {
++      const size = view.getUint16(at, true);
++      strings.push(new TextDecoder('utf-16le').decode(eot.subarray(at + 2, at + 2 + size)));
++      at += 4 + size;
++    }
++    expect(strings).toEqual(['Test Sans', 'Bold', 'Version 1.000', 'Test Sans Bold']);
++    expect(view.getUint16(at, true)).toBe(0);
++    expect(eot.subarray(at + 2)).toEqual(font);
++  });
++
++  it('refuses a file without the tables it needs', () => {
++    expect(() => embeddedOpenType(new Uint8Array(12))).toThrow('font tables missing');
++  });
++});
++
++describe('Word and PowerPoint with the brand files (#157)', () => {
++  const markdown = '# تقرير اصطناعي\n\nفقرة **عريضة**.\n\n## الشريحة\n\n- بند';
++
++  it('embeds both faces in Word, sets them in the styles and puts the logo on the first page', () => {
++    const brand = assets();
++    const parts = buildDocxParts(markdown, 'تقرير', brand);
++    const table = parts['word/fontTable.xml'] as string;
++    const [, regularKey] = table.match(/<w:embedRegular r:id="rIdFont1" w:fontKey="([^"]+)"/) ?? [];
++    const [, boldKey] = table.match(/<w:embedBold r:id="rIdFont2" w:fontKey="([^"]+)"/) ?? [];
++    expect(obfuscateFont(parts['word/fonts/font1.odttf'] as Uint8Array, regularKey)).toEqual(
++      brand.regular,
++    );
++    expect(obfuscateFont(parts['word/fonts/font2.odttf'] as Uint8Array, boldKey)).toEqual(
++      brand.bold,
++    );
++    expect(parts['word/styles.xml']).toContain('w:ascii="Test Sans"');
++    expect(parts['word/settings.xml']).toContain('<w:embedTrueTypeFonts/>');
++    expect(parts['word/document.xml']).toContain(
++      '<w:headerReference w:type="first" r:id="rIdHeader"/>',
++    );
++    expect(parts['word/document.xml']).toContain('<w:titlePg/>');
++    expect(parts['word/header1.xml']).toContain('cx="1620000" cy="540000"');
++    expect(parts['word/media/logo.png']).toBe(brand.logo.png);
++    expect(parts['[Content_Types].xml']).toContain(
++      'application/vnd.openxmlformats-officedocument.obfuscatedFont',
++    );
++    expect(parts['word/_rels/document.xml.rels']).toContain('Target="fontTable.xml"');
++  });
++
++  it('writes Word as before without them: Tahoma, no font parts, no logo', () => {
++    const parts = buildDocxParts(markdown, 'تقرير', null);
++    expect(parts['word/styles.xml']).toContain('w:ascii="Tahoma"');
++    expect(
++      Object.keys(parts).some((name) => /fontTable|fonts\/|header|media|settings/.test(name)),
++    ).toBe(false);
++    expect(parts['word/document.xml']).not.toContain('headerReference');
++  });
++
++  it('embeds both faces in PowerPoint and puts the white logo on the title slide only', () => {
++    const brand = assets();
++    const parts = buildPptxParts(markdown, 'تقرير', brand);
++    const presentation = parts['ppt/presentation.xml'] as string;
++    expect(presentation).toContain('embedTrueTypeFonts="1"');
++    expect(presentation).toMatch(
++      /<p:notesSz [^>]*\/><p:embeddedFontLst><p:embeddedFont><p:font typeface="Test Sans" pitchFamily="34" charset="0"\/><p:regular r:id="rIdFontR"\/><p:bold r:id="rIdFontB"\/>/,
++    );
++    expect(parts['ppt/fonts/font1.fntdata']).toEqual(embeddedOpenType(brand.regular));
++    expect(parts['ppt/fonts/font2.fntdata']).toEqual(embeddedOpenType(brand.bold));
++    expect(parts['ppt/theme/theme1.xml']).toContain('<a:latin typeface="Test Sans"/>');
++    expect(parts['ppt/slides/slide1.xml']).toContain('<a:blip r:embed="rIdLogo"/>');
++    expect(parts['ppt/slides/_rels/slide1.xml.rels']).toContain('Target="../media/logo-white.png"');
++    expect(parts['ppt/slides/slide2.xml']).not.toContain('<p:pic>');
++    expect(parts['ppt/media/logo-white.png']).toBe(brand.logoWhite.png);
++  });
++
++  it('writes PowerPoint as before without them', () => {
++    const parts = buildPptxParts(markdown, 'تقرير');
++    expect(parts['ppt/theme/theme1.xml']).toContain('<a:latin typeface="Tahoma"/>');
++    expect(parts['ppt/presentation.xml']).not.toContain('embeddedFontLst');
++    expect(Object.keys(parts).some((name) => /fonts\/|media\//.test(name))).toBe(false);
++    expect(parts['ppt/slides/slide1.xml']).not.toContain('<p:pic>');
++  });
++});
+diff --git a/client/src/utils/efaiwBrandAssets.ts b/client/src/utils/efaiwBrandAssets.ts
+new file mode 100644
+index 0000000..3bb5f41
+--- /dev/null
++++ b/client/src/utils/efaiwBrandAssets.ts
+@@ -0,0 +1,197 @@
++/**
++ * EF (#157): the brand's own files for Word and PowerPoint downloads, fetched from the platform (same origin, and
++ * already in the browser's cache from the app's own fonts) once per page:
++ * - Aktiv Grotesk Regular and Bold, the original files (TrueType outlines, one family). Their licence flag (fsType 4)
++ *   allows embedding for preview and print, so a reader without the font gets a read-only file (owner decision
++ *   2026-10-23, #157).
++ * - The horizontal logos (blue for white pages, white for the blue title slide), drawn to PNG at print resolution
++ *   from the original SVG. Only the viewport is sized to the artwork's own viewBox, so nothing is stretched or redrawn.
++ * Any failure gives null, and the files are written as before: Tahoma, no logo.
++ */
++export type EfLogo = { png: Uint8Array; width: number; height: number };
++
++export type EfOfficeAssets = {
++  /** The family name in the font files, which Word and PowerPoint match against. */
++  font: string;
++  regular: Uint8Array;
++  bold: Uint8Array;
++  logo: EfLogo;
++  logoWhite: EfLogo;
++};
++
++export const EF_OFFICE_FONT = 'Aktiv Grotesk';
++
++const LOGO_PX = 1600;
++
++async function bytes(path: string): Promise<Uint8Array> {
++  const response = await fetch(path);
++  if (!response.ok) {
++    throw new Error(`${path}: ${response.status}`);
++  }
++  return new Uint8Array(await response.arrayBuffer());
++}
++
++async function logoPng(path: string): Promise<EfLogo> {
++  const response = await fetch(path);
++  if (!response.ok) {
++    throw new Error(`${path}: ${response.status}`);
++  }
++  const doc = new DOMParser().parseFromString(await response.text(), 'image/svg+xml');
++  const svg = doc.documentElement;
++  const [, , width, height] = (svg.getAttribute('viewBox') ?? '').split(/[\s,]+/).map(Number);
++  if (!(width > 0 && height > 0)) {
++    throw new Error(`${path}: no viewBox`);
++  }
++  const pxW = LOGO_PX;
++  const pxH = Math.round((LOGO_PX * height) / width);
++  svg.setAttribute('width', String(pxW));
++  svg.setAttribute('height', String(pxH));
++  const url = URL.createObjectURL(
++    new Blob([new XMLSerializer().serializeToString(doc)], { type: 'image/svg+xml' }),
++  );
++  try {
++    const image = new Image();
++    image.src = url;
++    await image.decode();
++    const canvas = document.createElement('canvas');
++    canvas.width = pxW;
++    canvas.height = pxH;
++    const context = canvas.getContext('2d');
++    if (!context) {
++      throw new Error('canvas unavailable');
++    }
++    context.drawImage(image, 0, 0, pxW, pxH);
++    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
++    if (!blob) {
++      throw new Error(`${path}: PNG encoding failed`);
++    }
++    return { png: new Uint8Array(await blob.arrayBuffer()), width, height };
++  } finally {
++    URL.revokeObjectURL(url);
++  }
++}
++
++let assets: Promise<EfOfficeAssets | null> | null = null;
++
++export function loadEfOfficeAssets(): Promise<EfOfficeAssets | null> {
++  assets ??= Promise.all([
++    bytes('/assets/fonts/aktiv-grotesk-regular.otf'),
++    bytes('/assets/fonts/aktiv-grotesk-bold.otf'),
++    logoPng('/assets/logo.svg'),
++    logoPng('/assets/logo-dark.svg'),
++  ]).then(
++    ([regular, bold, logo, logoWhite]) => ({
++      font: EF_OFFICE_FONT,
++      regular,
++      bold,
++      logo,
++      logoWhite,
++    }),
++    () => {
++      assets = null;
++      return null;
++    },
++  );
++  return assets;
++}
++
++/** A fresh GUID in braces, upper case: the key Word obfuscates an embedded font with. */
++export function fontKey(): string {
++  const hex = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
++    b.toString(16).padStart(2, '0'),
++  )
++    .join('')
++    .toUpperCase();
++  return `{${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}}`;
++}
++
++/**
++ * ECMA-376 Part 1 §17.8.1: the first 32 bytes of the font XOR the key, whose bytes are the GUID's hex digits read
++ * from the end (as LibreOffice and Word read it back).
++ */
++export function obfuscateFont(font: Uint8Array, key: string): Uint8Array {
++  const hex = key.replace(/[{}-]/g, '');
++  const keyBytes = Array.from({ length: 16 }, (_, i) =>
++    parseInt(hex.slice(30 - i * 2, 32 - i * 2), 16),
++  );
++  const out = font.slice();
++  for (let i = 0; i < 32; i++) {
++    out[i] ^= keyBytes[i % 16];
++  }
++  return out;
++}
++
++/**
++ * PowerPoint keeps an embedded font as Embedded OpenType (.fntdata): a little-endian header taken from the font's own
++ * OS/2, head and name tables, then the font unchanged (version 0x00020001, no subsetting, compression or XOR).
++ */
++export function embeddedOpenType(font: Uint8Array): Uint8Array {
++  const view = new DataView(font.buffer, font.byteOffset, font.byteLength);
++  const tables = new Map<string, number>();
++  for (let i = 0; i < view.getUint16(4); i++) {
++    const at = 12 + i * 16;
++    tables.set(String.fromCharCode(...font.subarray(at, at + 4)), view.getUint32(at + 8));
++  }
++  const os2 = tables.get('OS/2');
++  const head = tables.get('head');
++  const name = tables.get('name');
++  if (os2 == null || head == null || name == null) {
++    throw new Error('font tables missing');
++  }
++  const nameString = (id: number): Uint8Array => {
++    const storage = name + view.getUint16(name + 4);
++    for (let i = 0; i < view.getUint16(name + 2); i++) {
++      const at = name + 6 + i * 12;
++      if (
++        view.getUint16(at) === 3 &&
++        view.getUint16(at + 2) === 1 &&
++        view.getUint16(at + 4) === 0x409 &&
++        view.getUint16(at + 6) === id
++      ) {
++        const raw = font.subarray(
++          storage + view.getUint16(at + 10),
++          storage + view.getUint16(at + 10) + view.getUint16(at + 8),
++        );
++        const le = new Uint8Array(raw.length);
++        for (let j = 0; j + 1 < raw.length; j += 2) {
++          le[j] = raw[j + 1];
++          le[j + 1] = raw[j];
++        }
++        return le;
++      }
++    }
++    return new Uint8Array(0);
++  };
++  const names = [nameString(1), nameString(2), nameString(5), nameString(4)];
++  // Padding1 sits at 80; each name is its size and the padding after it; then RootStringSize (0) and the font.
++  const size = 82 + names.reduce((sum, n) => sum + 4 + n.length, 0) + 2 + font.length;
++  const out = new Uint8Array(size);
++  const eot = new DataView(out.buffer);
++  eot.setUint32(0, size, true);
++  eot.setUint32(4, font.length, true);
++  eot.setUint32(8, 0x00020001, true);
++  eot.setUint32(12, 0, true);
++  out.set(font.subarray(os2 + 32, os2 + 42), 16);
++  out[26] = 1;
++  out[27] = view.getUint16(os2 + 62) & 1;
++  eot.setUint32(28, view.getUint16(os2 + 4), true);
++  eot.setUint16(32, view.getUint16(os2 + 8), true);
++  eot.setUint16(34, 0x504c, true);
++  for (let i = 0; i < 4; i++) {
++    eot.setUint32(36 + i * 4, view.getUint32(os2 + 42 + i * 4), true);
++  }
++  eot.setUint32(52, view.getUint32(os2 + 78), true);
++  eot.setUint32(56, view.getUint32(os2 + 82), true);
++  eot.setUint32(60, view.getUint32(head + 8), true);
++  let at = 82;
++  for (const n of names) {
++    eot.setUint16(at - 2, 0, true);
++    eot.setUint16(at, n.length, true);
++    out.set(n, at + 2);
++    at += 4 + n.length;
++  }
++  eot.setUint16(at - 2, 0, true);
++  eot.setUint16(at, 0, true);
++  out.set(font, at + 2);
++  return out;
++}
+diff --git a/client/src/utils/efaiwDocx.ts b/client/src/utils/efaiwDocx.ts
+index 0f4fc8b..d76b27b 100644
+--- a/client/src/utils/efaiwDocx.ts
++++ b/client/src/utils/efaiwDocx.ts
+@@ -6,12 +6,17 @@
+  * tables, code blocks, quotes, rules. Images become their alt text.
+  * EF (#146): set in the Environment Fund palette (visual identity guide v01, p22-24: primary dark text, primary blue
+  * headings, the lightest primary-blue shade on table headers, neutral shades on rules and borders, warm grey behind
+- * code) and in Tahoma, the guide's secondary typeface (p30): the reader's computer is not guaranteed to have Aktiv
+- * Grotesk, and Word does not fall back from a missing font the way a browser does.
++ * code).
++ * EF (#157): set in Aktiv Grotesk, embedded in the file (Regular and Bold, obfuscated as ECMA-376 §17.8.1 requires), so
++ * a reader without the font sees it too, with the blue logo at the top right of the first page. Without the brand
++ * files (`loadEfOfficeAssets` failed) the document is set in Tahoma, the guide's secondary typeface (p30), and has no
++ * logo: Word does not fall back from a missing font the way a browser does.
+  */
+ import { gfm } from 'micromark-extension-gfm';
+ import { gfmFromMarkdown } from 'mdast-util-gfm';
+ import { fromMarkdown } from 'mdast-util-from-markdown';
++import { fontKey, obfuscateFont } from './efaiwBrandAssets';
++import type { EfOfficeAssets } from './efaiwBrandAssets';
+ 
+ type Node = {
+   type: string;
+@@ -26,9 +31,18 @@ type Node = {
+   children?: Node[];
+ };
+ 
+-type RunStyle = { bold?: boolean; italic?: boolean; strike?: boolean; code?: boolean; link?: boolean };
++type RunStyle = {
++  bold?: boolean;
++  italic?: boolean;
++  strike?: boolean;
++  code?: boolean;
++  link?: boolean;
++};
+ 
+-/** EF (#146): Environment Fund palette (hex without #, as WordprocessingML writes colours) and document font. */
++/**
++ * EF (#146): Environment Fund palette (hex without #, as WordprocessingML writes colours) and the fallback font (#157:
++ * Aktiv Grotesk when its files are embedded).
++ */
+ export const EF_DOC = {
+   font: 'Tahoma',
+   text: '0F1822',
+@@ -41,7 +55,7 @@ export const EF_DOC = {
+   code: 'F1EEE8',
+ } as const;
+ 
+-const ARABIC = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
++const ARABIC = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
+ const LATIN = /[A-Za-z]/;
+ 
+ /** Direction of a text from its first strong character (Arabic: right to left). */
+@@ -139,9 +153,7 @@ class DocxWriter {
+       return '';
+     }
+     const props = [
+-      style.code
+-        ? '<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/>'
+-        : '',
++      style.code ? '<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/>' : '',
+       style.bold ? '<w:b/><w:bCs/>' : '',
+       style.italic ? '<w:i/><w:iCs/>' : '',
+       style.strike ? '<w:strike/>' : '',
+@@ -185,18 +197,28 @@ class DocxWriter {
+       case 'html':
+         return this.run(node.value ?? '', style, rtl);
+       default:
+-        return node.children ? this.runs(node.children, style, rtl) : this.run(node.value ?? '', style, rtl);
++        return node.children
++          ? this.runs(node.children, style, rtl)
++          : this.run(node.value ?? '', style, rtl);
+     }
+   }
+ 
+   private paragraph(
+     content: string,
+     rtl: boolean,
+-    { style, numId, level, indent, extra }: { style?: string; numId?: number; level?: number; indent?: number; extra?: string } = {},
++    {
++      style,
++      numId,
++      level,
++      indent,
++      extra,
++    }: { style?: string; numId?: number; level?: number; indent?: number; extra?: string } = {},
+   ): string {
+     const props = [
+       style ? `<w:pStyle w:val="${style}"/>` : '',
+-      numId != null ? `<w:numPr><w:ilvl w:val="${level ?? 0}"/><w:numId w:val="${numId}"/></w:numPr>` : '',
++      numId != null
++        ? `<w:numPr><w:ilvl w:val="${level ?? 0}"/><w:numId w:val="${numId}"/></w:numPr>`
++        : '',
+       extra ?? '',
+       rtl ? '<w:bidi/>' : '',
+       indent != null ? `<w:ind w:start="${indent}"/>` : '',
+@@ -209,7 +231,9 @@ class DocxWriter {
+       case 'heading': {
+         const rtl = isRtlText(plainText(node));
+         const depth = Math.min(Math.max(node.depth ?? 1, 1), 4);
+-        return this.paragraph(this.runs(node.children ?? [], {}, rtl), rtl, { style: `Heading${depth}` });
++        return this.paragraph(this.runs(node.children ?? [], {}, rtl), rtl, {
++          style: `Heading${depth}`,
++        });
+       }
+       case 'paragraph': {
+         const rtl = isRtlText(plainText(node));
+@@ -243,7 +267,9 @@ class DocxWriter {
+       case 'code': {
+         const lines = (node.value ?? '').split('\n');
+         return lines
+-          .map((line) => this.paragraph(this.run(line || ' ', { code: true }, false), false, { style: 'Code' }))
++          .map((line) =>
++            this.paragraph(this.run(line || ' ', { code: true }, false), false, { style: 'Code' }),
++          )
+           .join('');
+       }
+       case 'blockquote':
+@@ -253,7 +279,9 @@ class DocxWriter {
+               return this.block(child, level, null);
+             }
+             const rtl = isRtlText(plainText(child));
+-            return this.paragraph(this.runs(child.children ?? [], { italic: true }, rtl), rtl, { style: 'Quote' });
++            return this.paragraph(this.runs(child.children ?? [], { italic: true }, rtl), rtl, {
++              style: 'Quote',
++            });
+           })
+           .join('');
+       case 'thematicBreak':
+@@ -263,11 +291,17 @@ class DocxWriter {
+       case 'table':
+         return this.table(node);
+       case 'math':
+-        return this.paragraph(this.run(node.value ?? '', { code: true }, false), false, { style: 'Code' });
++        return this.paragraph(this.run(node.value ?? '', { code: true }, false), false, {
++          style: 'Code',
++        });
+       case 'html':
+-        return node.value ? this.paragraph(this.run(node.value, {}, false), isRtlText(node.value)) : '';
++        return node.value
++          ? this.paragraph(this.run(node.value, {}, false), isRtlText(node.value))
++          : '';
+       default:
+-        return node.children ? node.children.map((child) => this.block(child, level, null)).join('') : '';
++        return node.children
++          ? node.children.map((child) => this.block(child, level, null)).join('')
++          : '';
+     }
+   }
+ 
+@@ -295,9 +329,12 @@ class DocxWriter {
+           const align = node.align?.[c];
+           // A right-to-left paragraph starts at the right on its own; only centring is written.
+           const jc = align === 'center' ? '<w:jc w:val="center"/>' : '';
+-          const runs = cell ? this.runs(cell.children ?? [], r === 0 ? { bold: true } : {}, cellRtl) : '';
++          const runs = cell
++            ? this.runs(cell.children ?? [], r === 0 ? { bold: true } : {}, cellRtl)
++            : '';
+           const p = `<w:p><w:pPr>${cellRtl ? '<w:bidi/>' : ''}${jc}<w:spacing w:after="0"/></w:pPr>${runs}</w:p>`;
+-          const shade = r === 0 ? `<w:shd w:val="clear" w:color="auto" w:fill="${EF_DOC.tint}"/>` : '';
++          const shade =
++            r === 0 ? `<w:shd w:val="clear" w:color="auto" w:fill="${EF_DOC.tint}"/>` : '';
+           return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${shade}</w:tcPr>${p}</w:tc>`;
+         }).join('');
+         const header = r === 0 ? '<w:trPr><w:tblHeader/></w:trPr>' : '';
+@@ -308,7 +345,7 @@ class DocxWriter {
+     return `<w:tbl><w:tblPr>${tblPr}</w:tblPr>${grid}${body}</w:tbl><w:p/>`;
+   }
+ 
+-  relationships(): string {
++  relationships(extra = ''): string {
+     const links = this.links
+       .map(
+         (url, i) =>
+@@ -316,7 +353,7 @@ class DocxWriter {
+       )
+       .join('');
+     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdNumbering" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>${links}</Relationships>`;
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdNumbering" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>${extra}${links}</Relationships>`;
+   }
+ 
+   numberingXml(): string {
+@@ -343,8 +380,10 @@ class DocxWriter {
+   }
+ }
+ 
+-const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+-<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${EF_DOC.font}" w:hAnsi="${EF_DOC.font}" w:eastAsia="${EF_DOC.font}" w:cs="${EF_DOC.font}"/><w:color w:val="${EF_DOC.text}"/><w:sz w:val="22"/><w:szCs w:val="24"/><w:lang w:val="en-US" w:bidi="ar-SA"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="300" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:spacing w:after="240"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="${EF_DOC.heading}"/><w:sz w:val="36"/><w:szCs w:val="40"/></w:rPr></w:style>${[1, 2, 3, 4]
++const styles = (font: string) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${font}" w:hAnsi="${font}" w:eastAsia="${font}" w:cs="${font}"/><w:color w:val="${EF_DOC.text}"/><w:sz w:val="22"/><w:szCs w:val="24"/><w:lang w:val="en-US" w:bidi="ar-SA"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="300" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:spacing w:after="240"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="${EF_DOC.heading}"/><w:sz w:val="36"/><w:szCs w:val="40"/></w:rPr></w:style>${[
++  1, 2, 3, 4,
++]
+   .map(
+     (d) =>
+       `<w:style w:type="paragraph" w:styleId="Heading${d}"><w:name w:val="heading ${d}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="${d === 1 ? 360 : 240}" w:after="120"/><w:outlineLvl w:val="${d - 1}"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="${EF_DOC.heading}"/><w:sz w:val="${[32, 28, 24, 22][d - 1]}"/><w:szCs w:val="${[36, 30, 26, 24][d - 1]}"/></w:rPr></w:style>`,
+@@ -353,8 +392,49 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+     '',
+   )}<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="60"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="${EF_DOC.code}"/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="19"/><w:szCs w:val="19"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:pPr><w:pBdr><w:left w:val="single" w:sz="18" w:space="8" w:color="${EF_DOC.quoteLine}"/></w:pBdr><w:ind w:start="360"/></w:pPr><w:rPr><w:color w:val="${EF_DOC.quoteText}"/></w:rPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/></w:style></w:styles>`;
+ 
+-/** The `document.xml` body and its parts for a Markdown text. */
+-export function buildDocxParts(markdown: string, title: string): Record<string, string> {
++const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
++
++/** EMU per centimetre (DrawingML) and twentieths of a point per centimetre (WordprocessingML). */
++const EMU_CM = 360000;
++const TWIP_CM = 567;
++
++/**
++ * The first page's header: the blue logo at the top right (guide p17), its symbol at the print minimum of 1.5 cm
++ * (p9), half that as clear space below it (p13). Pages after the first have none, as in the PDF.
++ */
++const logoHeader = (assets: EfOfficeAssets, alt: string): string => {
++  const cy = Math.round(1.5 * EMU_CM);
++  const cx = Math.round((cy * assets.logo.width) / assets.logo.height);
++  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="${REL}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:p><w:pPr><w:spacing w:after="${Math.round(0.75 * TWIP_CM)}" w:line="240" w:lineRule="auto"/><w:jc w:val="right"/></w:pPr><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="1" name="logo" descr="${xmlEscape(alt)}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="logo.png" descr="${xmlEscape(alt)}"/><pic:cNvPicPr><a:picLocks noChangeAspect="1"/></pic:cNvPicPr></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdLogo"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:hdr>`;
++};
++
++/** Aktiv Grotesk embedded (font table, its two obfuscated files, the setting) and the logo header, as package parts. */
++const brandParts = (assets: EfOfficeAssets, rtl: boolean): Record<string, string | Uint8Array> => {
++  const font = xmlEscape(assets.font);
++  const keys = [fontKey(), fontKey()];
++  return {
++    'word/fontTable.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="${REL}"><w:font w:name="${font}"><w:charset w:val="00"/><w:family w:val="swiss"/><w:pitch w:val="variable"/><w:embedRegular r:id="rIdFont1" w:fontKey="${keys[0]}"/><w:embedBold r:id="rIdFont2" w:fontKey="${keys[1]}"/></w:font></w:fonts>`,
++    'word/_rels/fontTable.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdFont1" Type="${REL}/font" Target="fonts/font1.odttf"/><Relationship Id="rIdFont2" Type="${REL}/font" Target="fonts/font2.odttf"/></Relationships>`,
++    'word/fonts/font1.odttf': obfuscateFont(assets.regular, keys[0]),
++    'word/fonts/font2.odttf': obfuscateFont(assets.bold, keys[1]),
++    'word/settings.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:embedTrueTypeFonts/></w:settings>`,
++    'word/header1.xml': logoHeader(assets, rtl ? 'صندوق البيئة' : 'Environment Fund'),
++    'word/_rels/header1.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdLogo" Type="${REL}/image" Target="media/logo.png"/></Relationships>`,
++    'word/media/logo.png': assets.logo.png,
++  };
++};
++
++/** The `document.xml` body and its parts for a Markdown text; with the brand files, Aktiv Grotesk and the logo. */
++export function buildDocxParts(
++  markdown: string,
++  title: string,
++  assets?: EfOfficeAssets | null,
++): Record<string, string | Uint8Array> {
+   const tree = fromMarkdown(stripArtifactDirectives(markdown), {
+     extensions: [gfm()],
+     mdastExtensions: [gfmFromMarkdown()],
+@@ -364,18 +444,27 @@ export function buildDocxParts(markdown: string, title: string): Record<string,
+   const rtl = isRtlText(markdown);
+   const titleXml = xmlEscape(title);
+   const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
++  const brand = assets ? brandParts(assets, rtl) : {};
++  const types = assets
++    ? '<Default Extension="odttf" ContentType="application/vnd.openxmlformats-officedocument.obfuscatedFont"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/><Override PartName="/word/fontTable.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>'
++    : '';
++  const rels = assets
++    ? `<Relationship Id="rIdSettings" Type="${REL}/settings" Target="settings.xml"/><Relationship Id="rIdFontTable" Type="${REL}/fontTable" Target="fontTable.xml"/><Relationship Id="rIdHeader" Type="${REL}/header" Target="header1.xml"/>`
++    : '';
++  const header = assets ? '<w:headerReference w:type="first" r:id="rIdHeader"/>' : '';
+   return {
+     '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`,
++<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${types}<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`,
+     '_rels/.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+ <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>`,
+     'docProps/core.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+ <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${titleXml}</dc:title><dc:creator>بصير</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created></cp:coreProperties>`,
+     'word/document.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>${rtl ? '<w:bidi/>' : ''}</w:sectPr></w:body></w:document>`,
+-    'word/styles.xml': STYLES,
++<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${body}<w:sectPr>${header}<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="${assets ? TWIP_CM : 708}" w:footer="708" w:gutter="0"/>${assets ? '<w:titlePg/>' : ''}${rtl ? '<w:bidi/>' : ''}</w:sectPr></w:body></w:document>`,
++    'word/styles.xml': styles(assets ? xmlEscape(assets.font) : EF_DOC.font),
+     'word/numbering.xml': writer.numberingXml(),
+-    'word/_rels/document.xml.rels': writer.relationships(),
++    'word/_rels/document.xml.rels': writer.relationships(rels),
++    ...brand,
+   };
+ }
+ 
+@@ -399,8 +488,11 @@ const crc32 = (data: Uint8Array): number => {
+   return (crc ^ 0xffffffff) >>> 0;
+ };
+ 
+-/** A ZIP archive with every entry stored (method 0): what a .docx needs, without a compression library. */
+-export function storedZip(files: Record<string, string>): Uint8Array {
++/**
++ * A ZIP archive with every entry stored (method 0): what a .docx needs, without a compression library. Text entries
++ * are written as UTF-8; binary ones (EF #157: fonts, images) as they are.
++ */
++export function storedZip(files: Record<string, string | Uint8Array>): Uint8Array {
+   const encoder = new TextEncoder();
+   const chunks: Uint8Array[] = [];
+   const central: Uint8Array[] = [];
+@@ -410,7 +502,7 @@ export function storedZip(files: Record<string, string>): Uint8Array {
+   const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+   for (const [name, text] of Object.entries(files)) {
+     const nameBytes = encoder.encode(name);
+-    const data = encoder.encode(text);
++    const data = typeof text === 'string' ? encoder.encode(text) : text;
+     const crc = crc32(data);
+     const local = new DataView(new ArrayBuffer(30));
+     local.setUint32(0, 0x04034b50, true);
+@@ -458,9 +550,13 @@ export function storedZip(files: Record<string, string>): Uint8Array {
+   return out;
+ }
+ 
+-export function markdownToDocx(markdown: string, title: string): Blob {
++export function markdownToDocx(
++  markdown: string,
++  title: string,
++  assets?: EfOfficeAssets | null,
++): Blob {
+   // `storedZip` allocates its own ArrayBuffer, so its whole buffer is the archive.
+-  return new Blob([storedZip(buildDocxParts(markdown, title)).buffer as ArrayBuffer], {
++  return new Blob([storedZip(buildDocxParts(markdown, title, assets)).buffer as ArrayBuffer], {
+     type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+   });
+ }
+diff --git a/client/src/utils/efaiwPptx.ts b/client/src/utils/efaiwPptx.ts
+index c2ca1b0..0d76a17 100644
+--- a/client/src/utils/efaiwPptx.ts
++++ b/client/src/utils/efaiwPptx.ts
+@@ -8,8 +8,10 @@
+  * - Environment Fund identity (visual identity guide v01, p22-31 and p93: 16:9, title, content and closing slides in
+  *   the palette): an EF-blue title slide with white title and a green subtitle, white content slides with primary-blue
+  *   titles over a green accent, primary-dark text and primary-blue table headers. The palette is the deck's theme, so
+- *   PowerPoint offers it for new shapes. Tahoma (the guide's secondary typeface), as in Word: the presenter's computer is
+- *   not guaranteed to have Aktiv Grotesk. No logo: the letterhead waits for the owner's decision (#145).
++ *   PowerPoint offers it for new shapes.
++ * - EF (#157): Aktiv Grotesk embedded in the deck (Regular and Bold as Embedded OpenType, PowerPoint's own form), so a
++ *   presenter without the font sees it too, and the white logo at the top right of the title slide (guide p17). Without
++ *   the brand files the deck is set in Tahoma, the guide's secondary typeface, and has no logo, as in Word.
+  * - Titles are real title placeholders (slide outline, accessibility checker, navigation). Arabic slides, paragraphs and
+  *   tables run right to left; English and code left to right.
+  */
+@@ -17,6 +19,8 @@ import { gfm } from 'micromark-extension-gfm';
+ import { gfmFromMarkdown } from 'mdast-util-gfm';
+ import { fromMarkdown } from 'mdast-util-from-markdown';
+ import { EF_DOC, isRtlText, storedZip, stripArtifactDirectives, xmlEscape } from './efaiwDocx';
++import { embeddedOpenType } from './efaiwBrandAssets';
++import type { EfOfficeAssets } from './efaiwBrandAssets';
+ 
+ type Node = {
+   type: string;
+@@ -368,9 +372,13 @@ function paginate(slide: Slide): Block[][] {
+ class SlideXml {
+   private shapes: string[] = [];
+   private nextId = 2;
++  private logo = false;
+   links: string[] = [];
+ 
+-  constructor(private readonly rtl: boolean) {}
++  constructor(
++    private readonly rtl: boolean,
++    private readonly font: string,
++  ) {}
+ 
+   private id(): number {
+     return this.nextId++;
+@@ -397,7 +405,7 @@ class SlideXml {
+     const fill = `<a:solidFill><a:srgbClr val="${inline.link ? EF.blue2 : color}"/></a:solidFill>`;
+     const font = inline.code
+       ? '<a:latin typeface="Consolas"/><a:cs typeface="Consolas"/>'
+-      : `<a:latin typeface="${EF_DOC.font}"/><a:cs typeface="${EF_DOC.font}"/>`;
++      : `<a:latin typeface="${this.font}"/><a:cs typeface="${this.font}"/>`;
+     const link = inline.link ? `<a:hlinkClick r:id="${this.linkId(inline.link)}"/>` : '';
+     const underline = inline.link ? ' u="sng"' : '';
+     return `<a:r><a:rPr${lang} sz="${pt * 100}"${bold}${italic}${underline} dirty="0">${fill}${font}${link}</a:rPr><a:t>${xmlEscape(text)}</a:t></a:r>`;
+@@ -456,6 +464,14 @@ class SlideXml {
+     );
+   }
+ 
++  /** A picture from the slide's `rIdLogo` relationship, its proportions locked. */
++  picture(x: number, y: number, w: number, h: number, name: string, descr: string): void {
++    this.shapes.push(
++      `<p:pic><p:nvPicPr><p:cNvPr id="${this.id()}" name="${name}" descr="${xmlEscape(descr)}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rIdLogo"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${w}" cy="${h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`,
++    );
++    this.logo = true;
++  }
++
+   rect(x: number, y: number, w: number, h: number, color: string, name: string): void {
+     this.shapes.push(
+       `<p:sp><p:nvSpPr><p:cNvPr id="${this.id()}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${w}" cy="${h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="${color}"/></a:solidFill><a:ln><a:noFill/></a:ln></p:spPr></p:sp>`,
+@@ -532,13 +548,37 @@ class SlideXml {
+           `<Relationship Id="rId${i + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${xmlEscape(url)}" TargetMode="External"/>`,
+       )
+       .join('');
++    const logo = this.logo
++      ? '<Relationship Id="rIdLogo" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/logo-white.png"/>'
++      : '';
+     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout${layout}.xml"/>${links}</Relationships>`;
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout${layout}.xml"/>${logo}${links}</Relationships>`;
+   }
+ }
+ 
+-function titleSlide(title: string, subtitle: string, rtl: boolean): SlideXml {
+-  const s = new SlideXml(rtl);
++/** The white logo's height on the title slide: 1.6 cm, above the print minimum (guide p9). */
++const LOGO_H = Math.round((1.6 / 2.54) * EMU);
++
++function titleSlide(
++  title: string,
++  subtitle: string,
++  rtl: boolean,
++  font: string,
++  logo?: EfOfficeAssets['logoWhite'],
++): SlideXml {
++  const s = new SlideXml(rtl, font);
++  if (logo) {
++    const w = Math.round((LOGO_H * logo.width) / logo.height);
++    // Top right whatever the language (guide p17), inside the slide margin, clear of the title below it.
++    s.picture(
++      SLIDE_W - MARGIN_X - w,
++      Math.round(0.55 * EMU),
++      w,
++      LOGO_H,
++      'Logo',
++      rtl ? 'صندوق البيئة' : 'Environment Fund',
++    );
++  }
+   const titlePt = title.length > 60 ? 32 : 40;
+   s.placeholder(
+     '<p:ph type="ctrTitle"/>',
+@@ -580,8 +620,14 @@ function titleSlide(title: string, subtitle: string, rtl: boolean): SlideXml {
+   return s;
+ }
+ 
+-function contentSlide(title: string, blocks: Block[], number: number, deckRtl: boolean): SlideXml {
+-  const s = new SlideXml(deckRtl);
++function contentSlide(
++  title: string,
++  blocks: Block[],
++  number: number,
++  deckRtl: boolean,
++  font: string,
++): SlideXml {
++  const s = new SlideXml(deckRtl, font);
+   const titleRtl = directionOf(title) ?? deckRtl;
+   s.placeholder(
+     '<p:ph type="title"/>',
+@@ -660,8 +706,8 @@ function contentSlide(title: string, blocks: Block[], number: number, deckRtl: b
+   return s;
+ }
+ 
+-const THEME = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+-<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Environment Fund"><a:themeElements><a:clrScheme name="Environment Fund"><a:dk1><a:srgbClr val="${EF.dark}"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="${EF.blue}"/></a:dk2><a:lt2><a:srgbClr val="${EF.warm}"/></a:lt2><a:accent1><a:srgbClr val="${EF.blue}"/></a:accent1><a:accent2><a:srgbClr val="${EF.blue2}"/></a:accent2><a:accent3><a:srgbClr val="${EF.green}"/></a:accent3><a:accent4><a:srgbClr val="${EF.brown}"/></a:accent4><a:accent5><a:srgbClr val="4E61C8"/></a:accent5><a:accent6><a:srgbClr val="87952E"/></a:accent6><a:hlink><a:srgbClr val="${EF.blue2}"/></a:hlink><a:folHlink><a:srgbClr val="1E285F"/></a:folHlink></a:clrScheme><a:fontScheme name="Environment Fund"><a:majorFont><a:latin typeface="${EF_DOC.font}"/><a:ea typeface=""/><a:cs typeface="${EF_DOC.font}"/></a:majorFont><a:minorFont><a:latin typeface="${EF_DOC.font}"/><a:ea typeface=""/><a:cs typeface="${EF_DOC.font}"/></a:minorFont></a:fontScheme><a:fmtScheme name="Environment Fund"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln w="6350" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln><a:ln w="12700" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln><a:ln w="19050" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements><a:objectDefaults/><a:extraClrSchemeLst/></a:theme>`;
++const theme = (font: string) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Environment Fund"><a:themeElements><a:clrScheme name="Environment Fund"><a:dk1><a:srgbClr val="${EF.dark}"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="${EF.blue}"/></a:dk2><a:lt2><a:srgbClr val="${EF.warm}"/></a:lt2><a:accent1><a:srgbClr val="${EF.blue}"/></a:accent1><a:accent2><a:srgbClr val="${EF.blue2}"/></a:accent2><a:accent3><a:srgbClr val="${EF.green}"/></a:accent3><a:accent4><a:srgbClr val="${EF.brown}"/></a:accent4><a:accent5><a:srgbClr val="4E61C8"/></a:accent5><a:accent6><a:srgbClr val="87952E"/></a:accent6><a:hlink><a:srgbClr val="${EF.blue2}"/></a:hlink><a:folHlink><a:srgbClr val="1E285F"/></a:folHlink></a:clrScheme><a:fontScheme name="Environment Fund"><a:majorFont><a:latin typeface="${font}"/><a:ea typeface=""/><a:cs typeface="${font}"/></a:majorFont><a:minorFont><a:latin typeface="${font}"/><a:ea typeface=""/><a:cs typeface="${font}"/></a:minorFont></a:fontScheme><a:fmtScheme name="Environment Fund"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln w="6350" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln><a:ln w="12700" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln><a:ln w="19050" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements><a:objectDefaults/><a:extraClrSchemeLst/></a:theme>`;
+ 
+ const level = (n: number, pt: number, bold: boolean) =>
+   `<a:lvl${n}pPr marL="${(n - 1) * 342900}" indent="0" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0" hangingPunct="1"><a:spcBef><a:spcPts val="0"/></a:spcBef><a:buNone/><a:defRPr sz="${pt * 100}" kern="1200"${bold ? ' b="1"' : ''}><a:solidFill><a:schemeClr val="tx1"/></a:solidFill><a:latin typeface="+mn-lt"/><a:ea typeface="+mn-ea"/><a:cs typeface="+mn-cs"/></a:defRPr></a:lvl${n}pPr>`;
+@@ -692,10 +738,16 @@ const layout = (
+ const LAYOUT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+ <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>`;
+ 
+-export function buildPptxParts(markdown: string, fallbackTitle: string): Record<string, string> {
++/** The deck's parts for a Markdown text; with the brand files, Aktiv Grotesk embedded and the logo. */
++export function buildPptxParts(
++  markdown: string,
++  fallbackTitle: string,
++  assets?: EfOfficeAssets | null,
++): Record<string, string | Uint8Array> {
+   const deck = markdownToSlides(markdown, fallbackTitle);
++  const font = assets ? xmlEscape(assets.font) : EF_DOC.font;
+   const slides: Array<{ xml: string; rels: string }> = [];
+-  const first = titleSlide(deck.title, deck.subtitle, deck.rtl);
++  const first = titleSlide(deck.title, deck.subtitle, deck.rtl, font, assets?.logoWhite);
+   slides.push({ xml: first.xml(EF.blue), rels: first.rels(1) });
+   for (const slide of deck.slides) {
+     paginate(slide).forEach((blocks, page) => {
+@@ -703,14 +755,20 @@ export function buildPptxParts(markdown: string, fallbackTitle: string): Record<
+         page === 0
+           ? slide.title
+           : `${slide.title} ${isRtlText(slide.title) || deck.rtl ? '(تابع)' : '(cont.)'}`;
+-      const s = contentSlide(continued, blocks, slides.length + 1, deck.rtl);
++      const s = contentSlide(continued, blocks, slides.length + 1, deck.rtl, font);
+       slides.push({ xml: s.xml(), rels: s.rels(2) });
+     });
+   }
+   const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+-  const parts: Record<string, string> = {
++  const fonts = assets
++    ? `<p:embeddedFontLst><p:embeddedFont><p:font typeface="${font}" pitchFamily="34" charset="0"/><p:regular r:id="rIdFontR"/><p:bold r:id="rIdFontB"/></p:embeddedFont></p:embeddedFontLst>`
++    : '';
++  const fontRels = assets
++    ? '<Relationship Id="rIdFontR" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font1.fntdata"/><Relationship Id="rIdFontB" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font2.fntdata"/>'
++    : '';
++  const parts: Record<string, string | Uint8Array> = {
+     '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/><Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/slideLayouts/slideLayout2.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/><Override PartName="/ppt/presProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presProps+xml"/><Override PartName="/ppt/viewProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.viewProps+xml"/><Override PartName="/ppt/tableStyles.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/>${slides
++<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${assets ? '<Default Extension="fntdata" ContentType="application/x-fontdata"/><Default Extension="png" ContentType="image/png"/>' : ''}<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/><Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/slideLayouts/slideLayout2.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/><Override PartName="/ppt/presProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presProps+xml"/><Override PartName="/ppt/viewProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.viewProps+xml"/><Override PartName="/ppt/tableStyles.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/>${slides
+       .map(
+         (_, i) =>
+           `<Override PartName="/ppt/slides/slide${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`,
+@@ -725,13 +783,13 @@ export function buildPptxParts(markdown: string, fallbackTitle: string): Record<
+     'docProps/app.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+ <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Baseer</Application><Slides>${slides.length}</Slides></Properties>`,
+     'ppt/presentation.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+-<p:presentation ${NS} saveSubsetFonts="1"${deck.rtl ? ' rtl="1"' : ''}><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst>${slides
++<p:presentation ${NS} saveSubsetFonts="1"${assets ? ' embedTrueTypeFonts="1"' : ''}${deck.rtl ? ' rtl="1"' : ''}><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst>${slides
+       .map((_, i) => `<p:sldId id="${256 + i}" r:id="rId${10 + i}"/>`)
+       .join(
+         '',
+-      )}</p:sldIdLst><p:sldSz cx="${SLIDE_W}" cy="${SLIDE_H}"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`,
++      )}</p:sldIdLst><p:sldSz cx="${SLIDE_W}" cy="${SLIDE_H}"/><p:notesSz cx="6858000" cy="9144000"/>${fonts}</p:presentation>`,
+     'ppt/_rels/presentation.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/presProps" Target="presProps.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/viewProps" Target="viewProps.xml"/><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles" Target="tableStyles.xml"/>${slides
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/presProps" Target="presProps.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/viewProps" Target="viewProps.xml"/><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles" Target="tableStyles.xml"/>${fontRels}${slides
+       .map(
+         (_, i) =>
+           `<Relationship Id="rId${10 + i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${i + 1}.xml"/>`,
+@@ -743,7 +801,7 @@ export function buildPptxParts(markdown: string, fallbackTitle: string): Record<
+ <p:viewPr ${NS}/>`,
+     'ppt/tableStyles.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+ <a:tblStyleLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" def="{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}"/>`,
+-    'ppt/theme/theme1.xml': THEME,
++    'ppt/theme/theme1.xml': theme(font),
+     'ppt/slideMasters/slideMaster1.xml': MASTER,
+     'ppt/slideMasters/_rels/slideMaster1.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+ <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/></Relationships>`,
+@@ -781,11 +839,20 @@ export function buildPptxParts(markdown: string, fallbackTitle: string): Record<
+     parts[`ppt/slides/slide${i + 1}.xml`] = slide.xml;
+     parts[`ppt/slides/_rels/slide${i + 1}.xml.rels`] = slide.rels;
+   });
++  if (assets) {
++    parts['ppt/fonts/font1.fntdata'] = embeddedOpenType(assets.regular);
++    parts['ppt/fonts/font2.fntdata'] = embeddedOpenType(assets.bold);
++    parts['ppt/media/logo-white.png'] = assets.logoWhite.png;
++  }
+   return parts;
+ }
+ 
+-export function markdownToPptx(markdown: string, title: string): Blob {
+-  return new Blob([storedZip(buildPptxParts(markdown, title)).buffer as ArrayBuffer], {
++export function markdownToPptx(
++  markdown: string,
++  title: string,
++  assets?: EfOfficeAssets | null,
++): Blob {
++  return new Blob([storedZip(buildPptxParts(markdown, title, assets)).buffer as ArrayBuffer], {
+     type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+   });
+ }

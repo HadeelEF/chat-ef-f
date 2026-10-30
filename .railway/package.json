@@ -1,0 +1,15 @@
+{
+  "name": "ef-ai-workspace-railway-iac",
+  "private": true,
+  "description": "Pinned Railway IaC SDK for .railway/railway.ts (evaluated by the Railway CLI) and its offline validation.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "dependencies": {
+    "railway": "3.16.0"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

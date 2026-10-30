@@ -1,0 +1,108 @@
+<!doctype html>
+<!-- EF AI Workspace help page (#103, UX audit U-15), served at /assets/ef-help.html and linked from the account menu
+     (HELP_AND_FAQ_URL). PROVISIONAL text until Corporate Communications approves it (#7). Static, same origin, no scripts. -->
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>كيف أستخدم بصير | صندوق البيئة</title>
+<style>
+@font-face { font-family: 'EF Aktiv Grotesk'; font-weight: 400; font-display: swap; src: url('fonts/aktiv-grotesk-regular.otf') format('opentype'); }
+@font-face { font-family: 'EF Aktiv Grotesk'; font-weight: 700; font-display: swap; src: url('fonts/aktiv-grotesk-bold.otf') format('opentype'); }
+:root { --ink: #0f1822; --muted: #373f48; --blue: #2c3a82; --line: #e2e3e5; --paper: #f6f7fb; --bg: #ffffff; color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'EF Aktiv Grotesk', Tahoma, sans-serif; font-size: 16px; line-height: 1.8; }
+main { max-width: 760px; margin: 0 auto; padding: 32px max(16px, env(safe-area-inset-right, 0px)) 56px max(16px, env(safe-area-inset-left, 0px)); }
+header { border-bottom: 3px solid var(--blue); padding-bottom: 16px; margin-bottom: 8px; }
+/* #163: the box takes the artwork's viewBox proportion, so the symbol is drawn at the full 40 px (guide p9). */
+.logo { display: block; height: 40px; width: auto; aspect-ratio: 487.12 / 162.46; margin-bottom: 16px; }
+.eyebrow { color: var(--blue); font-weight: 700; font-size: 14px; }
+h1 { font-size: 30px; line-height: 1.4; margin: 4px 0 6px; }
+h2 { font-size: 20px; margin: 30px 0 8px; }
+p { margin: 0 0 10px; }
+ul { margin: 0 0 10px; padding-inline-start: 22px; }
+li { margin-bottom: 6px; }
+.note { background: var(--paper); border-radius: 10px; padding: 12px 16px; }
+.models { display: grid; gap: 10px; }
+.model { border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+.model strong { display: block; }
+.status { color: var(--muted); font-size: 14px; }
+section[lang="en"] { direction: ltr; text-align: left; border-top: 1px solid var(--line); margin-top: 36px; padding-top: 8px; }
+a { color: var(--blue); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img class="logo" src="logo.svg" alt="شعار صندوق البيئة">
+    <div class="eyebrow">بصير</div>
+    <h1>كيف أستخدم بصير</h1>
+    <p class="status">مساحة العمل الذكية لصندوق البيئة.</p>
+  </header>
+
+  <h2>قبل أن تبدأ</h2>
+  <div class="note">
+    <p><strong>لا تُدخل معلومات سرية أو بيانات شخصية.</strong> في هذه المرحلة يعمل بصير ببيانات اصطناعية فقط: لا تكتب ولا ترفق مستندات الصندوق الحقيقية أو بيانات الموظفين.</p>
+    <p>بصير قد يخطئ. راجع الإجابة قبل استخدامها في خطاب أو قرار.</p>
+  </div>
+
+  <h2>سريع أم متأنٍّ أم عميق؟</h2>
+  <div class="models">
+    <div class="model"><strong>سريع (بصير لايت)</strong>للأسئلة اليومية والردود القصيرة. الاختيار الافتراضي.</div>
+    <div class="model"><strong>متأنٍّ (بصير بلس)</strong>يفكّر قليلاً قبل الرد: للكتابة والتلخيص والمهام الأطول.</div>
+    <div class="model"><strong>عميق (بصير برو)</strong>للتحليل المعقّد، مع عرض خطوات التفكير.</div>
+  </div>
+  <p>اختر من الزر الذي يحمل اسم السرعة (مثل «سريع ▾») داخل صندوق الكتابة. تنتقل المحادثة نفسها دون أن تبدأ من جديد، واسم النموذج يظهر فوق كل رد.</p>
+
+  <h2>نصائح لطلب أفضل</h2>
+  <ul>
+    <li>اذكر المطلوب والجمهور والشكل: «اكتب خطاباً رسمياً قصيراً إلى… في ثلاث فقرات».</li>
+    <li>الصق النص الذي تريد تلخيصه أو ترجمته داخل الرسالة نفسها، أو أرفق ملفه.</li>
+    <li>إذا لم تناسبك الإجابة، اطلب تعديلاً محدداً أو اضغط «إعادة التوليد».</li>
+    <li>عدّل رسالتك السابقة بزر التعديل بدل كتابة طلب جديد من البداية.</li>
+  </ul>
+
+  <h2>الإنترنت والمستندات والتنزيل</h2>
+  <ul>
+    <li><strong>زر +:</strong> في صندوق الكتابة يجمع «إرفاق ملف» و«الإنترنت» وغيرهما. ما يعمل منها يظهر شارةً في صندوق الكتابة، والضغط على الشارة يوقفه.</li>
+    <li><strong>الإنترنت:</strong> يبحث بصير في الإنترنت حين يحتاج معلومة حديثة، مثل الأخبار والأسعار والأنظمة، ويذكر مصادره في آخر الرد. تحقّق من المصدر قبل الاعتماد عليه. يعمل في كل محادثة جديدة، وتوقفه من زر + أو من شارة «الإنترنت».</li>
+    <li><strong>المستندات:</strong> اطلب ما تريد دون ذكر كلمة «مستند»: الخطاب والتقرير والعرض والجدول وصفحة الويب واللوحة التفاعلية والمخطط والرسم والكود تُكتب في لوحة جانبية تُفتح وحدها وهي تُكتب، فتعاينها فوراً وتنسخها وتنزّلها. الإجابات القصيرة تبقى في الرد. يكتب بصير المسودة مباشرة بافتراضات معقولة يذكرها بعدها، فاطلب منه تعديل ما تريد.</li>
+    <li><strong>تنزيل الرد:</strong> زر التنزيل تحت أي رد يحفظه مستند Word أو عرض PowerPoint، أو جدول Excel إذا كان في الرد جدول، أو ملف Markdown، كلها بألوان صندوق البيئة ومن اليمين إلى اليسار في العربية. ملف Word والعرض يحملان خط الصندوق وشعاره، فيظهران كما هما على أي جهاز، ويفتحان للقراءة فقط حيث لا يكون الخط مثبتاً. أو يفتحه للطباعة: اختر «PDF / طباعة» ثم «حفظ بتنسيق PDF» في نافذة الطباعة.</li>
+    <li><strong>إصدارات المستند:</strong> إذا طلبت تعديل مستند فتح بصير إصداراً جديداً منه. اختر الإصدار من زر «الإصدار» في اللوحة، وانتقل بين مستندات المحادثة من زر «المخرجات في هذه المحادثة». الصفحة والرسم والمستند تُفتح أيضاً في علامة تبويب جديدة، وإذا تعطلت معاينة اضغط «حاول الإصلاح» ليرسل بصير الخطأ ويصلحه.</li>
+    <li><strong>عرض أو جدول:</strong> اطلب «عرضاً تقديمياً» أو «جدول Excel»، فيكتبه بصير مستنداً في اللوحة الجانبية، ثم نزّله PowerPoint أو Excel من زر التنزيل في الرد أو في اللوحة.</li>
+    <li><strong>البحث في محادثاتك:</strong> اكتب كلمة في مربع «بحث» في القائمة الجانبية لتجد المحادثة التي وردت فيها.</li>
+  </ul>
+
+  <h2>الملفات والأسئلة والمحادثات الطويلة</h2>
+  <ul>
+    <li><strong>الملفات:</strong> أرفق ملف PDF أو Word أو Excel من زر + ثم «إرفاق ملف»، ثم اسأل عنه. يقرأ بصير نص الملف، حتى 20 ميجابايت للملف وعشرة ملفات في الرسالة. لا يقرأ الملفات الممسوحة ضوئياً.</li>
+    <li><strong>أسئلة توضيحية:</strong> إذا كان طلبك غير واضح فقد يسألك بصير قبل أن يجيب ويعرض خيارات. اختر خياراً، أو اكتب إجابتك، أو اضغط «تخطي» فيكمل بافتراض يذكره لك.</li>
+    <li><strong>البيانات الحساسة:</strong> يوقف بصير الرسالة أو الملف إن احتوى رقم هوية أو إقامة أو آيبان أو مفتاح API، ويخبرك بما تحذفه. اكتب المبالغ الكبيرة بفواصل، مثل 1,500,000,000.</li>
+    <li><strong>المحادثات الطويلة:</strong> حين تطول المحادثة يلخّص بصير أولها ليواصل. ومن مؤشر السياق في صندوق الكتابة تستطيع «ضغط السياق» بنفسك.</li>
+  </ul>
+
+  <h2>ما في القائمة الجانبية</h2>
+  <ul>
+    <li><strong>الوكلاء:</strong> أنشئ مساعداً بتعليمات ثابتة لمهمة تتكرر، وشاركه مع زملائك، أو استكشف وكلاءهم.</li>
+    <li><strong>المهارات:</strong> تعليمات مفصّلة لمهمة محددة يستدعيها بصير عند الحاجة. منها مهارة «ef-brand-guidelines» المثبتة للجميع: ألوان صندوق البيئة وخطه في المستندات والصفحات والمخططات.</li>
+    <li><strong>النصوص الجاهزة:</strong> احفظ طلباً تكرره واستدعه بالأمر «/».</li>
+    <li><strong>الذاكرة:</strong> ما تطلب من بصير تذكّره بين المحادثات؛ تراه وتعدّله وتوقفه من القائمة الجانبية أو من الإعدادات ← التخصيص.</li>
+    <li><strong>المحفوظة والملفات والمعلمات:</strong> الإشارات المرجعية للمحادثات، وملفاتك المرفوعة، وضبط النموذج للمستخدم المتقدم.</li>
+    <li><strong>الدردشة المؤقتة والمشاريع:</strong> محادثة لا تُحفظ في السجل، وتجميع المحادثات المرتبطة بموضوع واحد.</li>
+    <li><strong>العربية والإنجليزية:</strong> غيّر لغة الواجهة من الإعدادات ← عام.</li>
+  </ul>
+
+  <h2>ما ليس متاحاً بعد</h2>
+  <ul>
+    <li>البحث في مكتبة مستندات الصندوق، وقراءة الملفات الممسوحة ضوئياً، وتشغيل الكود.</li>
+  </ul>
+
+  <section lang="en">
+    <h2>In English</h2>
+    <p>Baseer is the Environment Fund's AI workspace. Do not enter confidential information or personal data: at this stage Baseer works with synthetic data only, so do not enter real Fund documents or employee data. Answers can be wrong; review them before use. Choose a model from the button with its name (such as «بصير لايت ▾») in the message box: Baseer Lite (the default) for quick everyday questions; Baseer Plus thinks briefly before answering, for writing, summaries and longer tasks; Baseer Pro for complex analysis, showing its reasoning. The «Thinking» switch next to it moves the same chat between Lite and Plus; Pro always thinks. Baseer searches the internet when it needs recent information and lists its sources at the end of the answer. Letters, reports, decks, tables, web pages, interactive dashboards, diagrams, drawings and code open in a side panel by themselves, written as a full draft with the assumptions stated after it (short answers stay in the reply); a change you ask for becomes a new version you can pick there, other outputs of the chat are one menu away, a page, drawing or document opens in its own tab, and «Try fixing» sends a broken preview's error back to Baseer. The download button under a reply (and on a document in the side panel) saves it as a Word document, a PowerPoint deck, an Excel workbook when it has a table, or a Markdown file, in the Environment Fund colours; ask for a presentation or an Excel table and download it from there. Search your chats from the search box in the side menu. Attach a PDF, Word or Excel file with the paperclip and ask about it (up to 20 MB per file, ten files per message; scanned files cannot be read). When a request is unclear, Baseer may ask you first with options: pick one, type your own answer, or skip. A message or file with an ID, iqama or IBAN number or an API key is stopped and you are told what to remove. Long chats are summarized so they can go on. The side menu holds agents, skills, prompts, memory, bookmarks, files and model parameters; the «ef-brand-guidelines» skill, installed for everyone, applies the Environment Fund colours and typeface to documents, pages and diagrams. The interface language can be changed in Settings → General.</p>
+  </section>
+
+  <p><a href="/">العودة إلى بصير</a></p>
+</main>
+</body>
+</html>

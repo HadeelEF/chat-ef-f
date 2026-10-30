@@ -1,0 +1,697 @@
+EF AI Workspace (#167): artifacts that work with the live model. Owner request 2026-10-24: "do full QA in artifacts,
+make it work very well because not works yet; also make the chat smart, generate artifact when they need it".
+
+- Artifacts mode from the spec (utils/endpoints.ts, hooks/Agents/useApplyModelSpecAgents.ts): the specs run in the
+  `custom` mode, with their own Arabic artifact instructions (librechat.yaml). A mode stored by the former switch is
+  ignored, so LibreChat's English artifact prompt (which says to prefer in-line content) never comes back.
+- No «مستندات» switch (Chat/Input/Artifacts.tsx removed, BadgeRow.tsx, ToolsDropdown.tsx): artifacts are always on, as
+  in Claude; the instructions decide when to create one.
+- The model's own form (Artifact.tsx): Qwen writes the document straight inside `:::artifact` without the fenced
+  block, or fences it with fewer backticks than its own code blocks use. The panel received the words run together;
+  the container's source is now taken from the message, without its outer fence.
+- Local preview (StaticArtifactFrame.tsx, ArtifactPreview.tsx, ArtifactFixButton.tsx, utils/artifactTab.ts):
+  documents, pages, drawings and code show in a srcdoc frame sandboxed without allow-same-origin (an opaque origin),
+  built from the same page Sandpack served (Tailwind, the EF font), instead of a round trip to codesandbox.io's static
+  server. The page's own errors reach Try fixing; the panel's refresh reloads it. React keeps Sandpack.
+- Tests: MarkdownBlocks.artifactSource.test.tsx (both renderers); applyModelSpecEphemeralAgent.test.ts follows the
+  spec-owned mode.
+
+diff --git a/client/src/components/Artifacts/Artifact.tsx b/client/src/components/Artifacts/Artifact.tsx
+index 4120d8a..97bd237 100644
+--- a/client/src/components/Artifacts/Artifact.tsx
++++ b/client/src/components/Artifacts/Artifact.tsx
+@@ -10,8 +10,42 @@ import { logger, extractContent, isArtifactRoute } from '~/utils';
+ import { artifactsState, artifactsVisibility, currentArtifactId } from '~/store/artifacts';
+ import ArtifactButton from './ArtifactButton';
+ 
++type SourceNode = {
++  type: string;
++  children?: SourceNode[];
++  position?: { start?: { offset?: number }; end?: { offset?: number } };
++};
++
++/** A fence line (three or more backticks or tildes) at the start and at the end of a source slice. */
++const OPENING_FENCE = /^ {0,3}(?:`{3,}|~{3,})[^\n]*\n/;
++const CLOSING_FENCE = /\n {0,3}(?:`{3,}|~{3,})\s*$/;
++
++/**
++ * EF (#167): an artifact's content exactly as the model wrote it. The format puts one fenced code block inside the
++ * directive, but models also write the document straight inside it, or fence it with fewer backticks than the
++ * document's own code blocks use. Remark then parses the content as headings, lists and paragraphs, and the panel
++ * received their words run together. Such a container's source is taken back from the message instead, without its
++ * outer fence. `null` keeps the documented form (one code block) as upstream renders it.
++ */
++export function artifactSource(node: SourceNode, source: string): string | null {
++  const children = node.children ?? [];
++  if (children.length === 0 || (children.length === 1 && children[0].type === 'code')) {
++    return null;
++  }
++  const start = children[0].position?.start?.offset;
++  const end = children[children.length - 1].position?.end?.offset;
++  if (start == null || end == null || source === '') {
++    return null;
++  }
++  const raw = source.slice(start, end);
++  return OPENING_FENCE.test(raw) && CLOSING_FENCE.test(raw)
++    ? raw.replace(OPENING_FENCE, '').replace(CLOSING_FENCE, '')
++    : raw;
++}
++
+ export const artifactPlugin: Pluggable = () => {
+-  return (tree) => {
++  return (tree, file) => {
++    const source = String(file?.value ?? '');
+     visit(tree, ['textDirective', 'leafDirective', 'containerDirective'], (node, index, parent) => {
+       if (node.type === 'textDirective') {
+         const replacementText = `:${node.name}`;
+@@ -25,6 +59,12 @@ export const artifactPlugin: Pluggable = () => {
+       if (node.name !== 'artifact') {
+         return;
+       }
++      if (node.type === 'containerDirective') {
++        const raw = artifactSource(node as SourceNode, source);
++        if (raw != null) {
++          node.children = [{ type: 'code', lang: null, meta: null, value: raw }];
++        }
++      }
+       node.data = {
+         hName: node.name,
+         hProperties: node.attributes,
+diff --git a/client/src/components/Artifacts/ArtifactFixButton.tsx b/client/src/components/Artifacts/ArtifactFixButton.tsx
+index 45bfded..41cd1da 100644
+--- a/client/src/components/Artifacts/ArtifactFixButton.tsx
++++ b/client/src/components/Artifacts/ArtifactFixButton.tsx
+@@ -4,15 +4,20 @@ import { Button } from '@librechat/client';
+ import { useLocalize } from '~/hooks';
+ 
+ /**
+- * EF (#153): Claude's "Try fixing". When the preview reports an error (a compile or runtime error from the
+- * bundler), one press sends the error back to the model with the artifact's title. Renders inside SandpackProvider.
++ * EF (#153): Claude's "Try fixing". When the preview reports an error, one press sends the error back to the model
++ * with the artifact's title. EF (#167): shared by the bundler preview (below) and the local page frame.
+  */
+-export default function ArtifactFixButton({ onTryFix }: { onTryFix?: (error: string) => void }) {
+-  const { sandpack } = useSandpack();
++export function TryFixButton({
++  error,
++  onTryFix,
++}: {
++  error?: string | null;
++  onTryFix?: (error: string) => void;
++}) {
+   const localize = useLocalize();
+-  const error = sandpack.error?.message?.trim();
++  const message = error?.trim();
+ 
+-  if (onTryFix == null || !error) {
++  if (onTryFix == null || !message) {
+     return null;
+   }
+ 
+@@ -22,7 +27,7 @@ export default function ArtifactFixButton({ onTryFix }: { onTryFix?: (error: str
+         type="button"
+         variant="submit"
+         className="pointer-events-auto gap-2 rounded-full px-4 shadow-lg"
+-        onClick={() => onTryFix(error)}
++        onClick={() => onTryFix(message)}
+       >
+         <Wrench size={16} aria-hidden="true" />
+         {localize('com_efaiw_artifact_try_fix')}
+@@ -30,3 +35,9 @@ export default function ArtifactFixButton({ onTryFix }: { onTryFix?: (error: str
+     </div>
+   );
+ }
++
++/** A compile or runtime error from the bundler. Renders inside SandpackProvider. */
++export default function ArtifactFixButton({ onTryFix }: { onTryFix?: (error: string) => void }) {
++  const { sandpack } = useSandpack();
++  return <TryFixButton error={sandpack.error?.message} onTryFix={onTryFix} />;
++}
+diff --git a/client/src/components/Artifacts/ArtifactPreview.tsx b/client/src/components/Artifacts/ArtifactPreview.tsx
+index c80c170..493dd93 100644
+--- a/client/src/components/Artifacts/ArtifactPreview.tsx
++++ b/client/src/components/Artifacts/ArtifactPreview.tsx
+@@ -9,6 +9,7 @@ import type { ArtifactFiles } from '~/common';
+ import { sharedFiles, buildSandpackOptions } from '~/utils/artifacts';
+ import { withEfFonts } from '~/utils/efFonts';
+ import ArtifactFixButton from './ArtifactFixButton';
++import StaticArtifactFrame from './StaticArtifactFrame';
+ 
+ export const ArtifactPreview = memo(function ({
+   files,
+@@ -19,6 +20,7 @@ export const ArtifactPreview = memo(function ({
+   currentCode,
+   startupConfig,
+   onTryFix,
++  title,
+ }: {
+   files: ArtifactFiles;
+   fileKey: string;
+@@ -29,6 +31,8 @@ export const ArtifactPreview = memo(function ({
+   startupConfig?: SandpackStartupConfig;
+   /** EF (#153): offered when the preview reports an error; absent where there is no chat to send to. */
+   onTryFix?: (error: string) => void;
++  /** EF (#167): the accessible name of the local page frame. */
++  title?: string;
+ }) {
+   const artifactFiles = useMemo(() => {
+     if (Object.keys(files).length === 0) {
+@@ -61,6 +65,23 @@ export const ArtifactPreview = memo(function ({
+     return null;
+   }
+ 
++  /* EF (#167): pages, drawings, documents and code are one static `index.html`: shown by StaticArtifactFrame, without
++     the hosted bundler. React still needs the bundler. */
++  if (template === 'static') {
++    const entry = artifactFiles['index.html'] ?? artifactFiles['/index.html'];
++    const html = typeof entry === 'string' ? entry : entry?.code;
++    if (typeof html === 'string' && html !== '') {
++      return (
++        <StaticArtifactFrame
++          html={html}
++          title={title ?? ''}
++          previewRef={previewRef}
++          onTryFix={onTryFix}
++        />
++      );
++    }
++  }
++
+   return (
+     <SandpackProvider
+       files={{ ...artifactFiles, ...sharedFiles }}
+diff --git a/client/src/components/Artifacts/SandboxArtifactTabs.tsx b/client/src/components/Artifacts/SandboxArtifactTabs.tsx
+index c60e1fa..7a4c531 100644
+--- a/client/src/components/Artifacts/SandboxArtifactTabs.tsx
++++ b/client/src/components/Artifacts/SandboxArtifactTabs.tsx
+@@ -107,6 +107,7 @@ export default function SandboxArtifactTabs({
+           currentCode={editedCode}
+           startupConfig={resolvedStartupConfig}
+           onTryFix={onTryFix}
++          title={artifact.title ?? localize('com_ui_artifacts')}
+         />
+       </Tabs.Content>
+     </div>
+diff --git a/client/src/components/Artifacts/StaticArtifactFrame.tsx b/client/src/components/Artifacts/StaticArtifactFrame.tsx
+new file mode 100644
+index 0000000..6655d35
+--- /dev/null
++++ b/client/src/components/Artifacts/StaticArtifactFrame.tsx
+@@ -0,0 +1,77 @@
++import { memo, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
++import type { SandpackPreviewRef } from '@codesandbox/sandpack-react/unstyled';
++import {
++  ARTIFACT_ERROR_MESSAGE,
++  ARTIFACT_FRAME_SANDBOX,
++  buildArtifactPage,
++} from '~/utils/artifactTab';
++import { TryFixButton } from './ArtifactFixButton';
++
++/**
++ * EF (#167): the preview of a page, drawing, document or code file, built here instead of by Sandpack's hosted static
++ * server. It is the page Sandpack served (Tailwind, the EF font) in a `srcdoc` frame sandboxed without
++ * `allow-same-origin`: an opaque origin, like the hosted server's own domain, so it cannot reach the app, its storage
++ * or the signed-in API, and it gets no top navigation. It shows at once, with no round trip to codesandbox.io, and
++ * works where that site is slow or blocked. The page's own errors reach Try fixing; the panel's refresh reloads it.
++ */
++const StaticArtifactFrame = memo(function StaticArtifactFrame({
++  html,
++  title,
++  previewRef,
++  onTryFix,
++}: {
++  html: string;
++  title: string;
++  previewRef: MutableRefObject<SandpackPreviewRef>;
++  onTryFix?: (error: string) => void;
++}) {
++  const frameRef = useRef<HTMLIFrameElement>(null);
++  const [reloads, setReloads] = useState(0);
++  const [error, setError] = useState<string | null>(null);
++  const srcDoc = useMemo(() => buildArtifactPage(html, true), [html]);
++
++  useEffect(() => {
++    setError(null);
++  }, [srcDoc, reloads]);
++
++  useEffect(() => {
++    const onMessage = (event: MessageEvent) => {
++      if (event.source == null || event.source !== frameRef.current?.contentWindow) {
++        return;
++      }
++      const data = event.data as { type?: unknown; message?: unknown } | null;
++      if (data?.type === ARTIFACT_ERROR_MESSAGE && typeof data.message === 'string') {
++        setError(data.message.slice(0, 2000));
++      }
++    };
++    window.addEventListener('message', onMessage);
++    return () => window.removeEventListener('message', onMessage);
++  }, []);
++
++  /* The panel's refresh button asks the preview ref for a Sandpack client and dispatches `refresh`; this frame
++   * answers the same call by loading the page again. */
++  useEffect(() => {
++    const reload = () => setReloads((count) => count + 1);
++    previewRef.current = {
++      clientId: null,
++      getClient: () => ({ dispatch: reload }),
++    } as unknown as SandpackPreviewRef;
++  }, [previewRef]);
++
++  return (
++    <div className="relative h-full w-full">
++      <iframe
++        key={reloads}
++        ref={frameRef}
++        title={title}
++        sandbox={ARTIFACT_FRAME_SANDBOX}
++        referrerPolicy="no-referrer"
++        srcDoc={srcDoc}
++        className="block h-full w-full border-0 bg-white"
++      />
++      <TryFixButton error={error} onTryFix={onTryFix} />
++    </div>
++  );
++});
++
++export default StaticArtifactFrame;
+diff --git a/client/src/components/Chat/Input/Artifacts.tsx b/client/src/components/Chat/Input/Artifacts.tsx
+deleted file mode 100644
+index 7f77e51..0000000
+--- a/client/src/components/Chat/Input/Artifacts.tsx
++++ /dev/null
+@@ -1,50 +0,0 @@
+-import React, { memo, useCallback, useEffect } from 'react';
+-import { FileText } from 'lucide-react';
+-import { CheckboxButton } from '@librechat/client';
+-import { ArtifactModes, defaultAgentCapabilities } from 'librechat-data-provider';
+-import { useLocalize, useAgentCapabilities } from '~/hooks';
+-import { useBadgeRowContext } from '~/Providers';
+-import { badgeAccents } from './accents';
+-
+-/**
+- * EF (#138): one chip, «مستندات». Upstream's split button opened a menu with shadcn/ui component instructions and a
+- * custom prompt mode: developer options no consumer assistant shows. A chat is now either in the default artifacts
+- * mode or off, and a chat left in one of those modes returns to the default.
+- */
+-function Artifacts() {
+-  const localize = useLocalize();
+-  const context = useBadgeRowContext();
+-  const { toggleState, debouncedChange, isPinned } = context?.artifacts ?? {};
+-  const { artifactsEnabled } = useAgentCapabilities(
+-    context?.agentsConfig?.capabilities ?? defaultAgentCapabilities,
+-  );
+-
+-  const mode = typeof toggleState === 'string' ? toggleState : '';
+-  const isEnabled = mode !== '';
+-
+-  useEffect(() => {
+-    if (mode === ArtifactModes.SHADCNUI || mode === ArtifactModes.CUSTOM) {
+-      debouncedChange?.({ value: ArtifactModes.DEFAULT });
+-    }
+-  }, [mode, debouncedChange]);
+-
+-  const handleToggle = useCallback(() => {
+-    debouncedChange?.({ value: isEnabled ? '' : ArtifactModes.DEFAULT });
+-  }, [isEnabled, debouncedChange]);
+-
+-  if (!artifactsEnabled || (!isEnabled && !isPinned)) {
+-    return null;
+-  }
+-
+-  return (
+-    <CheckboxButton
+-      checked={isEnabled}
+-      setValue={handleToggle}
+-      label={localize('com_efaiw_documents')}
+-      isCheckedClassName={badgeAccents.amber}
+-      icon={<FileText className="icon-md" aria-hidden="true" />}
+-    />
+-  );
+-}
+-
+-export default memo(Artifacts);
+diff --git a/client/src/components/Chat/Input/BadgeRow.tsx b/client/src/components/Chat/Input/BadgeRow.tsx
+index 65c6536..7e3b47c 100644
+--- a/client/src/components/Chat/Input/BadgeRow.tsx
++++ b/client/src/components/Chat/Input/BadgeRow.tsx
+@@ -18,7 +18,6 @@ import ToolsDropdown from './ToolsDropdown';
+ import { useChatBadges } from '~/hooks';
+ import ToolDialogs from './ToolDialogs';
+ import FileSearch from './FileSearch';
+-import Artifacts from './Artifacts';
+ import InternetBadge from './InternetBadge';
+ import MCPSelect from './MCPSelect';
+ import WebSearch from './WebSearch';
+@@ -384,7 +383,7 @@ function BadgeRow({
+             <Skills />
+             <Memory />
+             <InternetBadge />
+-            <Artifacts />
++            {/* EF (#167): no «مستندات» chip: the spec's instructions decide when to create a document. */}
+             <MCPSelect />
+           </>
+         )}
+diff --git a/client/src/components/Chat/Input/ToolsDropdown.tsx b/client/src/components/Chat/Input/ToolsDropdown.tsx
+index e8a6150..5faf4ab 100644
+--- a/client/src/components/Chat/Input/ToolsDropdown.tsx
++++ b/client/src/components/Chat/Input/ToolsDropdown.tsx
+@@ -6,7 +6,6 @@ import {
+   Check,
+   Globe,
+   Plus,
+-  FileText,
+   Paperclip,
+   ScrollText,
+   Settings,
+@@ -16,7 +15,6 @@ import type { LucideIcon } from 'lucide-react';
+ import {
+   AuthType,
+   Permissions,
+-  ArtifactModes,
+   PermissionTypes,
+   defaultAgentCapabilities,
+ } from 'librechat-data-provider';
+@@ -52,9 +50,10 @@ const openFilePicker = () => {
+ 
+ /**
+  * EF (#138): the composer's «+» (ChatGPT, Claude and Qwen Chat put their tools behind one +): attach a file, then
+- * on/off items with a check mark — documents (artifacts), internet (the provider's search, through the spec's
+- * no-search twin), skills and memory. A tool that is on also shows as a chip in the composer. The pin buttons and the
+- * artifacts sub-menu (shadcn/ui, custom prompt mode) are gone.
++ * on/off items with a check mark — internet (the provider's search, through the spec's no-search twin), skills and
++ * memory. A tool that is on also shows as a chip in the composer. The pin buttons and the artifacts sub-menu
++ * (shadcn/ui, custom prompt mode) are gone. EF (#167): documents (artifacts) have no switch: the spec's instructions
++ * create one whenever the reply is a document, a page, a diagram or code, as in Claude.
+  */
+ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+   const localize = useLocalize();
+@@ -63,14 +62,8 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+   const context = useBadgeRowContext();
+   const { data: startupConfig } = useGetStartupConfig();
+ 
+-  const {
+-    codeEnabled,
+-    memoryEnabled,
+-    webSearchEnabled,
+-    artifactsEnabled,
+-    fileSearchEnabled,
+-    skillsEnabled,
+-  } = useAgentCapabilities(context?.agentsConfig?.capabilities ?? defaultAgentCapabilities);
++  const { codeEnabled, memoryEnabled, webSearchEnabled, fileSearchEnabled, skillsEnabled } =
++    useAgentCapabilities(context?.agentsConfig?.capabilities ?? defaultAgentCapabilities);
+ 
+   const canUseWebSearch = useHasAccess({
+     permissionType: PermissionTypes.WEB_SEARCH,
+@@ -106,7 +99,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+     skills,
+     memory,
+     webSearch,
+-    artifacts,
+     fileSearch,
+     mcpServerManager,
+     codeInterpreter,
+@@ -144,15 +136,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+     fileSearch?.debouncedChange({ value: newValue });
+   }, [fileSearch]);
+ 
+-  const handleArtifactsToggle = useCallback(() => {
+-    const currentState = artifacts?.toggleState;
+-    if (!currentState || currentState === '') {
+-      artifacts?.debouncedChange({ value: ArtifactModes.DEFAULT });
+-    } else {
+-      artifacts?.debouncedChange({ value: '' });
+-    }
+-  }, [artifacts]);
+-
+   const handleSkillsToggle = useCallback(() => {
+     const newValue = !skills?.toggleState;
+     skills?.debouncedChange({ value: newValue });
+@@ -199,19 +182,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+   });
+   dropdownItems.push({ separate: true });
+ 
+-  if (artifactsEnabled) {
+-    const on = typeof artifacts?.toggleState === 'string' && artifacts.toggleState !== '';
+-    dropdownItems.push(
+-      toggleItem(
+-        'tools-menu-documents',
+-        localize('com_efaiw_documents'),
+-        FileText,
+-        on,
+-        handleArtifactsToggle,
+-      ),
+-    );
+-  }
+-
+   if (modes.available) {
+     dropdownItems.push(
+       toggleItem('tools-menu-internet', localize('com_efaiw_internet'), Globe, modes.web, () =>
+diff --git a/client/src/components/Chat/Messages/Content/__tests__/MarkdownBlocks.artifactSource.test.tsx b/client/src/components/Chat/Messages/Content/__tests__/MarkdownBlocks.artifactSource.test.tsx
+new file mode 100644
+index 0000000..27c4eff
+--- /dev/null
++++ b/client/src/components/Chat/Messages/Content/__tests__/MarkdownBlocks.artifactSource.test.tsx
+@@ -0,0 +1,86 @@
++import React from 'react';
++import { RecoilRoot } from 'recoil';
++import { MemoryRouter } from 'react-router-dom';
++import { render, screen } from '@testing-library/react';
++import { MessageContext } from '~/Providers';
++import Markdown from '../Markdown';
++
++/**
++ * EF (#167): an artifact's content reaches the panel exactly as the model wrote it, whether the model fenced it as
++ * documented or wrote the document straight inside the directive (as Qwen does), and whether the fence was too short
++ * for the code blocks inside it. Only `ArtifactButton` is stubbed, to read the content back.
++ */
++jest.mock('~/components/Artifacts/ArtifactButton', () => ({
++  __esModule: true,
++  default: ({ artifact }: { artifact?: { content?: string } }) => (
++    <pre data-testid="art">{artifact?.content ?? ''}</pre>
++  ),
++}));
++
++const view = (content: string, submitting: boolean) => (
++  <MemoryRouter>
++    <RecoilRoot>
++      <MessageContext.Provider
++        value={{
++          messageId: 'm1',
++          isExpanded: true,
++          isSubmitting: submitting,
++          isLatestMessage: true,
++        }}
++      >
++        <Markdown content={content} isLatestMessage={true} />
++      </MessageContext.Provider>
++    </RecoilRoot>
++  </MemoryRouter>
++);
++
++/** The rendered code element ends with a newline, as for every fenced block. */
++const contentOf = async (message: string, streamed: boolean) => {
++  const rendered = render(view(message, streamed));
++  rendered.rerender(view(message, false));
++  return (await screen.findByTestId('art')).textContent?.replace(/\n$/, '');
++};
++
++const DOCUMENT = [
++  '**صندوق البيئة**',
++  'الإدارة العامة للشؤون الإدارية',
++  '',
++  '## تعميم داخلي',
++  '',
++  '1. **الطباعة على وجهين:** افتراضياً.',
++  '2. المراجعة قبل الطباعة.',
++  '',
++  '| البند | الكمية |',
++  '|---|---|',
++  '| ورق | 10 |',
++].join('\n');
++
++const open = '{identifier="paper-circular" type="text/markdown" title="تعميم"}';
++
++describe.each([
++  ['a finished', false],
++  ['a streamed', true],
++])('artifact content in %s message', (_label, streamed) => {
++  it('keeps a document written straight inside the directive, line by line', async () => {
++    const message = `مقدمة.\n\n:::artifact${open}\n${DOCUMENT}\n:::\n\nخاتمة.`;
++    expect(await contentOf(message, streamed)).toBe(DOCUMENT);
++  });
++
++  it('keeps the documented form (one fenced block) as before', async () => {
++    const message = `:::artifact${open}\n\`\`\`\`\n${DOCUMENT}\n\`\`\`\`\n:::`;
++    expect(await contentOf(message, streamed)).toBe(DOCUMENT);
++  });
++
++  it('drops a fence too short for the code blocks inside the document', async () => {
++    const inner = `# دليل\n\n\`\`\`python\nprint("مرحباً")\n\`\`\`\n\nنهاية الدليل.`;
++    const message = `:::artifact${open}\n\`\`\`markdown\n${inner}\n\`\`\`\n:::`;
++    expect(await contentOf(message, streamed)).toBe(inner);
++  });
++
++  it('keeps an unfenced HTML page as written', async () => {
++    const page =
++      '<!DOCTYPE html>\n<html lang="ar" dir="rtl">\n<body>\n<h1>مرحباً</h1>\n</body>\n</html>';
++    const message = `:::artifact{identifier="p" type="text/html" title="صفحة"}\n${page}\n:::`;
++    expect(await contentOf(message, streamed)).toBe(page);
++  });
++});
+diff --git a/client/src/hooks/Agents/useApplyModelSpecAgents.ts b/client/src/hooks/Agents/useApplyModelSpecAgents.ts
+index 3b33968..ac344e2 100644
+--- a/client/src/hooks/Agents/useApplyModelSpecAgents.ts
++++ b/client/src/hooks/Agents/useApplyModelSpecAgents.ts
+@@ -102,9 +102,11 @@ export function useApplyAgentTemplate() {
+         web_search: ephemeralAgent?.web_search ?? modelSpec.webSearch ?? false,
+         file_search: ephemeralAgent?.file_search ?? modelSpec.fileSearch ?? false,
+         execute_code: ephemeralAgent?.execute_code ?? modelSpec.executeCode ?? false,
++        /* EF (#167): the spec's artifacts mode wins over one carried from the previous chat. */
+         artifacts:
+-          ephemeralAgent?.artifacts ??
+-          (modelSpec.artifacts === true ? 'default' : modelSpec.artifacts || ''),
++          modelSpec.artifacts === true
++            ? 'default'
++            : modelSpec.artifacts || ephemeralAgent?.artifacts || '',
+       };
+ 
+       mergedAgent.mcp = [...new Set(mergedAgent.mcp)];
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index d7b4ec5..cb79af2 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3105,7 +3105,6 @@
+   "com_efaiw_speed_deep": "Deep",
+   "com_efaiw_plus_menu": "Add and tools",
+   "com_efaiw_attach_file": "Attach a file",
+-  "com_efaiw_documents": "Documents",
+   "com_efaiw_internet": "Internet",
+   "com_efaiw_download_reply": "Download",
+   "com_efaiw_download_word": "Word document (.docx)",
+diff --git a/client/src/utils/__tests__/applyModelSpecEphemeralAgent.test.ts b/client/src/utils/__tests__/applyModelSpecEphemeralAgent.test.ts
+index a13c11e..af8ecb1 100644
+--- a/client/src/utils/__tests__/applyModelSpecEphemeralAgent.test.ts
++++ b/client/src/utils/__tests__/applyModelSpecEphemeralAgent.test.ts
+@@ -195,8 +195,8 @@ describe('applyModelSpecEphemeralAgent', () => {
+     });
+ 
+     it('should only override keys that exist in localStorage, leaving the rest as spec defaults', () => {
+-      // User only changed artifacts, nothing else
+-      writeToolToggle(LocalStorageKeys.LAST_ARTIFACTS_TOGGLE_, convoId, '');
++      // User only changed memory, nothing else
++      writeToolToggle(LocalStorageKeys.LAST_MEMORY_TOGGLE_, convoId, true);
+ 
+       const modelSpec = createModelSpec({
+         executeCode: true,
+@@ -212,9 +212,22 @@ describe('applyModelSpecEphemeralAgent', () => {
+       expect(agent.execute_code).toBe(true); // spec default (not in localStorage)
+       expect(agent.web_search).toBe(true); // spec default
+       expect(agent.file_search).toBe(false); // spec default
+-      expect(agent.artifacts).toBe(''); // user override
++      expect(agent.memory).toBe(true); // user override
++      expect(agent.artifacts).toBe('default'); // spec default
+       expect(agent.mcp).toEqual(['server1']); // spec default (not in localStorage)
+     });
++
++    /* EF (#167): the spec alone decides the artifacts mode; a value the former «مستندات» switch stored is ignored. */
++    it('should keep the spec artifacts mode over a stored artifacts toggle', () => {
++      writeToolToggle(LocalStorageKeys.LAST_ARTIFACTS_TOGGLE_, convoId, 'default');
++
++      const modelSpec = createModelSpec({ artifacts: 'custom' });
++
++      applyModelSpecEphemeralAgent({ convoId, modelSpec, updateEphemeralAgent });
++
++      const agent = updateEphemeralAgent.mock.calls[0][1] as TEphemeralAgent;
++      expect(agent.artifacts).toBe('custom');
++    });
+   });
+ 
+   // ─── Existing Conversations: Cleared localStorage ──────────────────
+diff --git a/client/src/utils/artifactTab.ts b/client/src/utils/artifactTab.ts
+index cbd6067..d8308b6 100644
+--- a/client/src/utils/artifactTab.ts
++++ b/client/src/utils/artifactTab.ts
+@@ -2,20 +2,46 @@ import { withEfFonts } from './efFonts';
+ 
+ const TAILWIND_CDN = 'https://cdn.tailwindcss.com/3.4.17';
+ 
++/** The `sandbox` of every frame that runs an artifact page: scripts, forms, dialogs and links, never same-origin. */
++export const ARTIFACT_FRAME_SANDBOX = 'allow-scripts allow-forms allow-modals allow-popups';
++
++/** EF (#167): the message a page frame posts to its parent when one of the page's own scripts throws. */
++export const ARTIFACT_ERROR_MESSAGE = 'efaiw-artifact-error';
++
++/**
++ * EF (#167): forwards the page's uncaught errors to the panel for Try fixing. "Script error." is what a browser
++ * reports for a cross-origin script it may not describe, so it says nothing the model could fix.
++ */
++const ERROR_REPORTER =
++  `<script>window.addEventListener('error',function(e){var m=e&&e.message;if(!m||m==='Script error.')return;` +
++  `try{parent.postMessage({type:'${ARTIFACT_ERROR_MESSAGE}',message:String(m)+(e.lineno?' (line '+e.lineno+')':'')},'*')}` +
++  `catch(_){}});</script>`;
++
++/** Adds `extra` right after the page's `<head>`, or before the page when it has none. */
++function intoHead(page: string, extra: string): string {
++  const head = /<head\b[^>]*>/i.exec(page);
++  return head
++    ? page.slice(0, head.index + head[0].length) + extra + page.slice(head.index + head[0].length)
++    : extra + page;
++}
++
++/**
++ * EF (#153, #167): an artifact page as the preview shows it: Tailwind and the EF font, which Sandpack used to add, and
++ * (for the panel) the error reporter.
++ */
++export function buildArtifactPage(html: string, reportErrors = false): string {
++  const extra = `${reportErrors ? ERROR_REPORTER : ''}<script src="${TAILWIND_CDN}"></script>`;
++  return intoHead(withEfFonts(html), extra);
++}
++
+ /**
+  * EF (#153): an HTML page, SVG drawing or Markdown document in a tab of its own, like Claude's "Open in new tab".
+  * The tab is a blob page with no script of its own: the artifact runs only inside a sandboxed `srcdoc` frame without
+  * `allow-same-origin`, so it has an opaque origin and cannot reach the app, its storage or the signed-in API, and it
+- * gets no top navigation. `noopener` keeps it from steering the chat tab. Tailwind and the EF font, which Sandpack
+- * gives the panel's preview, are added the same way.
++ * gets no top navigation. `noopener` keeps it from steering the chat tab.
+  */
+ export function openArtifactInTab(html: string, title: string): void {
+-  let page = withEfFonts(html);
+-  const script = `<script src="${TAILWIND_CDN}"></script>`;
+-  const head = /<head\b[^>]*>/i.exec(page);
+-  page = head
+-    ? page.slice(0, head.index + head[0].length) + script + page.slice(head.index + head[0].length)
+-    : script + page;
++  const page = buildArtifactPage(html);
+ 
+   const doc = document.implementation.createHTMLDocument(title);
+   const referrer = doc.createElement('meta');
+@@ -26,7 +52,7 @@ export function openArtifactInTab(html: string, title: string): void {
+     'html,body{margin:0;height:100%}iframe{display:block;border:0;width:100%;height:100%}';
+   doc.head.append(referrer, style);
+   const frame = doc.createElement('iframe');
+-  frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-popups');
++  frame.setAttribute('sandbox', ARTIFACT_FRAME_SANDBOX);
+   frame.setAttribute('referrerpolicy', 'no-referrer');
+   frame.setAttribute('title', title);
+   frame.setAttribute('srcdoc', page);
+diff --git a/client/src/utils/endpoints.ts b/client/src/utils/endpoints.ts
+index b39fbdf..87736ff 100644
+--- a/client/src/utils/endpoints.ts
++++ b/client/src/utils/endpoints.ts
+@@ -358,12 +358,13 @@ export function applyModelSpecEphemeralAgent({
+   // For existing conversations, layer per-conversation localStorage overrides
+   // on top of spec defaults so user modifications persist across navigation.
+   // If localStorage is empty (e.g., cleared), spec values stand alone.
++  // EF (#167): not the artifacts mode, which the spec alone decides (its own instructions, `custom`): a value stored
++  // by the former «مستندات» switch would bring back LibreChat's English artifact prompt or none at all.
+   if (key !== Constants.NEW_CONVO) {
+     const toolStorageMap: Array<[keyof t.TEphemeralAgent, string]> = [
+       ['execute_code', LocalStorageKeys.LAST_CODE_TOGGLE_],
+       ['web_search', LocalStorageKeys.LAST_WEB_SEARCH_TOGGLE_],
+       ['file_search', LocalStorageKeys.LAST_FILE_SEARCH_TOGGLE_],
+-      ['artifacts', LocalStorageKeys.LAST_ARTIFACTS_TOGGLE_],
+       ['memory', LocalStorageKeys.LAST_MEMORY_TOGGLE_],
+     ];
+ 

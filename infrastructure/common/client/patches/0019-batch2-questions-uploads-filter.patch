@@ -1,0 +1,469 @@
+LibreChat batch 2 (#129): clarifying questions, uploads, long-chat summaries and the sensitive-data filter, in Arabic.
+- Clarifying questions: after Skip the record of the question read «إجابتك: The user chose not to answer this
+  question.» (the fixed English notice the model receives); it now says «تخطّيت هذا السؤال». The answer's rule and
+  indent were on the left in Arabic (border-l, pl), and a few icons and the single-question Submit button used
+  physical margins; all logical now. Question, description and answer take their own direction (dir="auto"). An
+  answer the filter refuses showed «try again» only; the text now says to remove sensitive data first.
+- The sensitive-data filter (`filters` in librechat.yaml) answers with `{error: "content_filter_block", message}` and
+  no `code`, so a refused message fell through to the provider renderer: «تعذّر على Qwen إكمال هذا الطلب.
+  content_filter_block», blaming the model for our own check. It has its own renderer now, naming what to remove.
+- Uploads: errors written as fixed English sentences (size, total size, count, file type in utils/files.ts; «No text
+  found in document» and the filter's refusal from the server) and the kind under a file's name («Document»,
+  «Spreadsheet»…) showed in English in the Arabic interface; they are translated now (utils/efaiwFiles.ts).
+- Summary of a long chat: its box showed the summarizer as «openAI/qwen3.8-flash» (every OpenAI-compatible endpoint
+  reports «openAI»), which reads as if the chat had gone to OpenAI; it shows the token count only. Its icon margin
+  and action buttons were physical (mr, right), and the text now takes its own direction.
+
+diff --git a/client/src/components/Chat/Input/AskUserQuestionPopover.tsx b/client/src/components/Chat/Input/AskUserQuestionPopover.tsx
+index 246850b..acb3f75 100644
+--- a/client/src/components/Chat/Input/AskUserQuestionPopover.tsx
++++ b/client/src/components/Chat/Input/AskUserQuestionPopover.tsx
+@@ -234,7 +234,7 @@ function AskUserQuestionPopoverPanel({
+                 onClick={() => submit(composerText)}
+               >
+                 {localize('com_ui_submit')}
+-                <CornerDownLeft className="ml-1.5 h-4 w-4" aria-hidden="true" />
++                <CornerDownLeft className="ms-1.5 h-4 w-4" aria-hidden="true" />
+               </Button>
+             )}
+           </div>
+diff --git a/client/src/components/Chat/Input/Files/FileContainer.tsx b/client/src/components/Chat/Input/Files/FileContainer.tsx
+index 3f47b0b..640ac19 100644
+--- a/client/src/components/Chat/Input/Files/FileContainer.tsx
++++ b/client/src/components/Chat/Input/Files/FileContainer.tsx
+@@ -1,7 +1,9 @@
+ import type { TFile } from 'librechat-data-provider';
+ import type { ReactNode } from 'react';
+ import type { ExtendedFile } from '~/common';
++import { localizeFileTypeTitle } from '~/utils/efaiwFiles';
+ import { getFileType, cn } from '~/utils';
++import { useLocalize } from '~/hooks';
+ import FilePreview from './FilePreview';
+ import RemoveFile from './RemoveFile';
+ 
+@@ -58,7 +60,9 @@ const FileContainer = ({
+   onDelete?: () => void;
+   onClick?: React.MouseEventHandler<HTMLButtonElement>;
+ }) => {
++  const localize = useLocalize();
+   const fileType = getFileType(overrideType ?? file.type);
++  const typeTitle = localizeFileTypeTitle(fileType.title, localize);
+   const visibleName = displayName ?? file.filename ?? '';
+   const interactive = onClick != null;
+   const surfaceClassName = cn(
+@@ -106,8 +110,8 @@ const FileContainer = ({
+             </button>
+           ) : (
+             (subtitle ?? (
+-              <div className="truncate text-text-secondary" title={fileType.title}>
+-                {fileType.title}
++              <div className="truncate text-text-secondary" title={typeTitle}>
++                {typeTitle}
+               </div>
+             ))
+           )}
+diff --git a/client/src/components/Chat/Messages/Content/AskUserQuestion.tsx b/client/src/components/Chat/Messages/Content/AskUserQuestion.tsx
+index 0168726..8e4349a 100644
+--- a/client/src/components/Chat/Messages/Content/AskUserQuestion.tsx
++++ b/client/src/components/Chat/Messages/Content/AskUserQuestion.tsx
+@@ -235,14 +235,14 @@ function AskUserQuestionSingle({
+         </Button>
+         {(status === 'expired' || status === 'error') && (
+           <span className="flex min-w-0 items-center text-xs text-text-warning">
+-            <TriangleAlert className="mr-1.5 size-4 shrink-0" aria-hidden="true" />
++            <TriangleAlert className="me-1.5 size-4 shrink-0" aria-hidden="true" />
+             {localize(status === 'expired' ? 'com_ui_approval_expired' : 'com_ui_approval_error')}
+           </span>
+         )}
+         <Button
+           size="sm"
+           variant="submit"
+-          className="ml-auto"
++          className="ms-auto"
+           disabled={!canSubmit || locked}
+           onClick={submitCombined}
+         >
+diff --git a/client/src/components/Chat/Messages/Content/AskUserQuestionCall.tsx b/client/src/components/Chat/Messages/Content/AskUserQuestionCall.tsx
+index e3e300d..c521dc6 100644
+--- a/client/src/components/Chat/Messages/Content/AskUserQuestionCall.tsx
++++ b/client/src/components/Chat/Messages/Content/AskUserQuestionCall.tsx
+@@ -3,6 +3,7 @@ import { useRecoilValue } from 'recoil';
+ import { MessageCircleQuestion, TriangleAlert } from 'lucide-react';
+ import type { Agents, PartMetadata } from 'librechat-data-provider';
+ import {
++  ASK_USER_DECLINED_ANSWER,
+   getSubmittedAskAnswer,
+   parseAskUserQuestionArgs,
+   parseAskUserQuestionsArgs,
+@@ -248,23 +249,39 @@ function QuestionBody({
+   return (
+     <div className="min-w-0">
+       {question.length > 0 && (
+-        <p className="whitespace-pre-wrap text-sm font-medium leading-relaxed text-text-primary [overflow-wrap:anywhere]">
++        <p
++          dir="auto"
++          className="whitespace-pre-wrap text-sm font-medium leading-relaxed text-text-primary [overflow-wrap:anywhere]"
++        >
+           {question}
+         </p>
+       )}
+       {description != null && description.length > 0 && (
+-        <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-text-secondary [overflow-wrap:anywhere]">
++        <p
++          dir="auto"
++          className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-text-secondary [overflow-wrap:anywhere]"
++        >
+           {description}
+         </p>
+       )}
+       {typeof answer === 'string' && (
+-        <div className="mt-2.5 border-l-2 border-border-medium pl-3">
++        <div className="mt-2.5 border-s-2 border-border-medium ps-3">
+           <p className="text-xs font-medium text-text-secondary">
+             {localize('com_ui_you_answered')}
+           </p>
+-          <p className="mt-0.5 whitespace-pre-wrap text-sm leading-relaxed text-text-primary [overflow-wrap:anywhere]">
+-            {formatAnswerLabel({ question, options, multiSelect }, answer)}
+-          </p>
++          {/* EF (#129): Skip sends a fixed English notice for the model; the employee reads it in their language. */}
++          {answer === ASK_USER_DECLINED_ANSWER ? (
++            <p className="mt-0.5 text-sm italic leading-relaxed text-text-secondary">
++              {localize('com_efaiw_ask_skipped')}
++            </p>
++          ) : (
++            <p
++              dir="auto"
++              className="mt-0.5 whitespace-pre-wrap text-sm leading-relaxed text-text-primary [overflow-wrap:anywhere]"
++            >
++              {formatAnswerLabel({ question, options, multiSelect }, answer)}
++            </p>
++          )}
+         </div>
+       )}
+       {typeof answer !== 'string' && !failed && (
+diff --git a/client/src/components/Chat/Messages/Content/AskUserQuestions.tsx b/client/src/components/Chat/Messages/Content/AskUserQuestions.tsx
+index 384cfd9..41c8ad9 100644
+--- a/client/src/components/Chat/Messages/Content/AskUserQuestions.tsx
++++ b/client/src/components/Chat/Messages/Content/AskUserQuestions.tsx
+@@ -216,7 +216,7 @@ export default function AskUserQuestions({
+                     onClick={() => handleSelectOption(question, option.value)}
+                   >
+                     {question.multiSelect === true && isSelected && (
+-                      <Check className="mr-1.5 h-4 w-4 shrink-0" aria-hidden="true" />
++                      <Check className="me-1.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                     )}
+                     {option.label}
+                   </Button>
+diff --git a/client/src/components/Chat/Messages/Content/FilePreviewDialog.tsx b/client/src/components/Chat/Messages/Content/FilePreviewDialog.tsx
+index 7911b2f..ff70c1e 100644
+--- a/client/src/components/Chat/Messages/Content/FilePreviewDialog.tsx
++++ b/client/src/components/Chat/Messages/Content/FilePreviewDialog.tsx
+@@ -24,6 +24,7 @@ import {
+   useSharedFileDownload,
+ } from '~/data-provider';
+ import { getDownloadFilename, logger, sortPagesByRelevance, triggerDownload } from '~/utils';
++import { localizeFileTypeTitle } from '~/utils/efaiwFiles';
+ import CopyButton from '~/components/Messages/Content/CopyButton';
+ import { useFileMapContext, useShareContext } from '~/Providers';
+ import { useLocalize } from '~/hooks';
+@@ -231,7 +232,10 @@ export default function FilePreviewDialog({
+     setTimeout(() => setIsCopied(false), 3000);
+   }, [displayedText]);
+ 
+-  const displayType = useMemo(() => getDisplayType(fileType, fileName), [fileType, fileName]);
++  const displayType = useMemo(
++    () => localizeFileTypeTitle(getDisplayType(fileType, fileName), localize),
++    [fileType, fileName, localize],
++  );
+   const sortedPages = useMemo(
+     () => (pages && pageRelevance ? sortPagesByRelevance(pages, pageRelevance) : pages),
+     [pages, pageRelevance],
+diff --git a/client/src/components/Chat/Messages/Content/Parts/Summary.tsx b/client/src/components/Chat/Messages/Content/Parts/Summary.tsx
+index 6bcf2d9..a54eca1 100644
+--- a/client/src/components/Chat/Messages/Content/Parts/Summary.tsx
++++ b/client/src/components/Chat/Messages/Content/Parts/Summary.tsx
+@@ -46,7 +46,9 @@ const SummaryContent = memo(({ children, meta }: { children: React.ReactNode; me
+   return (
+     <div className="relative rounded-3xl border border-border-medium bg-surface-tertiary p-4 pb-10 text-text-secondary">
+       {meta && <span className="mb-1 block text-xs text-text-secondary">{meta}</span>}
+-      <p className={cn('whitespace-pre-wrap leading-[26px]', fontSize)}>{children}</p>
++      <p dir="auto" className={cn('whitespace-pre-wrap leading-[26px]', fontSize)}>
++        {children}
++      </p>
+     </div>
+   );
+ });
+@@ -86,7 +88,7 @@ const SummaryButton = memo(
+             fontSize,
+           )}
+         >
+-          <span className="relative mr-1.5 inline-flex h-[18px] w-[18px] items-center justify-center">
++          <span className="relative me-1.5 inline-flex h-[18px] w-[18px] items-center justify-center">
+             <ScrollText
+               className="icon-sm absolute text-text-secondary opacity-100 transition-opacity group-hover/button:opacity-0"
+               aria-hidden="true"
+@@ -155,7 +157,7 @@ const FloatingSummaryBar = memo(
+     return (
+       <div
+         className={cn(
+-          'absolute bottom-3 right-3 flex items-center gap-2 transition-opacity duration-150',
++          'absolute bottom-3 end-3 flex items-center gap-2 transition-opacity duration-150',
+           isVisible ? 'opacity-100' : 'pointer-events-none opacity-0',
+         )}
+       >
+@@ -204,7 +206,7 @@ const FloatingSummaryBar = memo(
+ );
+ 
+ const Summary = memo(
+-  ({ content, model, provider, tokenCount, summarizing, failed, initiatedBy }: SummaryProps) => {
++  ({ content, tokenCount, summarizing, failed, initiatedBy }: SummaryProps) => {
+     const contentId = useId();
+     const localize = useLocalize();
+     const [isExpanded, setIsExpanded] = useState(false);
+@@ -242,16 +244,16 @@ const Summary = memo(
+     const effectiveIsSubmitting = isLatestMessage ? isSubmitting : false;
+     const isActivelyStreaming = !!summarizing && !!effectiveIsSubmitting;
+ 
+-    const meta = useMemo(() => {
+-      const parts: string[] = [];
+-      if (provider || model) {
+-        parts.push([provider, model].filter(Boolean).join('/'));
+-      }
+-      if (tokenCount != null && tokenCount > 0) {
+-        parts.push(`${tokenCount} ${localize('com_ui_tokens')}`);
+-      }
+-      return parts.length > 0 ? parts.join(' \u00b7 ') : undefined;
+-    }, [model, provider, tokenCount, localize]);
++    /** EF (#129): the token count only. The summarizer's provider and model ids
++     *  («openAI/qwen3.8-flash»: every OpenAI-compatible endpoint reports «openAI») read as if
++     *  the chat had gone to OpenAI. */
++    const meta = useMemo(
++      () =>
++        tokenCount != null && tokenCount > 0
++          ? `${tokenCount} ${localize('com_ui_tokens')}`
++          : undefined,
++      [tokenCount, localize],
++    );
+ 
+     /** A failed round keeps whatever deltas already streamed in, so the label
+      *  must not claim the conversation was summarized. */
+diff --git a/client/src/components/Messages/Content/Error/ContentFilterError.tsx b/client/src/components/Messages/Content/Error/ContentFilterError.tsx
+new file mode 100644
+index 0000000..ee5b4ca
+--- /dev/null
++++ b/client/src/components/Messages/Content/Error/ContentFilterError.tsx
+@@ -0,0 +1,19 @@
++import type { ErrorRendererProps } from './parts';
++import { readString } from './parts';
++import { useLocalize } from '~/hooks';
++
++/** The server's block message names the pattern's label: "Submitted content contains a <label>. Remove it…". */
++const LABEL_PATTERN = /contains an? (.+?)\. Remove it/;
++
++/**
++ * EF (#129): a message or file the sensitive-data filter (`filters` in librechat.yaml) refused
++ * before it reached the model. The payload has no `code`, so it fell through to the provider
++ * renderer («Qwen could not complete this request» + the raw code), which blamed the model.
++ */
++export default function ContentFilterError({ json }: ErrorRendererProps) {
++  const localize = useLocalize();
++  const label = LABEL_PATTERN.exec(readString(json, 'message') ?? '')?.[1];
++  return label != null
++    ? localize('com_efaiw_content_filter_block', { 0: label })
++    : localize('com_efaiw_content_filter_block_generic');
++}
+diff --git a/client/src/components/Messages/Content/Error/index.tsx b/client/src/components/Messages/Content/Error/index.tsx
+index 589742f..469b4df 100644
+--- a/client/src/components/Messages/Content/Error/index.tsx
++++ b/client/src/components/Messages/Content/Error/index.tsx
+@@ -3,7 +3,7 @@ import { parseLangChainErrorCode } from 'librechat-data-provider';
+ import type { TranslationKeys } from '~/hooks';
+ import type { ErrorSource } from './source';
+ import type { ErrorPayload } from './parts';
+-import { errorCopy, errorRenderers } from './registry';
++import { CONTENT_FILTER_BLOCK, errorCopy, errorRenderers } from './registry';
+ import { UnclassifiedError } from './ProviderError';
+ import { extractJson, isJson } from '~/utils/json';
+ import { readObject, readString } from './parts';
+@@ -64,7 +64,10 @@ const Error = ({ text, message: rowMessage }: { text: string; message?: ErrorSou
+       ? (readString(envelope, 'code') ?? readString(envelope, 'type'))
+       : undefined;
+   const payload = nestedKey != null && envelope != null ? envelope : json;
+-  const errorKey = topLevelKey ?? nestedKey;
++  /** EF (#129): the sensitive-data filter's payload carries its code in `error` only. */
++  const filterKey =
++    readString(json, 'error') === CONTENT_FILTER_BLOCK ? CONTENT_FILTER_BLOCK : undefined;
++  const errorKey = topLevelKey ?? nestedKey ?? filterKey;
+ 
+   if (errorKey != null) {
+     const Renderer = errorRenderers[errorKey];
+diff --git a/client/src/components/Messages/Content/Error/registry.ts b/client/src/components/Messages/Content/Error/registry.ts
+index 3f87863..d1b0067 100644
+--- a/client/src/components/Messages/Content/Error/registry.ts
++++ b/client/src/components/Messages/Content/Error/registry.ts
+@@ -10,6 +10,10 @@ import ContextError from './ContextError';
+ import ModelError from './ModelError';
+ import LimitError from './LimitError';
+ import AgentError from './AgentError';
++import ContentFilterError from './ContentFilterError';
++
++/** EF (#129): code of a message or file refused by the sensitive-data filter (`filters`). */
++export const CONTENT_FILTER_BLOCK = 'content_filter_block';
+ 
+ /**
+  * Codes whose whole rendering is one localized sentence.
+@@ -77,4 +81,5 @@ export const errorRenderers: Record<string, ComponentType<ErrorRendererProps>> =
+   [ViolationTypes.FILE_UPLOAD_LIMIT]: LimitError,
+   [ViolationTypes.TTS_LIMIT]: LimitError,
+   [ViolationTypes.STT_LIMIT]: LimitError,
++  [CONTENT_FILTER_BLOCK]: ContentFilterError,
+ };
+diff --git a/client/src/hooks/Files/useFileHandling.ts b/client/src/hooks/Files/useFileHandling.ts
+index c498c7d..0c46da8 100644
+--- a/client/src/hooks/Files/useFileHandling.ts
++++ b/client/src/hooks/Files/useFileHandling.ts
+@@ -37,6 +37,7 @@ import {
+ import { useGetFileConfig, useUploadFileMutation } from '~/data-provider';
+ import useAgentUploadTarget from '~/hooks/Agents/useAgentUploadTarget';
+ import useLocalize, { TranslationKeys } from '~/hooks/useLocalize';
++import { localizeFileError } from '~/utils/efaiwFiles';
+ import { useDelayedUploadToast } from './useDelayedUploadToast';
+ import { useChatContext } from '~/Providers/ChatContext';
+ import store, { ephemeralAgentByConvoId } from '~/store';
+@@ -228,11 +229,17 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
+   const fileConfigRef = useRef(fileConfig);
+   fileConfigRef.current = fileConfig;
+ 
++  /** EF (#129): upstream's fixed English upload errors are translated (utils/efaiwFiles). */
++  const localizeError = useCallback(
++    (e: string) => localizeFileError(e, localize) ?? (localize(e as TranslationKeys) || e),
++    [localize],
++  );
++
+   const displayToast = useCallback(() => {
+     if (errors.length > 1) {
+       // TODO: this should not be a dynamic localize input!!
+       const errorList = Array.from(new Set(errors))
+-        .map((e, i) => `${i > 0 ? '• ' : ''}${localize(e as TranslationKeys) || e}\n`)
++        .map((e, i) => `${i > 0 ? '• ' : ''}${localizeError(e)}\n`)
+         .join('');
+       showToast({
+         message: errorList,
+@@ -241,7 +248,7 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
+       });
+     } else if (errors.length === 1) {
+       // TODO: this should not be a dynamic localize input!!
+-      const message = localize(errors[0] as TranslationKeys) || errors[0];
++      const message = localizeError(errors[0]);
+       showToast({
+         message,
+         status: 'error',
+@@ -250,7 +257,7 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
+     }
+ 
+     setErrors([]);
+-  }, [errors, showToast, localize]);
++  }, [errors, showToast, localizeError]);
+ 
+   const debouncedDisplayToast = debounce(displayToast, 250);
+ 
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index 7772dd1..2feebe3 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -1143,7 +1143,7 @@
+   "com_ui_artifacts_options": "Artifacts Options",
+   "com_ui_artifacts_subtext": "Lets the agent render React, HTML, SVG, Markdown, and Mermaid as interactive artifacts in a side panel instead of plain code blocks.",
+   "com_ui_ascending": "Asc",
+-  "com_ui_ask_answer_error": "Your answer couldn't be sent. Try again.",
++  "com_ui_ask_answer_error": "Your answer couldn't be sent. If it contains sensitive data, such as an ID or IBAN number, remove it, then try again.",
+   "com_ui_ask_move_to_chat": "Answer later in the chat",
+   "com_ui_ask_move_to_composer": "Answer from the message box",
+   "com_ui_ask_type_below": "Or type your answer below",
+@@ -1767,6 +1767,24 @@
+   "com_efaiw_signin_title": "Sign in to Baseer",
+   "com_efaiw_message_prefix_user": "Prompt",
+   "com_efaiw_remove_added_model": "Remove the added model",
++  "com_efaiw_ask_skipped": "You skipped this question",
++  "com_efaiw_content_filter_block": "This was not sent: it looks like it contains a {{0}}. Remove it and send again.",
++  "com_efaiw_content_filter_block_generic": "This was not sent: it looks like it contains sensitive data. Remove it and send again.",
++  "com_efaiw_file_size_limit": "This file is larger than the {{0}} MB limit.",
++  "com_efaiw_file_total_size_limit": "These files are larger than the {{0}} MB limit for one message.",
++  "com_efaiw_file_count_limit": "You can attach up to {{0}} files to one message.",
++  "com_efaiw_file_type_unknown": "The type of {{0}} could not be identified.",
++  "com_efaiw_file_type_unsupported": "This file type is not supported ({{0}}).",
++  "com_efaiw_filetype_document": "Document",
++  "com_efaiw_filetype_spreadsheet": "Spreadsheet",
++  "com_efaiw_filetype_presentation": "Presentation",
++  "com_efaiw_filetype_code": "Code",
++  "com_efaiw_filetype_audio": "Audio",
++  "com_efaiw_filetype_video": "Video",
++  "com_efaiw_filetype_image": "Image",
++  "com_efaiw_filetype_text": "Text",
++  "com_efaiw_filetype_file": "File",
++  "com_efaiw_file_no_text": "No text could be read from this file. It may be a scanned image: upload a version with selectable text.",
+   "com_ui_low": "Low",
+   "com_ui_make_production": "Make Production",
+   "com_ui_manage": "Manage",
+diff --git a/client/src/utils/efaiwFiles.ts b/client/src/utils/efaiwFiles.ts
+new file mode 100644
+index 0000000..a079fbf
+--- /dev/null
++++ b/client/src/utils/efaiwFiles.ts
+@@ -0,0 +1,56 @@
++import type { TranslationKeys } from '~/hooks/useLocalize';
++
++type Localize = (key: TranslationKeys, values?: Record<string, string>) => string;
++
++/**
++ * EF (#129): file texts that upstream writes as fixed English, mapped to translated ones. Uploads
++ * became an employee feature with #129, and these showed in English in the Arabic UI.
++ *
++ * Upload errors: sentences from the browser (utils/files.ts) or the server's upload response.
++ */
++const FILE_ERRORS: Array<[RegExp, TranslationKeys]> = [
++  [/^File size limit exceeded: (\S+) MB$/, 'com_efaiw_file_size_limit'],
++  [/^Total file size limit exceeded: (\S+) MB$/, 'com_efaiw_file_total_size_limit'],
++  [/^File limit reached: (\d+) files$/, 'com_efaiw_file_count_limit'],
++  [/^Unable to determine file type for: (.+)$/, 'com_efaiw_file_type_unknown'],
++  [/^Unsupported file type: (.*)$/, 'com_efaiw_file_type_unsupported'],
++  [/^No text found in document$/, 'com_efaiw_file_no_text'],
++  [
++    /^Submitted content contains an? (.+?)\. Remove it and try again\.$/,
++    'com_efaiw_content_filter_block',
++  ],
++  [
++    /^Submitted content was blocked by content policy\.$/,
++    'com_efaiw_content_filter_block_generic',
++  ],
++];
++
++/** The translated sentence for a known upstream upload error, or undefined. */
++export function localizeFileError(message: string, localize: Localize): string | undefined {
++  for (const [pattern, key] of FILE_ERRORS) {
++    const match = pattern.exec(message);
++    if (match != null) {
++      return localize(key, match[1] != null ? { 0: match[1] } : undefined);
++    }
++  }
++  return undefined;
++}
++
++/** File kinds under a file's name: the chip's `fileTypes[...].title` and the preview's type. */
++const FILE_TYPE_TITLES: Record<string, TranslationKeys> = {
++  Document: 'com_efaiw_filetype_document',
++  Spreadsheet: 'com_efaiw_filetype_spreadsheet',
++  Presentation: 'com_efaiw_filetype_presentation',
++  Code: 'com_efaiw_filetype_code',
++  Audio: 'com_efaiw_filetype_audio',
++  Video: 'com_efaiw_filetype_video',
++  Image: 'com_efaiw_filetype_image',
++  Text: 'com_efaiw_filetype_text',
++  File: 'com_efaiw_filetype_file',
++};
++
++/** The translated kind for an upstream file-type title; other titles (PDF, CSV, …) unchanged. */
++export function localizeFileTypeTitle(title: string, localize: Localize): string {
++  const key = FILE_TYPE_TITLES[title];
++  return key != null ? localize(key) : title;
++}

@@ -1,0 +1,904 @@
+EF AI Workspace (#152): the Environment Fund typeface on every screen and preview, the logo on the PDF and the shared
+chat, and «بصير» in every tab title. Owner request 2026-10-23: "apply the EF font to everything: the platform, the
+outputs and the chats".
+
+- Artifact previews (utils/efFonts.ts): Sandpack runs every preview in a cross-origin iframe that cannot see the app's
+  @font-face rules, so Markdown documents, HTML, React, SVG, code and office previews fell back to Tahoma or the system
+  face. The app serves the original font files at /assets/fonts/ with Access-Control-Allow-Origin: *, so each preview
+  now gets @font-face rules for "Aktiv Grotesk" and "EF Aktiv Grotesk" by absolute URL, a zero-specificity body default
+  and, when the page names no font itself, Tailwind's sans stack. Injected after the editor text is merged
+  (ArtifactPreview.tsx), so edits keep it. React previews get it from their own /styles.css (sharedFiles): the hosted
+  bundler serves its own page and ignores /public/index.html. Fonts the model sets still win.
+- Mermaid (MermaidSvg.tsx): diagrams were <img src=blob:>, and an image cannot use web fonts, so labels were measured
+  in Aktiv Grotesk and drawn in a fallback face. They are now drawn inline in a shadow root, which keeps each diagram's
+  style and ids to itself. The SVG is sanitized again for inline use (external links, image sources, @import, external
+  url() and escaped CSS are dropped), a diagram's own %%{init}%% can no longer change the theme, CSS or fonts, and
+  rendering waits for the font. SVG and PNG exports embed the font (Regular, plus Bold when used).
+- Code: Arabic in code falls back to the brand face (Tailwind mono stack, print view). Avatars, which are images, use
+  Tahoma, the guide's secondary face, instead of Verdana.
+- Print/PDF: the blue horizontal logo at the top right (guide p17), symbol at the 1.5 cm print minimum (p9); the print
+  dialog waits for the fonts and the logo (at most 3 s) instead of a fixed 400 ms.
+- Shared chat: the logo above the title (40 px, the digital minimum). The service worker precaches the logo for the
+  offline page.
+- Tab titles: the Marketplace, Insights and fallback titles use the platform's name, not "LibreChat".
+- Tests: the document-title tests expect the platform's name, and the Mermaid ones the EF light theme of 0023.
+
+diff --git a/client/src/components/Agents/Marketplace.tsx b/client/src/components/Agents/Marketplace.tsx
+index 1e534db..8d19211 100644
+--- a/client/src/components/Agents/Marketplace.tsx
++++ b/client/src/components/Agents/Marketplace.tsx
+@@ -11,7 +11,7 @@ import { SidePanelGroup } from '~/components/SidePanel';
+ import CategoryTabs from './CategoryTabs';
+ import SearchBar from './SearchBar';
+ import AgentGrid from './AgentGrid';
+-import { cn } from '~/utils';
++import { cn, DEFAULT_APP_TITLE } from '~/utils';
+ 
+ interface AgentMarketplaceProps {
+   className?: string;
+@@ -47,7 +47,7 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
+   const scrollContainerRef = useRef<HTMLDivElement>(null);
+ 
+   // Set page title
+-  useDocumentTitle(`${localize('com_agents_marketplace')} | LibreChat`);
++  useDocumentTitle(`${localize('com_agents_marketplace')} | ${DEFAULT_APP_TITLE}`);
+ 
+   // Ensure endpoints config is loaded first (required for agent queries)
+   useGetEndpointsQuery();
+diff --git a/client/src/components/Artifacts/ArtifactPreview.tsx b/client/src/components/Artifacts/ArtifactPreview.tsx
+index c49c227..d16074c 100644
+--- a/client/src/components/Artifacts/ArtifactPreview.tsx
++++ b/client/src/components/Artifacts/ArtifactPreview.tsx
+@@ -7,6 +7,7 @@ import type {
+ import type { SandpackStartupConfig } from '~/utils/artifacts';
+ import type { ArtifactFiles } from '~/common';
+ import { sharedFiles, buildSandpackOptions } from '~/utils/artifacts';
++import { withEfFonts } from '~/utils/efFonts';
+ 
+ export const ArtifactPreview = memo(function ({
+   files,
+@@ -30,14 +31,22 @@ export const ArtifactPreview = memo(function ({
+       return files;
+     }
+     const code = currentCode ?? '';
+-    if (!code) {
+-      return files;
++    const merged: Record<string, string | { code: string } | undefined> = code
++      ? { ...files, [fileKey]: { code } }
++      : { ...files };
++    /* EF (#152): the brand font in every static preview (HTML, SVG, Markdown, code, office), edits included. */
++    if (template === 'static') {
++      for (const key of ['index.html', '/index.html']) {
++        const entry = merged[key];
++        if (typeof entry === 'string') {
++          merged[key] = withEfFonts(entry);
++        } else if (entry != null) {
++          merged[key] = { ...entry, code: withEfFonts(entry.code) };
++        }
++      }
+     }
+-    return {
+-      ...files,
+-      [fileKey]: { code },
+-    };
+-  }, [currentCode, files, fileKey]);
++    return merged as ArtifactFiles;
++  }, [currentCode, files, fileKey, template]);
+ 
+   const options: SandpackProviderProps['options'] = useMemo(
+     () => buildSandpackOptions(template, startupConfig),
+diff --git a/client/src/components/Insights/InsightsView.tsx b/client/src/components/Insights/InsightsView.tsx
+index df42fe8..3179170 100644
+--- a/client/src/components/Insights/InsightsView.tsx
++++ b/client/src/components/Insights/InsightsView.tsx
+@@ -29,7 +29,7 @@ import { useAuthContext, useDocumentTitle, useLocalize } from '~/hooks';
+ import OpenSidebar from '~/components/Chat/Menus/OpenSidebar';
+ import { LocalizedDateRangePicker } from '~/components/ui';
+ import { getRollingDateRange } from './dateRange';
+-import { cn } from '~/utils';
++import { cn, DEFAULT_APP_TITLE } from '~/utils';
+ 
+ type ShortcutRange = Exclude<InsightsRange, 'custom'>;
+ type Localize = ReturnType<typeof useLocalize>;
+@@ -624,7 +624,7 @@ export default function InsightsView() {
+   );
+   const displayedAgentIds = pendingAgentIds ?? effectiveAgentIds;
+ 
+-  useDocumentTitle(`${localize('com_insights_title')} | LibreChat`);
++  useDocumentTitle(`${localize('com_insights_title')} | ${DEFAULT_APP_TITLE}`);
+ 
+   useEffect(
+     () => () => {
+diff --git a/client/src/components/Messages/Content/Mermaid/Export.tsx b/client/src/components/Messages/Content/Mermaid/Export.tsx
+index 171ca0b..095dc7e 100644
+--- a/client/src/components/Messages/Content/Mermaid/Export.tsx
++++ b/client/src/components/Messages/Content/Mermaid/Export.tsx
+@@ -7,6 +7,7 @@ import type { MermaidDimensions } from '~/utils/diagram/export';
+ import type { TranslationKeys } from '~/hooks/useLocalize';
+ import type { MenuItemProps } from '~/common';
+ import { downloadMermaidPng, downloadMermaidSvg } from '~/utils/diagram/export';
++import { embedEfFontsInSvg } from '~/utils/efFonts';
+ import { useLocalize } from '~/hooks';
+ import cn from '~/utils/cn';
+ 
+@@ -163,14 +164,19 @@ const MermaidExport = memo(function MermaidExport({
+     if (svg == null) {
+       return;
+     }
+-    runExport('svg', () => downloadMermaidSvg(svg, filename, surfaceBackground()));
++    /* EF (#152): the file carries the brand font, which it cannot reach outside the app. */
++    runExport('svg', async () =>
++      downloadMermaidSvg(await embedEfFontsInSvg(svg), filename, surfaceBackground()),
++    );
+   }, [filename, runExport, svg]);
+ 
+   const handlePngExport = useCallback(() => {
+     if (svg == null) {
+       return;
+     }
+-    runExport('png', () => downloadMermaidPng(svg, filename, dimensions, surfaceBackground()));
++    runExport('png', async () =>
++      downloadMermaidPng(await embedEfFontsInSvg(svg), filename, dimensions, surfaceBackground()),
++    );
+   }, [dimensions, filename, runExport, svg]);
+ 
+   const handleSourceExport = useCallback(
+diff --git a/client/src/components/Messages/Content/Mermaid/Mermaid.tsx b/client/src/components/Messages/Content/Mermaid/Mermaid.tsx
+index 3e98d5e..a96e6db 100644
+--- a/client/src/components/Messages/Content/Mermaid/Mermaid.tsx
++++ b/client/src/components/Messages/Content/Mermaid/Mermaid.tsx
+@@ -12,6 +12,7 @@ import { useMessageContext } from '~/Providers';
+ import useMermaidZoom from './useMermaidZoom';
+ import MermaidDialog from './MermaidDialog';
+ import MermaidHeader from './MermaidHeader';
++import MermaidSvg from './MermaidSvg';
+ import ZoomControls from './ZoomControls';
+ import { isArtifactRoute } from '~/utils';
+ import { useLocalize } from '~/hooks';
+@@ -372,12 +373,11 @@ export const MermaidRenderer = memo(function MermaidRenderer({
+                   transition: isPanning ? 'none' : 'transform 0.1s ease-out',
+                 }}
+               >
+-                <img
+-                  src={blobUrl}
+-                  alt={localize('com_ui_mermaid_diagram')}
++                <MermaidSvg
++                  svg={processedSvg ?? ''}
++                  label={localize('com_ui_mermaid_diagram')}
+                   className="select-none opacity-70"
+                   style={diagramStyle}
+-                  draggable={false}
+                 />
+               </div>
+               <ZoomControls
+@@ -542,12 +542,11 @@ export const MermaidRenderer = memo(function MermaidRenderer({
+               transition: isPanning ? 'none' : 'transform 0.1s ease-out',
+             }}
+           >
+-            <img
+-              src={blobUrl}
+-              alt={localize('com_ui_mermaid_diagram')}
++            <MermaidSvg
++              svg={processedSvg ?? ''}
++              label={localize('com_ui_mermaid_diagram')}
+               className="select-none"
+               style={diagramStyle}
+-              draggable={false}
+             />
+           </div>
+           <ZoomControls
+diff --git a/client/src/components/Messages/Content/Mermaid/MermaidDialog.tsx b/client/src/components/Messages/Content/Mermaid/MermaidDialog.tsx
+index 75457dc..c61567b 100644
+--- a/client/src/components/Messages/Content/Mermaid/MermaidDialog.tsx
++++ b/client/src/components/Messages/Content/Mermaid/MermaidDialog.tsx
+@@ -13,6 +13,7 @@ import {
+ import type { MermaidDimensions } from '~/utils/diagram/export';
+ import useMermaidZoom from './useMermaidZoom';
+ import ZoomControls from './ZoomControls';
++import MermaidSvg from './MermaidSvg';
+ import { useLocalize } from '~/hooks';
+ import MermaidExport from './Export';
+ import cn from '~/utils/cn';
+@@ -33,7 +34,6 @@ const MermaidDialog: React.FC<MermaidDialogProps> = memo(
+     open,
+     onOpenChange,
+     triggerRef,
+-    blobUrl,
+     codeContent,
+     exportSvg,
+     exportDimensions,
+@@ -148,15 +148,14 @@ const MermaidDialog: React.FC<MermaidDialogProps> = memo(
+                 transition: isPanning ? 'none' : 'transform 0.1s ease-out',
+               }}
+             >
+-              <img
+-                src={blobUrl}
+-                alt={localize('com_ui_mermaid_diagram')}
+-                className="max-h-full max-w-full select-none object-contain"
++              <MermaidSvg
++                svg={exportSvg ?? ''}
++                label={localize('com_ui_mermaid_diagram')}
++                className="h-full w-full select-none"
+                 style={{
+                   transform: `scale(${zoom})`,
+                   transformOrigin: 'center center',
+                 }}
+-                draggable={false}
+               />
+             </div>
+             <ZoomControls
+diff --git a/client/src/components/Messages/Content/Mermaid/MermaidSvg.tsx b/client/src/components/Messages/Content/Mermaid/MermaidSvg.tsx
+new file mode 100644
+index 0000000..038f1e5
+--- /dev/null
++++ b/client/src/components/Messages/Content/Mermaid/MermaidSvg.tsx
+@@ -0,0 +1,43 @@
++import React, { memo, useLayoutEffect, useRef } from 'react';
++
++/**
++ * EF (#152): a rendered diagram drawn inline instead of as `<img src=blob:…>`. An image cannot use the page's web
++ * fonts, so Mermaid measured labels in Aktiv Grotesk and drew them in a fallback face, and they could overflow. A
++ * shadow root keeps each diagram's `<style>` and element ids to itself while the app's `@font-face` rules still apply.
++ * The markup is the sanitized output of `sanitizeMermaidSvg` (no scripts, no external URLs), parsed as XML and
++ * imported as nodes, never assigned as HTML.
++ */
++const HOST_CSS = ':host{display:block}svg{display:block;width:100%;height:100%}';
++
++interface MermaidSvgProps {
++  svg: string;
++  label: string;
++  className?: string;
++  style?: React.CSSProperties;
++}
++
++const MermaidSvg = memo(({ svg, label, className, style }: MermaidSvgProps) => {
++  const hostRef = useRef<HTMLDivElement>(null);
++
++  useLayoutEffect(() => {
++    const host = hostRef.current;
++    if (!host) {
++      return;
++    }
++    const root = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
++    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
++    const css = document.createElement('style');
++    css.textContent = HOST_CSS;
++    if (doc.querySelector('parsererror') || doc.documentElement.localName !== 'svg') {
++      root.replaceChildren(css);
++      return;
++    }
++    root.replaceChildren(css, document.importNode(doc.documentElement, true));
++  }, [svg]);
++
++  return <div ref={hostRef} role="img" aria-label={label} className={className} style={style} />;
++});
++
++MermaidSvg.displayName = 'MermaidSvg';
++
++export default MermaidSvg;
+diff --git a/client/src/components/Share/ShareView.tsx b/client/src/components/Share/ShareView.tsx
+index 1a316b9..15bcb40 100644
+--- a/client/src/components/Share/ShareView.tsx
++++ b/client/src/components/Share/ShareView.tsx
+@@ -186,6 +186,7 @@ function SharedView() {
+       <>
+         <ShareHeader
+           title={data.title}
++          logoAlt={localize('com_ui_logo', { 0: localize('com_efaiw_ef_name') })}
+           formattedDate={formattedDate}
+           theme={theme}
+           langcode={langcode}
+@@ -325,10 +326,13 @@ interface ShareHeaderProps {
+   onContinue: () => void;
+   onThemeChange: (value: string) => void;
+   onLangChange: (value: string) => void;
++  /** EF (#152): the logo's accessible name; the logo shows only when it is given. */
++  logoAlt?: string;
+ }
+ 
+ export function ShareHeader({
+   title,
++  logoAlt,
+   formattedDate,
+   theme,
+   langcode,
+@@ -357,6 +361,10 @@ export function ShareHeader({
+       <div className="relative mx-auto flex w-full max-w-7xl flex-col gap-3 rounded-2xl border border-border-light bg-surface-secondary px-4 py-4 shadow-xl md:gap-4 md:rounded-3xl md:px-6 md:py-5">
+         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+           <div className="min-w-0 flex-1 space-y-1.5 md:space-y-2">
++            {/* EF (#152): the logo on a shared chat too; 40 px keeps the symbol at its digital minimum (guide p9). */}
++            {logoAlt != null && (
++              <img src="assets/logo.svg" className="mb-2 h-10 w-auto" alt={logoAlt} />
++            )}
+             <ShareTitle title={title} />
+             {formattedDate && (
+               <div className="flex items-center gap-2 text-sm text-text-secondary">
+diff --git a/client/src/hooks/Mermaid/useMermaid.ts b/client/src/hooks/Mermaid/useMermaid.ts
+index 2aee7e7..c4a65ec 100644
+--- a/client/src/hooks/Mermaid/useMermaid.ts
++++ b/client/src/hooks/Mermaid/useMermaid.ts
+@@ -9,10 +9,28 @@ import {
+   inlineFlowchartConfig,
+   sanitizeMermaidSvg,
+ } from '~/utils/mermaid';
++import { waitForEfFonts } from '~/utils/efFonts';
+ 
+ // Constants
+ const MD5_LENGTH_THRESHOLD = 10_000;
+ const DEFAULT_ID_PREFIX = 'mermaid-diagram';
++/** EF (#152): keys a diagram's own `%%{init}%%` cannot change. Mermaid's defaults, plus the theme, CSS and fonts: the
++ *  diagram is drawn inline in the page, and the platform owns its look (EF palette and Aktiv Grotesk). */
++const SECURE_KEYS = [
++  'secure',
++  'securityLevel',
++  'startOnLoad',
++  'maxTextSize',
++  'suppressErrorRendering',
++  'maxEdges',
++  'theme',
++  'themeVariables',
++  'themeCSS',
++  'fontFamily',
++  'altFontFamily',
++  'htmlLabels',
++  'darkMode',
++];
+ 
+ // Lazy load mermaid library (~2MB)
+ let mermaidPromise: Promise<typeof import('mermaid').default> | null = null;
+@@ -115,6 +133,7 @@ export const useMermaid = ({
+       ...(themeVariables ? { theme: 'base' as const, themeVariables } : {}),
+       // Security hardening: MUST come after ...config spread to prevent override
+       securityLevel: 'strict',
++      secure: SECURE_KEYS,
+       maxTextSize: config?.maxTextSize ?? 50000,
+       maxEdges: config?.maxEdges ?? 500,
+     };
+@@ -152,6 +171,8 @@ export const useMermaid = ({
+ 
+       // Initialize with config
+       mermaidInstance.initialize(mermaidConfig);
++      /* EF (#152): measure labels in the brand font the inline diagram is drawn with. */
++      await waitForEfFonts();
+ 
+       // Render to SVG
+       const { svg } = await mermaidInstance.render(diagramId, content);
+diff --git a/client/src/routes/Layouts/Startup.tsx b/client/src/routes/Layouts/Startup.tsx
+index b2bf652..b601f59 100644
+--- a/client/src/routes/Layouts/Startup.tsx
++++ b/client/src/routes/Layouts/Startup.tsx
+@@ -1,7 +1,7 @@
+ import { useEffect, useState } from 'react';
+ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+ import type { TStartupConfig } from 'librechat-data-provider';
+-import { REDIRECT_PARAM, hasStoredRedirect } from '~/utils';
++import { REDIRECT_PARAM, DEFAULT_APP_TITLE, hasStoredRedirect } from '~/utils';
+ import { TranslationKeys, useLocalize } from '~/hooks';
+ import { useGetStartupConfig } from '~/data-provider';
+ import AuthLayout from '~/components/Auth/AuthLayout';
+@@ -43,7 +43,7 @@ export default function StartupLayout({ isAuthenticated }: { isAuthenticated?: b
+   }, [isAuthenticated, navigate, data]);
+ 
+   useEffect(() => {
+-    document.title = startupConfig?.appTitle || 'LibreChat';
++    document.title = startupConfig?.appTitle || DEFAULT_APP_TITLE;
+   }, [startupConfig?.appTitle]);
+ 
+   useEffect(() => {
+diff --git a/client/src/utils/__tests__/documentTitle.test.ts b/client/src/utils/__tests__/documentTitle.test.ts
+index 3cc0eac..78cf21a 100644
+--- a/client/src/utils/__tests__/documentTitle.test.ts
++++ b/client/src/utils/__tests__/documentTitle.test.ts
+@@ -4,6 +4,7 @@ import {
+   setDocumentTitle,
+   CHAT_TITLE_IN_TAB_KEY,
+   isChatTitleInTabEnabled,
++  DEFAULT_APP_TITLE,
+ } from '../documentTitle';
+ 
+ describe('document title', () => {
+@@ -50,7 +51,7 @@ describe('document title', () => {
+ 
+     setDocumentTitle('', true);
+ 
+-    expect(document.title).toBe('LibreChat');
++    expect(document.title).toBe(DEFAULT_APP_TITLE);
+   });
+ 
+   it('uses the default app title when the stored app title is empty', () => {
+@@ -58,7 +59,7 @@ describe('document title', () => {
+ 
+     setDocumentTitle('', true);
+ 
+-    expect(document.title).toBe('LibreChat');
++    expect(document.title).toBe(DEFAULT_APP_TITLE);
+   });
+ 
+   it('uses the default app title when storage is unavailable', () => {
+@@ -68,7 +69,7 @@ describe('document title', () => {
+ 
+     setDocumentTitle('', true);
+ 
+-    expect(document.title).toBe('LibreChat');
++    expect(document.title).toBe(DEFAULT_APP_TITLE);
+   });
+ 
+   it('defaults to enabled when the stored setting is malformed', () => {
+diff --git a/client/src/utils/__tests__/mermaid.test.ts b/client/src/utils/__tests__/mermaid.test.ts
+index 0a54a6c..67db79d 100644
+--- a/client/src/utils/__tests__/mermaid.test.ts
++++ b/client/src/utils/__tests__/mermaid.test.ts
+@@ -43,9 +43,11 @@ describe('mermaid config', () => {
+       expect(files['mermaid.css']).toContain('#212121');
+     });
+ 
+-    it('produces neutral theme files when isDarkMode is false', () => {
++    /* EF (#146): the light appearance draws every diagram in the Environment Fund palette (patch 0023). */
++    it('produces EF-themed files when isDarkMode is false', () => {
+       const files = getMermaidFiles(content, false);
+-      expect(files['/components/ui/MermaidDiagram.tsx']).toContain('theme: "neutral"');
++      expect(files['/components/ui/MermaidDiagram.tsx']).toContain('theme: "base"');
++      expect(files['/components/ui/MermaidDiagram.tsx']).toContain('#2C3A82');
+       expect(files['mermaid.css']).toContain('#FFFFFF');
+     });
+ 
+@@ -73,11 +75,11 @@ describe('mermaid config', () => {
+       expect(files['/components/ui/MermaidDiagram.tsx']).toContain('"htmlLabels": true');
+     });
+ 
+-    it('does not inject custom themeVariables into generated component', () => {
++    it('injects themeVariables only for the EF light theme', () => {
+       const darkFiles = getMermaidFiles(content, true);
+       const lightFiles = getMermaidFiles(content, false);
+       expect(darkFiles['/components/ui/MermaidDiagram.tsx']).not.toContain('themeVariables');
+-      expect(lightFiles['/components/ui/MermaidDiagram.tsx']).not.toContain('themeVariables');
++      expect(lightFiles['/components/ui/MermaidDiagram.tsx']).toContain('themeVariables');
+     });
+ 
+     it('handles empty content', () => {
+diff --git a/client/src/utils/artifacts.ts b/client/src/utils/artifacts.ts
+index e192e93..ac90b26 100644
+--- a/client/src/utils/artifacts.ts
++++ b/client/src/utils/artifacts.ts
+@@ -18,6 +18,7 @@ import type { TranslationKeys } from '~/hooks/useLocalize';
+ import type { Artifact } from '~/common';
+ import { MERMAID_ARTIFACT_TYPE } from '~/common/artifacts';
+ import { getCodeBlockFilename } from './downloadFile';
++import { getEfFontHead, getEfReactStyles } from './efFonts';
+ 
+ const artifactFilename = {
+   'application/vnd.react': 'App.tsx',
+@@ -1279,6 +1280,8 @@ export const sharedFiles = {
+   '/components/ui/toggle.tsx': shadcnComponents.toggle,
+   '/components/ui/tooltip.tsx': shadcnComponents.tooltip,
+   '/components/ui/use-toast.tsx': shadcnComponents.useToast,
++  /* EF (#152): the brand font for React previews; see getEfReactStyles. */
++  '/styles.css': getEfReactStyles(),
+   '/public/index.html': dedent`
+     <!DOCTYPE html>
+     <html lang="en">
+@@ -1287,6 +1290,7 @@ export const sharedFiles = {
+         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+         <title>Document</title>
+         <script src="https://cdn.tailwindcss.com/3.4.17"></script>
++        ${getEfFontHead()}
+         <style>
+           ::-webkit-scrollbar{height:.1em;width:.5rem}
+           ::-webkit-scrollbar-thumb{background-color:rgba(0,0,0,.1);border-radius:9999px}
+diff --git a/client/src/utils/diagram/export.ts b/client/src/utils/diagram/export.ts
+index e27aaf4..f0cfcd9 100644
+--- a/client/src/utils/diagram/export.ts
++++ b/client/src/utils/diagram/export.ts
+@@ -219,6 +219,12 @@ export async function downloadMermaidPng(
+ ): Promise<void> {
+   const sourceUrl = await blobDataUrl(svgBlob(svg));
+   const image = await loadSvgImage(sourceUrl);
++  /* EF (#152): an export carries its fonts as data URIs; let them decode before the canvas draws. */
++  try {
++    await image.decode?.();
++  } catch {
++    /* Drawn as loaded. */
++  }
+   const sourceWidth = dimensions?.width || image.naturalWidth || image.width;
+   const sourceHeight = dimensions?.height || image.naturalHeight || image.height;
+   const canvasDimensions = resolveCanvasDimensions(sourceWidth, sourceHeight);
+diff --git a/client/src/utils/documentTitle.ts b/client/src/utils/documentTitle.ts
+index 322ade2..cc58a9c 100644
+--- a/client/src/utils/documentTitle.ts
++++ b/client/src/utils/documentTitle.ts
+@@ -1,7 +1,8 @@
+ import { LocalStorageKeys } from 'librechat-data-provider';
+ 
+ export const CHAT_TITLE_IN_TAB_KEY = 'chatTitleInTab';
+-export const DEFAULT_APP_TITLE = 'LibreChat';
++/** EF (#152): the platform's name when no app title is configured (APP_TITLE in librechat.env and railway.ts). */
++export const DEFAULT_APP_TITLE = 'بصير | صندوق البيئة';
+ 
+ export const hasRealTitle = (title?: string | null): title is string =>
+   title != null && title !== '' && title !== 'New Chat';
+diff --git a/client/src/utils/efFonts.ts b/client/src/utils/efFonts.ts
+new file mode 100644
+index 0000000..ba297b9
+--- /dev/null
++++ b/client/src/utils/efFonts.ts
+@@ -0,0 +1,183 @@
++/**
++ * EF (#152): the Environment Fund typeface inside artifact previews. Sandpack previews run in a cross-origin iframe
++ * that cannot see the app's `@font-face` rules, so "Aktiv Grotesk" only showed where it was installed. The app serves
++ * the original font files at `/assets/fonts/` with `Access-Control-Allow-Origin: *`, so the preview loads them by
++ * absolute URL. Fonts the model sets itself still win: the default sits on `body` at zero specificity, and Tailwind's
++ * sans stack is replaced only when the page's own `tailwind.config` names no font family.
++ */
++const EF_FONT_FILES: ReadonlyArray<readonly [number, string]> = [
++  [400, 'aktiv-grotesk-regular.otf'],
++  [600, 'aktiv-grotesk-semibold.otf'],
++  [700, 'aktiv-grotesk-bold.otf'],
++];
++
++/** The name the brand Skill tells the model to write, and the app's own alias. */
++const EF_FONT_FAMILIES = ['Aktiv Grotesk', 'EF Aktiv Grotesk'];
++
++export const EF_FONT_STACK = '"Aktiv Grotesk", Tahoma, Arial, sans-serif';
++
++const MARKER = 'data-efaiw-fonts';
++
++export function efFontUrl(file: string): string {
++  return `${window.location.origin}/assets/fonts/${file}`;
++}
++
++let fontFaces: string | null = null;
++let fontHead: string | null = null;
++
++/** The `@font-face` rules, built once from the app's origin. */
++function efFontFaces(): string {
++  fontFaces ??= EF_FONT_FAMILIES.flatMap((family) =>
++    EF_FONT_FILES.map(
++      ([weight, file]) =>
++        `@font-face{font-family:"${family}";font-style:normal;font-weight:${weight};font-display:swap;` +
++        `src:url("${efFontUrl(file)}") format("opentype")}`,
++    ),
++  ).join('');
++  return fontFaces;
++}
++
++/** Built once: the same text on every render, so Sandpack never sees a changed file and does not re-bundle. */
++export function getEfFontHead(): string {
++  if (fontHead != null) {
++    return fontHead;
++  }
++  const faces = efFontFaces();
++  const sans = JSON.stringify(['"Aktiv Grotesk"', 'Tahoma', 'Arial', 'sans-serif']);
++  /* Tailwind's CDN wraps `window.tailwind` in a Proxy whose `config` setter rebuilds the CSS. A page can load the CDN
++   * more than once (the React template has its own script and Sandpack injects another), and each load replaces
++   * `window.tailwind` with a fresh config, so the stack is applied to every instance, and again once the page and any
++   * config of its own have loaded. */
++  const tailwind =
++    `(function(){var sans=${sans};function apply(t){try{var c=t.config||{},th=c.theme||{},ex=th.extend||{};` +
++    `if(th.fontFamily||(ex.fontFamily&&ex.fontFamily.sans))return;t.config=Object.assign({},c,{theme:` +
++    `Object.assign({},th,{extend:Object.assign({},ex,{fontFamily:Object.assign({},ex.fontFamily,{sans:sans})})})});` +
++    `}catch(e){}}var current=window.tailwind;try{Object.defineProperty(window,'tailwind',{configurable:true,` +
++    `get:function(){return current},set:function(v){current=v;if(v)setTimeout(function(){apply(v)},0)}})}catch(e){}` +
++    `if(current)apply(current);document.addEventListener('DOMContentLoaded',function(){if(current)apply(current)})})();`;
++  fontHead =
++    `<style ${MARKER}>${faces}:where(body){font-family:${EF_FONT_STACK}}</style>` +
++    `<script ${MARKER}>${tailwind}</script>`;
++  return fontHead;
++}
++
++/**
++ * The React template's stylesheet (`/styles.css`, which its entry imports). The hosted bundler serves its own page and
++ * ignores `/public/index.html`, so the font arrives here. Sandpack's defaults stay, with the brand stack in place of
++ * `sans-serif`; Tailwind's `font-sans` follows it, important because the CDN's utility can land later in the page.
++ */
++export function getEfReactStyles(): string {
++  return `${efFontFaces()}
++body {
++  font-family: ${EF_FONT_STACK};
++  -webkit-font-smoothing: auto;
++  -moz-font-smoothing: auto;
++  -moz-osx-font-smoothing: grayscale;
++  font-smoothing: auto;
++  text-rendering: optimizeLegibility;
++  font-smooth: always;
++  -webkit-tap-highlight-color: transparent;
++  -webkit-touch-callout: none;
++}
++
++.font-sans {
++  font-family: ${EF_FONT_STACK} !important;
++}
++
++h1 {
++  font-size: 1.5rem;
++}
++`;
++}
++
++/** Adds the font block once, at the start of `<head>` (or where a head would begin). */
++export function withEfFonts(html: string): string {
++  if (html.includes(MARKER)) {
++    return html;
++  }
++  const block = getEfFontHead();
++  const head = /<head\b[^>]*>/i.exec(html);
++  if (head) {
++    const at = head.index + head[0].length;
++    return html.slice(0, at) + block + html.slice(at);
++  }
++  const root = /<html\b[^>]*>/i.exec(html) ?? /^\s*<!doctype[^>]*>/i.exec(html);
++  if (root) {
++    const at = root.index + root[0].length;
++    return `${html.slice(0, at)}<head>${block}</head>${html.slice(at)}`;
++  }
++  return block + html;
++}
++
++/** Resolves once the page has the brand font (or after `timeout`), so Mermaid measures text in the face it draws. */
++export function waitForEfFonts(timeout = 1500): Promise<void> {
++  if (typeof document === 'undefined' || document.fonts?.load == null) {
++    return Promise.resolve();
++  }
++  const loads = Promise.all(
++    EF_FONT_FILES.map(([weight]) => document.fonts.load(`${weight} 16px "EF Aktiv Grotesk"`)),
++  ).then(
++    () => undefined,
++    () => undefined,
++  );
++  return Promise.race([loads, new Promise<void>((resolve) => setTimeout(resolve, timeout))]);
++}
++
++const fontDataUrls = new Map<string, Promise<string>>();
++
++function fontDataUrl(file: string): Promise<string> {
++  let url = fontDataUrls.get(file);
++  if (url == null) {
++    url = fetch(efFontUrl(file))
++      .then((response) => {
++        if (!response.ok) {
++          throw new Error(`font ${file}: ${response.status}`);
++        }
++        return response.blob();
++      })
++      .then(
++        (blob) =>
++          new Promise<string>((resolve, reject) => {
++            const reader = new FileReader();
++            reader.onload = () => resolve(String(reader.result));
++            reader.onerror = () => reject(reader.error);
++            reader.readAsDataURL(blob);
++          }),
++      );
++    url.catch(() => fontDataUrls.delete(file));
++    fontDataUrls.set(file, url);
++  }
++  return url;
++}
++
++/**
++ * A downloaded SVG (or the PNG drawn from it) cannot reach the app's fonts, so the export carries them as data URIs:
++ * Regular always, Bold only when the diagram sets bold text (each weight adds about 1.4 MB). On any failure the SVG is
++ * returned as it was, in Tahoma.
++ */
++export async function embedEfFontsInSvg(svg: string): Promise<string> {
++  try {
++    const weights: Array<readonly [number, string]> = [EF_FONT_FILES[0]];
++    if (/font-weight\s*[:=]\s*["']?(bold|[6-9]00)/i.test(svg)) {
++      weights.push(EF_FONT_FILES[2]);
++    }
++    const faces = await Promise.all(
++      weights.map(
++        async ([weight, file]) =>
++          `@font-face{font-family:"EF Aktiv Grotesk";font-style:normal;font-weight:${weight}` +
++          `${weight === 700 ? ' 900' : ''};src:url("${await fontDataUrl(file)}") format("opentype")}`,
++      ),
++    );
++    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
++    const root = doc.documentElement;
++    if (doc.querySelector('parsererror') || root.localName !== 'svg') {
++      return svg;
++    }
++    const style = doc.createElementNS('http://www.w3.org/2000/svg', 'style');
++    style.textContent = faces.join('');
++    root.insertBefore(style, root.firstChild);
++    return new XMLSerializer().serializeToString(doc);
++  } catch {
++    return svg;
++  }
++}
+diff --git a/client/src/utils/efaiwPrint.ts b/client/src/utils/efaiwPrint.ts
+index afa0c4e..8b39d91 100644
+--- a/client/src/utils/efaiwPrint.ts
++++ b/client/src/utils/efaiwPrint.ts
+@@ -177,8 +177,8 @@ table { border-collapse: collapse; width: 100%; margin: 0.8em 0 1.2em; font-size
+ th, td { border: 1px solid #c8cacd; padding: 6px 10px; vertical-align: top; }
+ th { background: #eaecf8; font-weight: 600; }
+ tr { break-inside: avoid; }
+-pre { background: #f1eee8; border-radius: 6px; padding: 10px 12px; overflow-x: auto; white-space: pre-wrap; font: 13px/1.5 Consolas, "Courier New", monospace; text-align: left; break-inside: avoid; }
+-code { font-family: Consolas, "Courier New", monospace; font-size: 0.92em; background: #f1eee8; padding: 0 4px; border-radius: 4px; direction: ltr; unicode-bidi: isolate; }
++pre { background: #f1eee8; border-radius: 6px; padding: 10px 12px; overflow-x: auto; white-space: pre-wrap; font: 13px/1.5 Consolas, "Courier New", "EF Aktiv Grotesk", Tahoma, monospace; text-align: left; break-inside: avoid; }
++code { font-family: Consolas, "Courier New", "EF Aktiv Grotesk", Tahoma, monospace; font-size: 0.92em; background: #f1eee8; padding: 0 4px; border-radius: 4px; direction: ltr; unicode-bidi: isolate; }
+ pre code { background: none; padding: 0; }
+ blockquote { margin: 0 0 0.8em; padding-inline-start: 12px; border-inline-start: 3px solid #9ca6e0; color: #373f48; }
+ hr { border: 0; border-top: 1px solid #c8cacd; margin: 1.2em 0; }
+@@ -186,8 +186,41 @@ a { color: #0051b1; }
+ .bar { position: sticky; top: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 10px 20px; background: #eaecf8; border-bottom: 1px solid #c3c9ec; }
+ .bar button { font: inherit; font-size: 15px; padding: 8px 18px; border-radius: 999px; border: 0; background: #2c3a82; color: #fff; cursor: pointer; }
+ @media print { .bar { display: none; } main { padding: 0; } }
++.ef-logo { direction: ltr; text-align: right; margin: 0 0 7.5mm; }
++.ef-logo img { height: 15mm; width: auto; }
+ `;
+ 
++/**
++ * EF (#152): the blue horizontal logo at the top right of the document (guide p17), unaltered, with its symbol at the
++ * print minimum of 1.5 cm (p9) and half that as clear space (p13). The file comes from the app (brand/assets).
++ */
++const logoHeader = (lang: string): string =>
++  `<header class="ef-logo"><img src="${window.location.origin}/assets/logo.svg" alt="${
++    lang === 'ar' ? 'صندوق البيئة' : 'Environment Fund'
++  }"></header>`;
++
++/** The fonts and the logo, or three seconds, whichever comes first: an uncached first print would use Tahoma. */
++const whenPrintReady = (doc: Document): Promise<unknown> => {
++  const fonts = doc.fonts
++    ? Promise.all(
++        ['400', '600', '700'].map((weight) => doc.fonts.load(`${weight} 16px "EF Aktiv Grotesk"`)),
++      )
++    : Promise.resolve();
++  const logo = new Promise<void>((resolve) => {
++    const image = doc.querySelector<HTMLImageElement>('.ef-logo img');
++    if (image == null || image.complete) {
++      resolve();
++      return;
++    }
++    image.addEventListener('load', () => resolve(), { once: true });
++    image.addEventListener('error', () => resolve(), { once: true });
++  });
++  return Promise.race([
++    Promise.all([fonts, logo]).catch(() => undefined),
++    new Promise((resolve) => setTimeout(resolve, 3000)),
++  ]);
++};
++
+ /**
+  * Opens the reply in a new tab and its print dialog. Returns false when the browser blocked the tab, so the caller
+  * can say so. Phones show the dialog from the page's own button when they ignore the automatic call.
+@@ -206,16 +239,16 @@ export function openPrintView(
+   doc.write(`<!doctype html><html lang="${labels.lang}" dir="${labels.dir}"><head><meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title>
+ <style>${appFontFaces()}${STYLE}</style></head><body><div class="bar"><button type="button" id="efaiw-print">${esc(labels.print)}</button></div>
+-<main dir="${isRtlText(markdown) ? 'rtl' : 'ltr'}">${markdownToPrintHtml(markdown)}</main></body></html>`);
++<main dir="${isRtlText(markdown) ? 'rtl' : 'ltr'}">${logoHeader(labels.lang)}${markdownToPrintHtml(markdown)}</main></body></html>`);
+   doc.close();
+   doc.getElementById('efaiw-print')?.addEventListener('click', () => view.print());
+   view.focus();
+-  setTimeout(() => {
++  void whenPrintReady(doc).then(() => {
+     try {
+       view.print();
+     } catch {
+       /* the page's button remains */
+     }
+-  }, 400);
++  });
+   return true;
+ }
+diff --git a/client/src/utils/markdown.ts b/client/src/utils/markdown.ts
+index 5723d6d..ddeaf97 100644
+--- a/client/src/utils/markdown.ts
++++ b/client/src/utils/markdown.ts
+@@ -327,9 +327,9 @@ const EFAIW_BIDI_CSS = `
+ 
+ /**
+  * EF (#146): documents in the Environment Fund palette and type (visual identity guide v01, p22-24 and p28-30), light
+- * like the app (patch 0012) whatever the device's colour scheme. Aktiv Grotesk when the device has it, else Tahoma,
+- * the secondary typeface: the preview runs in the sandbox's own origin, which cannot load the app's font files. A
+- * contrast mode (contrastCSS, after this) still wins.
++ * like the app (patch 0012) whatever the device's colour scheme. Aktiv Grotesk comes from the app's font files, which
++ * the preview loads by absolute URL (efFonts.ts, #152); Tahoma, the secondary typeface, is the fallback. A contrast
++ * mode (contrastCSS, after this) still wins.
+  */
+ const EFAIW_BRAND_CSS = `
+ html, body { background-color: #FFFFFF; }
+diff --git a/client/src/utils/mermaid.ts b/client/src/utils/mermaid.ts
+index dd53e4c..ab4d987 100644
+--- a/client/src/utils/mermaid.ts
++++ b/client/src/utils/mermaid.ts
+@@ -132,8 +132,8 @@ const gitVariables = (slots: string[], canvas: string, ink: string): Record<stri
+  * EF (#146): Environment Fund colours for every diagram in the light appearance (the only one the app offers, patch
+  * 0012), inline in a reply and in the side panel. From the visual identity guide v01 (p22-24): primary blue edges and
+  * borders on the lightest primary-blue fill, primary dark text, warm grey, brown and green shades for the secondary
+- * series; the chart series follow the order in ai/skills/ef-brand-guidelines. Aktiv Grotesk where the page has it
+- * (the app), Tahoma otherwise (the side panel's sandbox). A contrast mode still wins (contrastMermaidVariables).
++ * series; the chart series follow the order in ai/skills/ef-brand-guidelines. Aktiv Grotesk: diagrams are drawn inline
++ * in the page (MermaidSvg.tsx, #152), and exports embed it. A contrast mode still wins (contrastMermaidVariables).
+  */
+ export const EF_MERMAID_VARIABLES: Record<string, string> = {
+   fontFamily: '"EF Aktiv Grotesk", "Aktiv Grotesk", Tahoma, Arial, sans-serif',
+@@ -749,10 +749,45 @@ root.render(<App />);
+   };
+ };
+ 
++/**
++ * EF (#152): chat diagrams are drawn inline (MermaidSvg.tsx) so they can use the app's font, and an inline SVG may
++ * fetch what an `<img>` never could. Keep references inside the diagram (`#…`, `data:image/…`) and drop the rest:
++ * links and image sources, `@import`, `url(…)` that leaves the SVG, and any CSS with an escape (which could spell
++ * `url` in disguise).
++ */
++const isInternalRef = (value: string) => /^\s*(#|data:image\/)/i.test(value);
++const EXTERNAL_URL = /url\(\s*(?!['"]?\s*#)[^)]*\)/gi;
++
++export const cleanDiagramCss = (css: string): string =>
++  css
++    .replace(/@import[^;]*;?/gi, '')
++    .replace(/[^;{}]*\\[^;{}]*;?/g, '')
++    .replace(EXTERNAL_URL, 'none');
++
++function hardenDiagramSvg(purify: ReturnType<typeof DOMPurify>) {
++  purify.addHook('uponSanitizeAttribute', (_node, data) => {
++    const name = data.attrName.toLowerCase();
++    if (
++      (name === 'href' || name === 'xlink:href' || name === 'src') &&
++      !isInternalRef(data.attrValue)
++    ) {
++      data.keepAttr = false;
++    } else if (name === 'style') {
++      data.attrValue = cleanDiagramCss(data.attrValue);
++    }
++  });
++  purify.addHook('uponSanitizeElement', (node, data) => {
++    if (data.tagName === 'style' && node.textContent) {
++      node.textContent = cleanDiagramCss(node.textContent);
++    }
++  });
++  return purify;
++}
++
+ /** Sanitize mermaid SVG and serialize as XML, preserving foreignObject HTML (cure53/DOMPurify#1002). */
+ export const sanitizeMermaidSvg = (svg: string): string =>
+   new XMLSerializer().serializeToString(
+-    DOMPurify().sanitize(svg, {
++    hardenDiagramSvg(DOMPurify()).sanitize(svg, {
+       USE_PROFILES: { svg: true, svgFilters: true, html: true },
+       ADD_TAGS: ['foreignObject', 'use', 'switch'],
+       ADD_ATTR: [
+diff --git a/client/tailwind.config.cjs b/client/tailwind.config.cjs
+index f95a3f7..5a811fd 100644
+--- a/client/tailwind.config.cjs
++++ b/client/tailwind.config.cjs
+@@ -37,6 +37,9 @@ module.exports = {
+         'Cascadia Mono',
+         'Liberation Mono',
+         'Consolas',
++        /* EF (#152): Arabic in code (comments, strings) in the brand face rather than the system's. */
++        'EF Aktiv Grotesk',
++        'Tahoma',
+         'monospace',
+       ],
+     },
+diff --git a/client/vite.config.ts b/client/vite.config.ts
+index a2c9ade..2937973 100644
+--- a/client/vite.config.ts
++++ b/client/vite.config.ts
+@@ -107,6 +107,8 @@ export default defineConfig(({ command }) => ({
+           /** `manifest.webmanifest` is not listed: vite-plugin-pwa always appends it as an
+            * additional manifest entry, so globbing it too duplicates the precache entry. */
+           'assets/maskable-icon.png',
++          /** EF (#152): the logo on the offline page (assets/ef-offline.html), about 20 KB. */
++          'assets/logo.svg',
+         ],
+         globIgnores: [
+           'images/**/*',
+diff --git a/packages/client/src/hooks/useAvatar.ts b/packages/client/src/hooks/useAvatar.ts
+index ffdb9a3..f409158 100644
+--- a/packages/client/src/hooks/useAvatar.ts
++++ b/packages/client/src/hooks/useAvatar.ts
+@@ -23,7 +23,8 @@ const useAvatar = (user: TUser | undefined): string => {
+ 
+     const avatar = createAvatar(initials, {
+       seed,
+-      fontFamily: ['Verdana'],
++      /* EF (#152): the avatar is an image, which cannot load web fonts; Tahoma is the guide's secondary face. */
++      fontFamily: ['Tahoma', 'Arial'],
+       fontSize: 36,
+       backgroundType: ['solid'],
+       /* EF palette (D-04): primary blue, secondary blue and a deep shade of the primary family. */

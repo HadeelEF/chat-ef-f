@@ -1,0 +1,376 @@
+EF AI Workspace (#186): the welcome screen greets the employee by first name; the chat direction setting no longer
+flips the Arabic composer. Owner decision 2026-10-24: option B («اعتمد ب ونفذه»), no starter cards.
+
+- Greeting (Chat/efGreeting.ts, Landing.tsx): «صباح الخير، نورة» from 04:00 and «مساء الخير، نورة» from 12:00 on the
+  employee's device (English: morning, afternoon from 12:00, evening from 17:00); it changes at the boundary and is
+  rechecked when the tab returns. The first word of the account name, compound first names kept whole («عبد الله»,
+  «أبو بكر», Abdul Rahman); no name, or an email address, greets without one. The configured `customWelcome` (with its
+  {{user.name}}) follows as the second line, or «كيف أساعدك اليوم؟» when none is set. Temporary chats and agent or
+  model-spec landings are unchanged. Upstream's scheduled greetings are no longer shown (customWelcome replaced them).
+- Composer direction (Chat/Input/composerDirection.ts, ChatForm.tsx, Files/FileFormChat.tsx): upstream reverses the
+  composer's rows when Settings → Chat direction is right to left, assuming a left-to-right page. On an Arabic page the
+  rows already run right to left, so Send moved to the start side and + to the end. The setting now reverses the rows
+  on left-to-right pages only.
+
+diff --git a/client/src/components/Chat/Input/ChatForm.tsx b/client/src/components/Chat/Input/ChatForm.tsx
+index 53a479b..8e4bb80 100644
+--- a/client/src/components/Chat/Input/ChatForm.tsx
++++ b/client/src/components/Chat/Input/ChatForm.tsx
+@@ -73,6 +73,7 @@ import EditBadges from './EditBadges';
+ import BadgeRow from './BadgeRow';
+ import SpeedSelector from './SpeedSelector';
+ import useComposerModes from './composerModes';
++import useComposerReversed from './composerDirection';
+ import { useConfiguredFooter } from '~/components/Chat/Footer';
+ import Mention from './Mention';
+ import store from '~/store';
+@@ -174,7 +175,6 @@ const ChatForm = memo(function ChatForm({
+ 
+   const SpeechToText = useRecoilValue(store.speechToText);
+   const TextToSpeech = useRecoilValue(store.textToSpeech);
+-  const chatDirection = useRecoilValue(store.chatDirection);
+   const automaticPlayback = useRecoilValue(store.automaticPlayback);
+   const maximizeChatSpace = useRecoilValue(store.maximizeChatSpace);
+   const isTemporary = useRecoilValue(store.isTemporary);
+@@ -221,10 +221,8 @@ const ChatForm = memo(function ChatForm({
+    */
+   const quotesEnabled = useMemo(() => !isAssistantsEndpoint(endpoint), [endpoint]);
+ 
+-  const isRTL = useMemo(
+-    () => (chatDirection != null ? chatDirection?.toLowerCase() === 'rtl' : false),
+-    [chatDirection],
+-  );
++  /* EF (#186): the chat direction setting reverses the rows on LTR pages only (composerDirection). */
++  const isRTL = useComposerReversed();
+   const invalidAssistant = useMemo(
+     () =>
+       isAssistantsEndpoint(endpoint) &&
+diff --git a/client/src/components/Chat/Input/Files/FileFormChat.tsx b/client/src/components/Chat/Input/Files/FileFormChat.tsx
+index e93e371..1019f18 100644
+--- a/client/src/components/Chat/Input/Files/FileFormChat.tsx
++++ b/client/src/components/Chat/Input/Files/FileFormChat.tsx
+@@ -1,10 +1,9 @@
+ import { memo } from 'react';
+-import { useRecoilValue } from 'recoil';
+ import type { TConversation } from 'librechat-data-provider';
+ import type { ExtendedFile, FileSetter } from '~/common';
+ import { useFileHandlingNoChatContext } from '~/hooks';
++import useComposerReversed from '../composerDirection';
+ import FileRow from './FileRow';
+-import store from '~/store';
+ 
+ /**
+  * Declared at module scope so its identity is stable across renders. An inline
+@@ -40,7 +39,6 @@ function FileFormChat({
+   onEditPastedText?: (file: ExtendedFile) => void;
+   onMovePastedTextInline?: (file: ExtendedFile) => void;
+ }) {
+-  const chatDirection = useRecoilValue(store.chatDirection).toLowerCase();
+   const { endpoint: _endpoint } = conversation ?? { endpoint: null };
+   const { abortUpload } = useFileHandlingNoChatContext(undefined, {
+     files,
+@@ -49,7 +47,8 @@ function FileFormChat({
+     conversation,
+   });
+ 
+-  const isRTL = chatDirection === 'rtl';
++  /* EF (#186): reversed on LTR pages only, like the composer's rows. */
++  const isRTL = useComposerReversed();
+ 
+   return (
+     <>
+diff --git a/client/src/components/Chat/Input/__tests__/composerDirection.spec.ts b/client/src/components/Chat/Input/__tests__/composerDirection.spec.ts
+new file mode 100644
+index 0000000..12f26e3
+--- /dev/null
++++ b/client/src/components/Chat/Input/__tests__/composerDirection.spec.ts
+@@ -0,0 +1,20 @@
++import { reversesComposer } from '../composerDirection';
++
++describe('reversesComposer', () => {
++  it('reverses the rows for right-to-left chat on a left-to-right page (upstream behaviour)', () => {
++    expect(reversesComposer('RTL', 'en')).toBe(true);
++    expect(reversesComposer('rtl', 'en-US')).toBe(true);
++  });
++
++  it('keeps the rows on a right-to-left page, where they already run right to left', () => {
++    expect(reversesComposer('RTL', 'ar')).toBe(false);
++    expect(reversesComposer('RTL', 'ar-SA')).toBe(false);
++  });
++
++  it('keeps the rows when the setting is left to right or unset', () => {
++    expect(reversesComposer('LTR', 'en')).toBe(false);
++    expect(reversesComposer('LTR', 'ar')).toBe(false);
++    expect(reversesComposer(null, 'en')).toBe(false);
++    expect(reversesComposer(undefined, 'ar')).toBe(false);
++  });
++});
+diff --git a/client/src/components/Chat/Input/composerDirection.ts b/client/src/components/Chat/Input/composerDirection.ts
+new file mode 100644
+index 0000000..6e74788
+--- /dev/null
++++ b/client/src/components/Chat/Input/composerDirection.ts
+@@ -0,0 +1,19 @@
++import { useMemo } from 'react';
++import { useRecoilValue } from 'recoil';
++import i18n from '~/locales/i18n';
++import store from '~/store';
++
++/**
++ * EF (#186): upstream's chat direction setting reverses the composer's rows for right-to-left text, assuming a
++ * left-to-right page. On a right-to-left page (Arabic) the rows already run right to left, so reversing them again
++ * put Send on the start side and + on the end side. The setting therefore reverses the rows on LTR pages only.
++ */
++export function reversesComposer(chatDirection: string | null | undefined, lang: string): boolean {
++  return chatDirection?.toLowerCase() === 'rtl' && i18n.dir(lang) !== 'rtl';
++}
++
++export default function useComposerReversed(): boolean {
++  const chatDirection = useRecoilValue(store.chatDirection);
++  const lang = useRecoilValue(store.lang);
++  return useMemo(() => reversesComposer(chatDirection, lang), [chatDirection, lang]);
++}
+diff --git a/client/src/components/Chat/Landing.tsx b/client/src/components/Chat/Landing.tsx
+index a9ca662..cd4f197 100644
+--- a/client/src/components/Chat/Landing.tsx
++++ b/client/src/components/Chat/Landing.tsx
+@@ -8,10 +8,11 @@ import { useChatContext, useAgentsMapContext, useAssistantsMapContext } from '~/
+ import Description, { isHtmlDescription } from '~/components/ui/Description';
+ import { useGetEndpointsQuery, useGetStartupConfig } from '~/data-provider';
+ import { getIconEndpoint, getEntity, getModelSpec } from '~/utils';
+-import { useLocalize, useAuthContext, useGreeting } from '~/hooks';
++import { useLocalize, useAuthContext } from '~/hooks';
+ import AgentContact from '~/components/Agents/AgentContact';
+ import ConvoIcon from '~/components/Endpoints/ConvoIcon';
+ import temporaryStore from '~/store/temporary';
++import useEfGreeting from './efGreeting';
+ 
+ const containerClassName =
+   'shadow-stroke relative flex h-full items-center justify-center rounded-full bg-presentation text-text-primary dark:after:shadow-none ';
+@@ -92,7 +93,8 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding:
+       ? startupConfig.interface.customWelcome
+       : undefined;
+ 
+-  const scheduledGreeting = useGreeting(user?.name);
++  /* EF (#186): the greeting by first name for the time of day leads; the configured welcome follows it. */
++  const efGreeting = useEfGreeting(user?.name);
+ 
+   const handleLineCountChange = useCallback((count: number) => {
+     setTextHasMultipleLines(count > 1);
+@@ -130,9 +132,10 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding:
+       ? customWelcome.replace(/{{user.name}}/g, user.name)
+       : customWelcome;
+ 
+-  const greetingText = isTemporary
+-    ? localize('com_ui_temporary')
+-    : (resolvedWelcome ?? scheduledGreeting);
++  const greetingText = isTemporary ? localize('com_ui_temporary') : efGreeting;
++  const welcomeLine = isTemporary
++    ? ''
++    : (resolvedWelcome ?? localize('com_efaiw_welcome_question'));
+ 
+   return (
+     <div
+@@ -209,6 +212,14 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding:
+               onLineCountChange={handleLineCountChange}
+             />
+           )}
++          {welcomeLine && !name ? (
++            <p
++              className="efaiw-landing-sub animate-fadeIn text-center text-text-secondary"
++              dir="auto"
++            >
++              {welcomeLine}
++            </p>
++          ) : null}
+         </div>
+         <Description
+           allowMedia
+diff --git a/client/src/components/Chat/__tests__/Landing.agent-contact.spec.tsx b/client/src/components/Chat/__tests__/Landing.agent-contact.spec.tsx
+index a2e4279..028b015 100644
+--- a/client/src/components/Chat/__tests__/Landing.agent-contact.spec.tsx
++++ b/client/src/components/Chat/__tests__/Landing.agent-contact.spec.tsx
+@@ -39,9 +39,14 @@ jest.mock('~/data-provider', () => ({
+   useGetEndpointsQuery: () => ({ data: {} }),
+ }));
+ 
++/* EF (#186): the welcome greets by first name for the time of day (efGreeting). */
++jest.mock('../efGreeting', () => ({
++  __esModule: true,
++  default: () => 'Welcome',
++}));
++
+ jest.mock('~/hooks', () => ({
+   useAuthContext: () => ({ user: undefined }),
+-  useGreeting: () => 'Welcome',
+   useLocalize: () => (key: string) => {
+     const translations: Record<string, string> = {
+       com_agents_contact: 'Contact',
+diff --git a/client/src/components/Chat/__tests__/efGreeting.spec.ts b/client/src/components/Chat/__tests__/efGreeting.spec.ts
+new file mode 100644
+index 0000000..2c2f51b
+--- /dev/null
++++ b/client/src/components/Chat/__tests__/efGreeting.spec.ts
+@@ -0,0 +1,52 @@
++import { dayPart, firstName, msUntilNextDayPart } from '../efGreeting';
++
++const at = (hours: number, minutes = 0) => new Date(2026, 9, 24, hours, minutes, 0, 0);
++
++describe('firstName', () => {
++  it('takes the first word of the account name', () => {
++    expect(firstName('نورة القحطاني')).toBe('نورة');
++    expect(firstName('  Faisal   Synthetic ')).toBe('Faisal');
++  });
++
++  it('keeps compound first names whole', () => {
++    expect(firstName('عبد الله الشهري')).toBe('عبد الله');
++    expect(firstName('أبو بكر المالكي')).toBe('أبو بكر');
++    expect(firstName('Abdul Rahman Test')).toBe('Abdul Rahman');
++    expect(firstName('عبدالله الشهري')).toBe('عبدالله');
++  });
++
++  it('greets without a name when there is none or it is an email address', () => {
++    expect(firstName(undefined)).toBe('');
++    expect(firstName('   ')).toBe('');
++    expect(firstName('noura@example.invalid')).toBe('');
++  });
++
++  it('does not join a lone prefix to nothing', () => {
++    expect(firstName('عبد')).toBe('عبد');
++  });
++});
++
++describe('dayPart', () => {
++  it.each([
++    [3, 59, 'evening'],
++    [4, 0, 'morning'],
++    [11, 59, 'morning'],
++    [12, 0, 'afternoon'],
++    [16, 59, 'afternoon'],
++    [17, 0, 'evening'],
++    [23, 30, 'evening'],
++  ])('%i:%i is %s', (h, m, expected) => {
++    expect(dayPart(at(h, m))).toBe(expected);
++  });
++});
++
++describe('msUntilNextDayPart', () => {
++  it('counts to the next boundary the same day', () => {
++    expect(msUntilNextDayPart(at(11, 30))).toBe(30 * 60 * 1000);
++    expect(msUntilNextDayPart(at(2, 0))).toBe(2 * 60 * 60 * 1000);
++  });
++
++  it('counts to 04:00 the next day after 17:00', () => {
++    expect(msUntilNextDayPart(at(23, 0))).toBe(5 * 60 * 60 * 1000);
++  });
++});
+diff --git a/client/src/components/Chat/efGreeting.ts b/client/src/components/Chat/efGreeting.ts
+new file mode 100644
+index 0000000..67440d9
+--- /dev/null
++++ b/client/src/components/Chat/efGreeting.ts
+@@ -0,0 +1,86 @@
++import { useState, useEffect } from 'react';
++import type { TranslationKeys } from '~/hooks';
++import { useLocalize } from '~/hooks';
++
++/**
++ * EF (#186, owner-approved option B): the welcome screen greets the employee by first name for the time of day on
++ * their device: morning from 04:00, afternoon from 12:00, evening from 17:00. Arabic says «صباح الخير» in the morning
++ * and «مساء الخير» after noon; English keeps three greetings.
++ */
++export type DayPart = 'morning' | 'afternoon' | 'evening';
++
++const BOUNDARIES = [4, 12, 17];
++
++export function dayPart(date: Date): DayPart {
++  const hour = date.getHours();
++  if (hour >= 4 && hour < 12) {
++    return 'morning';
++  }
++  return hour >= 12 && hour < 17 ? 'afternoon' : 'evening';
++}
++
++/** Milliseconds until the next of 04:00, 12:00 or 17:00, when the greeting changes. */
++export function msUntilNextDayPart(date: Date): number {
++  const next = new Date(date);
++  const hour = BOUNDARIES.find((h) => h > date.getHours());
++  if (hour == null) {
++    next.setDate(next.getDate() + 1);
++    next.setHours(BOUNDARIES[0], 0, 0, 0);
++  } else {
++    next.setHours(hour, 0, 0, 0);
++  }
++  return next.getTime() - date.getTime();
++}
++
++/** Prefixes that form one first name with the word after them: «عبد الله», «أبو بكر», Abdul Rahman. */
++const COMPOUND_PREFIX = /^(عبد|أبو|ابو|abd|abdul|abdel|abu)$/i;
++
++/** The first name in an account name; empty when there is no usable name (none, or an email address). */
++export function firstName(fullName?: string | null): string {
++  const parts = (fullName ?? '').trim().split(/\s+/).filter(Boolean);
++  if (parts.length === 0 || parts[0].includes('@')) {
++    return '';
++  }
++  if (parts.length > 1 && COMPOUND_PREFIX.test(parts[0])) {
++    return `${parts[0]} ${parts[1]}`;
++  }
++  return parts[0];
++}
++
++const KEYS: Record<DayPart, { named: TranslationKeys; plain: TranslationKeys }> = {
++  morning: { named: 'com_efaiw_greeting_morning_named', plain: 'com_efaiw_greeting_morning' },
++  afternoon: { named: 'com_efaiw_greeting_afternoon_named', plain: 'com_efaiw_greeting_afternoon' },
++  evening: { named: 'com_efaiw_greeting_evening_named', plain: 'com_efaiw_greeting_evening' },
++};
++
++/** The greeting for now; it changes at the next boundary and is rechecked when the tab comes back into view. */
++export default function useEfGreeting(fullName?: string | null): string {
++  const localize = useLocalize();
++  const [part, setPart] = useState<DayPart>(() => dayPart(new Date()));
++
++  useEffect(() => {
++    let timeoutId: ReturnType<typeof setTimeout>;
++    const update = () => {
++      clearTimeout(timeoutId);
++      const now = new Date();
++      setPart(dayPart(now));
++      timeoutId = setTimeout(update, Math.max(msUntilNextDayPart(now), 1000));
++    };
++    const handleVisibilityChange = () => {
++      if (document.visibilityState === 'visible') {
++        update();
++      }
++    };
++    update();
++    document.addEventListener('visibilitychange', handleVisibilityChange);
++    window.addEventListener('focus', update);
++    return () => {
++      clearTimeout(timeoutId);
++      document.removeEventListener('visibilitychange', handleVisibilityChange);
++      window.removeEventListener('focus', update);
++    };
++  }, []);
++
++  const name = firstName(fullName);
++  return name ? localize(KEYS[part].named, { name }) : localize(KEYS[part].plain);
++}
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index dafd07e..01240e3 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3123,6 +3123,13 @@
+   "com_efaiw_download_default_name": "Baseer reply",
+   "com_efaiw_panel_switcher_label": "{{panel}}, choose a panel",
+   "com_efaiw_more": "More",
++  "com_efaiw_greeting_morning": "Good morning",
++  "com_efaiw_greeting_morning_named": "Good morning, {{name}}",
++  "com_efaiw_greeting_afternoon": "Good afternoon",
++  "com_efaiw_greeting_afternoon_named": "Good afternoon, {{name}}",
++  "com_efaiw_greeting_evening": "Good evening",
++  "com_efaiw_greeting_evening_named": "Good evening, {{name}}",
++  "com_efaiw_welcome_question": "How can I help you today?",
+   "com_efaiw_back_to_chats": "Back to chats",
+   "com_efaiw_model_menu_title": "Choose a model",
+   "com_efaiw_model_menu_hint": "You can change the model at any time during the chat."

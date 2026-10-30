@@ -1,0 +1,17 @@
+Mixed-direction tables (#100, UX audit U-02, ADR-0013): a table takes its direction from its own first strong
+character, so an English table inside an Arabic reply reads left to right (and the reverse). The direction-free
+borders that go with it are in ../brand/brand.css.
+
+diff --git a/client/src/components/Chat/Messages/Content/MarkdownComponents.tsx b/client/src/components/Chat/Messages/Content/MarkdownComponents.tsx
+index a891014..e393e09 100644
+--- a/client/src/components/Chat/Messages/Content/MarkdownComponents.tsx
++++ b/client/src/components/Chat/Messages/Content/MarkdownComponents.tsx
+@@ -201,7 +201,7 @@ type TTableProps = {
+ export const table: React.ElementType = memo(function MarkdownTable({ children }: TTableProps) {
+   return (
+     <div className="markdown-table-wrapper w-full max-w-full">
+-      <table>{children}</table>
++      <table dir="auto">{children}</table>
+     </div>
+   );
+ });

@@ -1,0 +1,939 @@
+EF AI Workspace (#153): artifacts that work like Claude's. Owner request 2026-10-23: "make the outputs (artifacts)
+work like Claude's".
+
+- Versions (hooks/Artifacts/useArtifacts.ts, ArtifactVersion.tsx): entries that share an identifier (else a type and
+  title) are versions of one artifact, as in Claude. The menu shows «الإصدار i من n» for the open artifact only; it
+  used to list every artifact of the chat by time. Auto-open and streaming are unchanged.
+- Switcher (ArtifactSwitcher.tsx): «المخرجات في هذه المحادثة» lists each artifact of the chat once, by its newest
+  version.
+- Try fixing (ArtifactFixButton.tsx, SandboxArtifactTabs.tsx): when the Sandpack preview reports an error, one press
+  sends the artifact's title and the error to the chat. Files, skills and quotes staged in the composer are not
+  attached to it; hidden on shared links and while a reply is being written.
+- Open in new tab (utils/artifactTab.ts, ArtifactOpenTab.tsx): an HTML page, SVG drawing or Markdown document in a tab
+  of its own. The tab is a blob page with no script of its own; the artifact runs only inside a sandboxed srcdoc frame
+  without allow-same-origin (an opaque origin, no top navigation), opened with noopener. Tailwind and the EF font are
+  added as in the panel. Hidden on phones; React keeps the full screen.
+- Code files (Artifact.tsx): the `language` attribute is kept, and Claude's `application/vnd.ant.code` opens in the
+  code view instead of falling through to the HTML template.
+- RTL: the panel's slide-in offsets and the version menu's position follow the reading direction.
+- Tests: the panel tests follow per-artifact versions, and the download tests open the document menu of patch 0024.
+
+diff --git a/client/src/components/Artifacts/Artifact.tsx b/client/src/components/Artifacts/Artifact.tsx
+index 856e5c6..4120d8a 100644
+--- a/client/src/components/Artifacts/Artifact.tsx
++++ b/client/src/components/Artifacts/Artifact.tsx
+@@ -38,6 +38,8 @@ export const artifactPlugin: Pluggable = () => {
+ const defaultTitle = 'untitled';
+ const defaultType = 'unknown';
+ const defaultIdentifier = 'lc-no-identifier';
++/** EF (#153): Claude's spelling of a source-file artifact opens in the code view, not as a page. */
++const typeAliases: Record<string, string> = { 'application/vnd.ant.code': 'application/vnd.code' };
+ 
+ export function Artifact({
+   node: _node,
+@@ -69,7 +71,7 @@ export function Artifact({
+     logger.log('artifacts', 'updateArtifact: content.length', content.length);
+ 
+     const title = props.title ?? defaultTitle;
+-    const type = props.type ?? defaultType;
++    const type = typeAliases[props.type ?? ''] ?? props.type ?? defaultType;
+     const identifier = props.identifier ?? defaultIdentifier;
+     const artifactKey = `${identifier}_${type}_${title}_${messageId}`
+       .replace(/\s+/g, '_')
+@@ -87,6 +89,7 @@ export function Artifact({
+         title,
+         type,
+         content,
++        language: props.language,
+         messageId,
+         index: artifactIndex,
+         lastUpdateTime: now,
+@@ -115,6 +118,7 @@ export function Artifact({
+   }, [
+     props.type,
+     props.title,
++    props.language,
+     setArtifacts,
+     props.children,
+     props.identifier,
+diff --git a/client/src/components/Artifacts/ArtifactFixButton.tsx b/client/src/components/Artifacts/ArtifactFixButton.tsx
+new file mode 100644
+index 0000000..45bfded
+--- /dev/null
++++ b/client/src/components/Artifacts/ArtifactFixButton.tsx
+@@ -0,0 +1,32 @@
++import { Wrench } from 'lucide-react';
++import { useSandpack } from '@codesandbox/sandpack-react/unstyled';
++import { Button } from '@librechat/client';
++import { useLocalize } from '~/hooks';
++
++/**
++ * EF (#153): Claude's "Try fixing". When the preview reports an error (a compile or runtime error from the
++ * bundler), one press sends the error back to the model with the artifact's title. Renders inside SandpackProvider.
++ */
++export default function ArtifactFixButton({ onTryFix }: { onTryFix?: (error: string) => void }) {
++  const { sandpack } = useSandpack();
++  const localize = useLocalize();
++  const error = sandpack.error?.message?.trim();
++
++  if (onTryFix == null || !error) {
++    return null;
++  }
++
++  return (
++    <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center">
++      <Button
++        type="button"
++        variant="submit"
++        className="pointer-events-auto gap-2 rounded-full px-4 shadow-lg"
++        onClick={() => onTryFix(error)}
++      >
++        <Wrench size={16} aria-hidden="true" />
++        {localize('com_efaiw_artifact_try_fix')}
++      </Button>
++    </div>
++  );
++}
+diff --git a/client/src/components/Artifacts/ArtifactOpenTab.tsx b/client/src/components/Artifacts/ArtifactOpenTab.tsx
+new file mode 100644
+index 0000000..df23f3f
+--- /dev/null
++++ b/client/src/components/Artifacts/ArtifactOpenTab.tsx
+@@ -0,0 +1,60 @@
++import { ExternalLink } from 'lucide-react';
++import { Button, TooltipAnchor } from '@librechat/client';
++import type { Artifact } from '~/common';
++import useArtifactProps from '~/hooks/Artifacts/useArtifactProps';
++import { useCodeState } from '~/Providers/EditorContext';
++import { openArtifactInTab } from '~/utils/artifactTab';
++import { useLocalize } from '~/hooks';
++
++/** EF (#153): the types a browser tab can show on its own; React needs the bundler, so it keeps the full screen. */
++const TAB_TYPES = new Set([
++  'text/html',
++  'application/vnd.code-html',
++  'image/svg+xml',
++  'image/svg',
++  'text/markdown',
++  'text/md',
++]);
++
++export const canOpenInTab = (type?: string | null) => TAB_TYPES.has(type ?? '');
++
++/** EF (#153): Claude's "Open in new tab": the preview's page, edits included, in a sandboxed tab of its own. */
++export default function ArtifactOpenTab({
++  artifact,
++  portalElement,
++}: {
++  artifact: Artifact;
++  portalElement?: HTMLElement | null;
++}) {
++  const localize = useLocalize();
++  const { currentCode } = useCodeState();
++  const { files, fileKey, deriveFiles } = useArtifactProps({ artifact });
++  const label = localize('com_efaiw_artifact_open_tab');
++
++  const handleOpen = () => {
++    const code = currentCode || undefined;
++    const source = deriveFiles != null && code ? deriveFiles(code) : files;
++    const html = fileKey === 'index.html' && code ? code : source['index.html'];
++    if (typeof html === 'string' && html) {
++      openArtifactInTab(html, artifact.title ?? label);
++    }
++  };
++
++  return (
++    <TooltipAnchor
++      description={label}
++      portalElement={portalElement}
++      render={
++        <Button
++          size="icon"
++          variant="ghost"
++          className="h-9 w-9"
++          onClick={handleOpen}
++          aria-label={label}
++        >
++          <ExternalLink size={16} aria-hidden="true" />
++        </Button>
++      }
++    />
++  );
++}
+diff --git a/client/src/components/Artifacts/ArtifactPreview.tsx b/client/src/components/Artifacts/ArtifactPreview.tsx
+index d16074c..c80c170 100644
+--- a/client/src/components/Artifacts/ArtifactPreview.tsx
++++ b/client/src/components/Artifacts/ArtifactPreview.tsx
+@@ -8,6 +8,7 @@ import type { SandpackStartupConfig } from '~/utils/artifacts';
+ import type { ArtifactFiles } from '~/common';
+ import { sharedFiles, buildSandpackOptions } from '~/utils/artifacts';
+ import { withEfFonts } from '~/utils/efFonts';
++import ArtifactFixButton from './ArtifactFixButton';
+ 
+ export const ArtifactPreview = memo(function ({
+   files,
+@@ -17,6 +18,7 @@ export const ArtifactPreview = memo(function ({
+   previewRef,
+   currentCode,
+   startupConfig,
++  onTryFix,
+ }: {
+   files: ArtifactFiles;
+   fileKey: string;
+@@ -25,6 +27,8 @@ export const ArtifactPreview = memo(function ({
+   previewRef: MutableRefObject<SandpackPreviewRef>;
+   currentCode?: string;
+   startupConfig?: SandpackStartupConfig;
++  /** EF (#153): offered when the preview reports an error; absent where there is no chat to send to. */
++  onTryFix?: (error: string) => void;
+ }) {
+   const artifactFiles = useMemo(() => {
+     if (Object.keys(files).length === 0) {
+@@ -70,6 +74,7 @@ export const ArtifactPreview = memo(function ({
+         tabIndex={0}
+         ref={previewRef}
+       />
++      <ArtifactFixButton onTryFix={onTryFix} />
+     </SandpackProvider>
+   );
+ });
+diff --git a/client/src/components/Artifacts/ArtifactSwitcher.tsx b/client/src/components/Artifacts/ArtifactSwitcher.tsx
+new file mode 100644
+index 0000000..1f2e7d2
+--- /dev/null
++++ b/client/src/components/Artifacts/ArtifactSwitcher.tsx
+@@ -0,0 +1,77 @@
++import React, { useState } from 'react';
++import { MenuButton } from '@ariakit/react';
++import { Layers, Check } from 'lucide-react';
++import { DropdownPopup, TooltipAnchor, Button } from '@librechat/client';
++import type { Artifact } from '~/common';
++import { displayFilename } from '~/components/Chat/Messages/Content/Parts/attachmentTypes';
++import { useLocalize } from '~/hooks';
++
++/**
++ * EF (#153): the artifacts of this chat, each once by its newest version, like Claude's artifact list. Its versions
++ * stay in ArtifactVersion; this switches between different artifacts.
++ */
++export default function ArtifactSwitcher({
++  items,
++  currentId,
++  portalElement,
++  onSelect,
++}: {
++  /** Newest version of each artifact, in chat order. */
++  items: Artifact[];
++  currentId?: string | null;
++  portalElement?: HTMLElement | null;
++  onSelect: (id: string) => void;
++}) {
++  const localize = useLocalize();
++  const [isOpen, setIsOpen] = useState(false);
++  const label = localize('com_efaiw_artifact_switch');
++
++  if (items.length <= 1) {
++    return null;
++  }
++
++  const seen = new Map<string, number>();
++  const dropdownItems = items.map((item) => {
++    const name = displayFilename(item.title ?? '') || item.title || '';
++    const count = (seen.get(name) ?? 0) + 1;
++    seen.set(name, count);
++    return {
++      label: count > 1 ? `${name} (${count})` : name,
++      onClick: () => {
++        onSelect(item.id);
++        setIsOpen(false);
++      },
++      value: item.id,
++      icon:
++        item.id === currentId ? (
++          <Check size={16} className="text-text-primary" aria-hidden="true" />
++        ) : undefined,
++    };
++  });
++
++  return (
++    <DropdownPopup
++      menuId="artifact-switcher-menu"
++      portal
++      portalElement={portalElement}
++      focusLoop
++      unmountOnHide
++      isOpen={isOpen}
++      setIsOpen={setIsOpen}
++      trigger={
++        <TooltipAnchor
++          description={label}
++          portalElement={portalElement}
++          render={
++            <Button size="icon" variant="ghost" asChild aria-label={label}>
++              <MenuButton>
++                <Layers size={18} className="text-text-secondary" aria-hidden="true" />
++              </MenuButton>
++            </Button>
++          }
++        />
++      }
++      items={dropdownItems}
++    />
++  );
++}
+diff --git a/client/src/components/Artifacts/ArtifactVersion.tsx b/client/src/components/Artifacts/ArtifactVersion.tsx
+index a571fb4..deb4d8a 100644
+--- a/client/src/components/Artifacts/ArtifactVersion.tsx
++++ b/client/src/components/Artifacts/ArtifactVersion.tsx
+@@ -64,25 +64,34 @@ export default function ArtifactVersion({
+           portalElement={portalElement}
+           render={
+             <Button
+-              size="icon"
++              size={isSmallScreen ? 'icon' : 'sm'}
+               variant="ghost"
+               asChild
+               aria-label={localize('com_ui_change_version')}
+             >
+-              <MenuButton>
++              <MenuButton className={isSmallScreen ? undefined : 'gap-1.5 px-2'}>
+                 <History
+                   size={18}
+                   className="text-text-secondary"
+                   aria-hidden="true"
+                   focusable="false"
+                 />
++                {/* EF (#153): which version is open, as in Claude ("Version 2 of 3"). */}
++                {!isSmallScreen && (
++                  <span className="whitespace-nowrap text-xs text-text-secondary">
++                    {localize('com_efaiw_artifact_version_of', {
++                      0: String(currentIndex + 1),
++                      1: String(totalVersions),
++                    })}
++                  </span>
++                )}
+               </MenuButton>
+             </Button>
+           }
+         />
+       }
+       items={dropdownItems}
+-      className={isSmallScreen ? '' : 'absolute right-0 top-0 mt-2'}
++      className={isSmallScreen ? '' : 'absolute end-0 top-0 mt-2'}
+     />
+   );
+ }
+diff --git a/client/src/components/Artifacts/Artifacts.test.tsx b/client/src/components/Artifacts/Artifacts.test.tsx
+index 6b32063..698f472 100644
+--- a/client/src/components/Artifacts/Artifacts.test.tsx
++++ b/client/src/components/Artifacts/Artifacts.test.tsx
+@@ -63,6 +63,17 @@ jest.mock('./ArtifactVersion', () => ({
+   default: () => null,
+ }));
+ 
++jest.mock('./ArtifactSwitcher', () => ({
++  __esModule: true,
++  default: () => null,
++}));
++
++jest.mock('./ArtifactOpenTab', () => ({
++  __esModule: true,
++  default: () => null,
++  canOpenInTab: () => false,
++}));
++
+ jest.mock('./DownloadArtifact', () => ({
+   __esModule: true,
+   default: () => <div data-testid="download-artifact" />,
+@@ -106,6 +117,8 @@ describe('Artifacts panel accessibility', () => {
+         lastUpdateTime: 1,
+       },
+       orderedArtifactIds: ['mermaid-artifact-1'],
++      versionIds: ['mermaid-artifact-1'],
++      artifactList: [],
+       setCurrentArtifactId: jest.fn(),
+     });
+   });
+@@ -123,6 +136,8 @@ describe('Artifacts panel accessibility', () => {
+         lastUpdateTime: 1,
+       },
+       orderedArtifactIds: ['mermaid-artifact-1'],
++      versionIds: ['mermaid-artifact-1'],
++      artifactList: [],
+       setCurrentArtifactId: jest.fn(),
+     });
+ 
+@@ -158,6 +173,8 @@ describe('Artifacts panel accessibility', () => {
+         lastUpdateTime: 1,
+       },
+       orderedArtifactIds: ['code-artifact-1', 'html-artifact-1'],
++      versionIds: ['code-artifact-1', 'html-artifact-1'],
++      artifactList: [],
+       setCurrentArtifactId: jest.fn(),
+     };
+     mockUseArtifacts.mockReturnValue(codeOnly);
+@@ -218,6 +235,8 @@ describe('Artifacts panel accessibility', () => {
+         lastUpdateTime: 1,
+       },
+       orderedArtifactIds: ['html-artifact-1'],
++      versionIds: ['html-artifact-1'],
++      artifactList: [],
+       setCurrentArtifactId: jest.fn(),
+     });
+ 
+@@ -245,6 +264,8 @@ describe('Artifacts panel accessibility', () => {
+         lastUpdateTime: 1,
+       },
+       orderedArtifactIds: ['html-artifact-1'],
++      versionIds: ['html-artifact-1'],
++      artifactList: [],
+       setCurrentArtifactId: jest.fn(),
+     });
+ 
+diff --git a/client/src/components/Artifacts/Artifacts.tsx b/client/src/components/Artifacts/Artifacts.tsx
+index abd863a..f8dc518 100644
+--- a/client/src/components/Artifacts/Artifacts.tsx
++++ b/client/src/components/Artifacts/Artifacts.tsx
+@@ -14,6 +14,8 @@ import useArtifacts from '~/hooks/Artifacts/useArtifacts';
+ import { useFocusTrap, useLocalize } from '~/hooks';
+ import DownloadArtifact from './DownloadArtifact';
+ import ArtifactVersion from './ArtifactVersion';
++import ArtifactSwitcher from './ArtifactSwitcher';
++import ArtifactOpenTab, { canOpenInTab } from './ArtifactOpenTab';
+ import MermaidExport from './Mermaid/Export';
+ import ArtifactTabs from './ArtifactTabs';
+ import { cn, logger } from '~/utils';
+@@ -113,9 +115,9 @@ export default function Artifacts() {
+   const {
+     activeTab,
+     setActiveTab,
+-    currentIndex,
+     currentArtifact,
+-    orderedArtifactIds,
++    versionIds,
++    artifactList,
+     setCurrentArtifactId,
+   } = useArtifacts();
+ 
+@@ -371,7 +373,7 @@ export default function Artifacts() {
+                   'h-full shadow-2xl',
+                   isVisible && !isClosing
+                     ? 'duration-350 translate-x-0 opacity-100 transition-all'
+-                    : 'translate-x-5 opacity-0 transition-all duration-300',
++                    : 'translate-x-5 opacity-0 transition-all duration-300 rtl:-translate-x-5',
+                 ),
+           )}
+           style={
+@@ -411,7 +413,7 @@ export default function Artifacts() {
+                   'flex items-center transition-all duration-500 motion-reduce:transition-none',
+                   isVisible && !isClosing
+                     ? 'translate-x-0 opacity-100'
+-                    : '-translate-x-2 opacity-0',
++                    : '-translate-x-2 opacity-0 rtl:translate-x-2',
+                 )}
+               >
+                 <Radio
+@@ -428,7 +430,9 @@ export default function Artifacts() {
+               className={cn(
+                 'flex items-center gap-2 transition-all duration-500 motion-reduce:transition-none',
+                 isMobile ? 'min-w-max' : '',
+-                isVisible && !isClosing ? 'translate-x-0 opacity-100' : 'translate-x-2 opacity-0',
++                isVisible && !isClosing
++                  ? 'translate-x-0 opacity-100'
++                  : 'translate-x-2 opacity-0 rtl:-translate-x-2',
+               )}
+             >
+               {/* Refresh drives the Sandpack preview client; the Mermaid
+@@ -454,6 +458,12 @@ export default function Artifacts() {
+                   )}
+                 </Button>
+               )}
++              {displayedTab === 'preview' && !isMobile && canOpenInTab(currentArtifact.type) && (
++                <ArtifactOpenTab
++                  artifact={currentArtifact}
++                  portalElement={isFullscreen ? fullscreenPortalRef.current : undefined}
++                />
++              )}
+               {(displayedTab === 'preview' || isFullscreen) && document.fullscreenEnabled && (
+                 <Button
+                   size="icon"
+@@ -474,19 +484,26 @@ export default function Artifacts() {
+               {displayedTab !== 'preview' && isMutating && (
+                 <RefreshCw size={16} className="animate-spin text-text-secondary" />
+               )}
+-              {orderedArtifactIds.length > 1 && (
++              {/* EF (#153): versions of this artifact, and the chat's other artifacts, as in Claude. */}
++              {versionIds.length > 1 && (
+                 <ArtifactVersion
+-                  currentIndex={currentIndex}
+-                  totalVersions={orderedArtifactIds.length}
++                  currentIndex={versionIds.indexOf(currentArtifact.id)}
++                  totalVersions={versionIds.length}
+                   portalElement={isFullscreen ? fullscreenPortalRef.current : undefined}
+                   onVersionChange={(index) => {
+-                    const target = orderedArtifactIds[index];
++                    const target = versionIds[index];
+                     if (target) {
+                       setCurrentArtifactId(target);
+                     }
+                   }}
+                 />
+               )}
++              <ArtifactSwitcher
++                items={artifactList}
++                currentId={currentArtifact.id}
++                portalElement={isFullscreen ? fullscreenPortalRef.current : undefined}
++                onSelect={setCurrentArtifactId}
++              />
+               <CopyButton
+                 isCopied={isCopied}
+                 iconOnly
+diff --git a/client/src/components/Artifacts/SandboxArtifactTabs.tsx b/client/src/components/Artifacts/SandboxArtifactTabs.tsx
+index acde594..c60e1fa 100644
+--- a/client/src/components/Artifacts/SandboxArtifactTabs.tsx
++++ b/client/src/components/Artifacts/SandboxArtifactTabs.tsx
+@@ -1,4 +1,4 @@
+-import { useEffect, useMemo, useRef } from 'react';
++import { useContext, useEffect, useMemo, useRef } from 'react';
+ import * as Tabs from '@radix-ui/react-tabs';
+ import type { SandpackPreviewRef } from '@codesandbox/sandpack-react/unstyled';
+ import type { editor } from 'monaco-editor';
+@@ -8,7 +8,9 @@ import useArtifactProps from '~/hooks/Artifacts/useArtifactProps';
+ import { ArtifactCodeEditor } from './ArtifactCodeEditor';
+ import { useCodeState } from '~/Providers/EditorContext';
+ import { ArtifactPreview } from './ArtifactPreview';
++import { ChatContext } from '~/Providers/ChatContext';
+ import { useShareContext } from '~/Providers';
++import { useLocalize } from '~/hooks';
+ 
+ export default function SandboxArtifactTabs({
+   artifact,
+@@ -53,6 +55,29 @@ export default function SandboxArtifactTabs({
+     [deriveFiles, editedCode, files],
+   );
+ 
++  /* EF (#153): "Try fixing" sends the preview's error to the chat. Empty overrides keep files, skills and quotes
++   * staged in the composer out of it. There is no chat on a shared link, and none to send to mid-reply. */
++  const chat = useContext(ChatContext);
++  const localize = useLocalize();
++  const ask = chat?.ask;
++  const canFix = ask != null && isSharedConvo !== true && chat?.isSubmitting !== true;
++  const onTryFix = useMemo(
++    () =>
++      canFix
++        ? (error: string) =>
++            ask(
++              {
++                text: localize('com_efaiw_artifact_fix_prompt', {
++                  0: artifact.title ?? '',
++                  1: error.slice(0, 2000),
++                }),
++              },
++              { overrideFiles: [], overrideManualSkills: [], overrideQuotes: [] },
++            )
++        : undefined,
++    [artifact.title, ask, canFix, localize],
++  );
++
+   return (
+     <div className="flex h-full w-full flex-col">
+       <Tabs.Content
+@@ -81,6 +106,7 @@ export default function SandboxArtifactTabs({
+           sharedProps={sharedProps}
+           currentCode={editedCode}
+           startupConfig={resolvedStartupConfig}
++          onTryFix={onTryFix}
+         />
+       </Tabs.Content>
+     </div>
+diff --git a/client/src/components/Artifacts/__tests__/Artifacts.test.tsx b/client/src/components/Artifacts/__tests__/Artifacts.test.tsx
+index 999fc93..076d039 100644
+--- a/client/src/components/Artifacts/__tests__/Artifacts.test.tsx
++++ b/client/src/components/Artifacts/__tests__/Artifacts.test.tsx
+@@ -12,8 +12,10 @@ const mockExitFullscreen = jest.fn<Promise<void>, []>();
+ const clearArtifactsLabel = 'Clear artifacts';
+ const restoreArtifactsLabel = 'Restore artifacts';
+ 
++/* EF (#153): versions belong to one artifact (same identifier), so the second entry is a version of the first. */
+ const primaryArtifact: Artifact = {
+   id: 'artifact-1',
++  identifier: 'preview-page',
+   type: 'text/html',
+   title: 'Preview',
+   lastUpdateTime: 0,
+diff --git a/client/src/components/Artifacts/__tests__/DownloadArtifact.test.tsx b/client/src/components/Artifacts/__tests__/DownloadArtifact.test.tsx
+index f048d23..9dbaa8e 100644
+--- a/client/src/components/Artifacts/__tests__/DownloadArtifact.test.tsx
++++ b/client/src/components/Artifacts/__tests__/DownloadArtifact.test.tsx
+@@ -1,6 +1,7 @@
+ import React from 'react';
+ import { FileSources } from 'librechat-data-provider';
+ import { render, screen, fireEvent, act } from '@testing-library/react';
++import userEvent from '@testing-library/user-event';
+ import type { Artifact } from '~/common';
+ import { fileToArtifact, TOOL_ARTIFACT_TYPES } from '~/utils/artifacts';
+ import DownloadArtifact from '../DownloadArtifact';
+@@ -105,6 +106,22 @@ const localMetadataArtifact: Artifact = {
+   },
+ };
+ 
++/** EF (#149): a Markdown document's button opens the document menu; its Markdown item is the original download. */
++const pressDownload = async () => {
++  const button = screen.getByRole('button');
++  if (button.getAttribute('aria-haspopup') === 'menu') {
++    const user = userEvent.setup();
++    await user.click(button);
++    await user.click(await screen.findByRole('menuitem', { name: 'com_efaiw_download_markdown' }));
++  } else {
++    await act(async () => {
++      fireEvent.click(button);
++    });
++  }
++  /* Let the download's promise settle, as the act() around a plain click did. */
++  await act(async () => {});
++};
++
+ describe('DownloadArtifact', () => {
+   let createObjectURL: jest.Mock;
+   let revokeObjectURL: jest.Mock;
+@@ -162,9 +179,7 @@ describe('DownloadArtifact', () => {
+     mockFileKey = fileKey;
+     mockCurrentCode = 'edited content';
+     render(<DownloadArtifact artifact={{ ...htmlArtifact, type, title, language }} />);
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     expect(anchorClick.mock.instances[0].download).toBe(expected);
+     const blob = createObjectURL.mock.calls[0][0] as Blob;
+     const content = await new Promise<string>((resolve) => {
+@@ -186,9 +201,7 @@ describe('DownloadArtifact', () => {
+           artifact={{ ...htmlArtifact, type: 'text/markdown', title, content: '# Old heading' }}
+         />,
+       );
+-      await act(async () => {
+-        fireEvent.click(screen.getByRole('button'));
+-      });
++      await pressDownload();
+       expect(anchorClick.mock.instances[0].download).toBe(
+         'New migration plan for migrate_users.py.md',
+       );
+@@ -205,9 +218,7 @@ describe('DownloadArtifact', () => {
+     const artifact = fileToArtifact({ file_id: 'file', filename, text: 'Raw content' });
+     expect(artifact).not.toBeNull();
+     render(<DownloadArtifact artifact={artifact!} />);
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     const dot = filename.lastIndexOf('.');
+     expect(anchorClick.mock.instances[0].download).toBe(
+       `${filename.slice(0, dot)}.preview${filename.slice(dot)}`,
+@@ -226,9 +237,7 @@ describe('DownloadArtifact', () => {
+         filepath: '/api/files/code/output/file',
+       });
+       render(<DownloadArtifact artifact={artifact!} />);
+-      await act(async () => {
+-        fireEvent.click(screen.getByRole('button'));
+-      });
++      await pressDownload();
+       expect(mockFileDownload).toHaveBeenCalledTimes(1);
+       expect(createObjectURL).not.toHaveBeenCalled();
+       expect(mockAttachmentOptions).toHaveBeenLastCalledWith(expect.objectContaining({ filename }));
+@@ -262,9 +271,7 @@ describe('DownloadArtifact', () => {
+       });
+       expect(artifact?.download?.filename).toBeNull();
+       render(<DownloadArtifact artifact={artifact!} />);
+-      await act(async () => {
+-        fireEvent.click(screen.getByRole('button'));
+-      });
++      await pressDownload();
+       expect(mockFileDownload).toHaveBeenCalledTimes(1);
+       expect(createObjectURL).not.toHaveBeenCalled();
+       expect(mockAttachmentOptions).toHaveBeenLastCalledWith(
+@@ -282,9 +289,7 @@ describe('DownloadArtifact', () => {
+       filepath: '/api/files/code/output/file',
+     });
+     render(<DownloadArtifact artifact={artifact!} />);
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     expect(mockFileDownload).toHaveBeenCalledTimes(1);
+     expect(mockAttachmentOptions).toHaveBeenLastCalledWith(
+       expect.objectContaining({ filename: 'content.md' }),
+@@ -302,9 +307,7 @@ describe('DownloadArtifact', () => {
+         filepath: '/api/files/code/output/large.py',
+       });
+       render(<DownloadArtifact artifact={artifact!} />);
+-      await act(async () => {
+-        fireEvent.click(screen.getByRole('button'));
+-      });
++      await pressDownload();
+       expect(mockFileDownload).toHaveBeenCalledTimes(1);
+       expect(createObjectURL).not.toHaveBeenCalled();
+     },
+@@ -321,9 +324,7 @@ describe('DownloadArtifact', () => {
+         filepath: '/api/files/code/output/large.py',
+       });
+       render(<DownloadArtifact artifact={artifact!} />);
+-      await act(async () => {
+-        fireEvent.click(screen.getByRole('button'));
+-      });
++      await pressDownload();
+       expect(mockFileDownload).not.toHaveBeenCalled();
+       expect(anchorClick.mock.instances[0].download).toBe('large.preview.py');
+       const blob = createObjectURL.mock.calls[0][0] as Blob;
+@@ -338,9 +339,7 @@ describe('DownloadArtifact', () => {
+       text: 'Prefix\n\n…[truncated]',
+     });
+     render(<DownloadArtifact artifact={artifact!} />);
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     expect(mockFileDownload).not.toHaveBeenCalled();
+     expect(anchorClick.mock.instances[0].download).toBe('large.preview.txt');
+   });
+@@ -354,14 +353,10 @@ describe('DownloadArtifact', () => {
+       filepath: '/api/files/code/output/large.py',
+     });
+     const { container } = render(<DownloadArtifact artifact={artifact!} />);
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     expect(createObjectURL).not.toHaveBeenCalled();
+     expect(container.querySelector('[data-icon="circle-check-big"]')).toBeNull();
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     expect(mockFileDownload).toHaveBeenCalledTimes(2);
+     expect(container.querySelector('[data-icon="circle-check-big"]')).not.toBeNull();
+   });
+@@ -377,17 +372,13 @@ describe('DownloadArtifact', () => {
+         }}
+       />,
+     );
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     expect(anchorClick.mock.instances[0].download).toBe('Dockerfile.preview');
+   });
+ 
+   it('downloads the original file (not the preview) for an office artifact and shows success', async () => {
+     const { container } = render(<DownloadArtifact artifact={officeArtifact} />);
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     expect(mockFileDownload).toHaveBeenCalledTimes(1);
+     // The preview HTML must NOT be serialized into a blob download.
+     expect(createObjectURL).not.toHaveBeenCalled();
+@@ -400,9 +391,7 @@ describe('DownloadArtifact', () => {
+     // to false instead of throwing. The checkmark must stay hidden.
+     mockFileDownload.mockResolvedValueOnce(false);
+     const { container } = render(<DownloadArtifact artifact={officeArtifact} />);
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     expect(mockFileDownload).toHaveBeenCalledTimes(1);
+     expect(container.querySelector('[data-icon="circle-check-big"]')).toBeNull();
+     expect(container.querySelector('[data-icon="download"]')).not.toBeNull();
+@@ -416,9 +405,7 @@ describe('DownloadArtifact', () => {
+       throw new Error('no object url');
+     });
+     const { container } = render(<DownloadArtifact artifact={htmlArtifact} />);
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     /* The hook localizes through `~/hooks/useLocalize` directly, outside
+      * this file's `~/hooks` mock, so the real string lands here. */
+     expect(mockShowToast).toHaveBeenCalledWith({
+@@ -444,9 +431,7 @@ describe('DownloadArtifact', () => {
+     });
+     expect(artifact?.type).toBe(TOOL_ARTIFACT_TYPES.MERMAID);
+     const { container } = render(<DownloadArtifact artifact={artifact!} />);
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     expect(mockFileDownload).toHaveBeenCalledTimes(1);
+     expect(mockAttachmentOptions).toHaveBeenCalledWith(
+       expect.objectContaining({ filename: 'flow.mmd' }),
+@@ -470,9 +455,7 @@ describe('DownloadArtifact', () => {
+       user: 'user-1',
+     });
+     render(<DownloadArtifact artifact={artifact!} />);
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     expect(mockFileDownload).not.toHaveBeenCalled();
+     expect(createObjectURL).toHaveBeenCalledTimes(1);
+     expect(anchorClick.mock.instances[0].download).toBe('flow.preview.mmd');
+@@ -480,18 +463,14 @@ describe('DownloadArtifact', () => {
+ 
+   it('serializes content as a blob for a non-file-backed (LLM-authored) artifact', async () => {
+     render(<DownloadArtifact artifact={htmlArtifact} />);
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     expect(createObjectURL).toHaveBeenCalledTimes(1);
+     expect(mockFileDownload).not.toHaveBeenCalled();
+   });
+ 
+   it('falls back to the preview blob when an office artifact has only a lone file_id (no usable route)', async () => {
+     render(<DownloadArtifact artifact={sharedNoRouteArtifact} />);
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     // No filepath/share route and no local metadata: must NOT call the
+     // empty attachment fetch; serialize the preview content instead.
+     expect(mockFileDownload).not.toHaveBeenCalled();
+@@ -500,9 +479,7 @@ describe('DownloadArtifact', () => {
+ 
+   it('downloads the original via the local-file path when filepath is absent but local metadata is present', async () => {
+     render(<DownloadArtifact artifact={localMetadataArtifact} />);
+-    await act(async () => {
+-      fireEvent.click(screen.getByRole('button'));
+-    });
++    await pressDownload();
+     expect(mockFileDownload).toHaveBeenCalledTimes(1);
+     expect(createObjectURL).not.toHaveBeenCalled();
+   });
+diff --git a/client/src/hooks/Artifacts/useArtifacts.ts b/client/src/hooks/Artifacts/useArtifacts.ts
+index 897e79c..4774177 100644
+--- a/client/src/hooks/Artifacts/useArtifacts.ts
++++ b/client/src/hooks/Artifacts/useArtifacts.ts
+@@ -1,6 +1,7 @@
+ import { useMemo, useState, useEffect, useRef } from 'react';
+ import { Constants } from 'librechat-data-provider';
+ import { useRecoilState, useRecoilValue, useResetRecoilState } from 'recoil';
++import type { Artifact } from '~/common';
+ import { isCodeOnlyArtifact } from '~/utils/artifacts';
+ import { useArtifactsContext } from '~/Providers';
+ import { logger } from '~/utils';
+@@ -135,6 +136,15 @@ const hasEnclosedArtifact = (messageText: string): boolean => {
+   return false;
+ };
+ 
++/** EF (#153): what makes two artifact entries versions of one artifact. */
++export function artifactGroupKey(artifact?: Artifact | null): string {
++  const identifier = artifact?.identifier?.trim().toLowerCase();
++  if (identifier && identifier !== 'lc-no-identifier') {
++    return `id:${identifier}`;
++  }
++  return `t:${artifact?.type ?? ''}:${artifact?.title?.trim().toLowerCase() ?? ''}`;
++}
++
+ export default function useArtifacts() {
+   const [activeTab, setActiveTab] = useState('preview');
+   const { isSubmitting, latestMessageId, latestMessageText, conversationId } =
+@@ -288,12 +298,31 @@ export default function useArtifacts() {
+ 
+   const currentIndex = orderedArtifactIds.indexOf(currentArtifactId ?? '');
+ 
++  /* EF (#153): versions belong to one artifact, as in Claude. Entries that share an identifier (else a type and title)
++   * are its versions, in chat order; the switcher lists each artifact once, by its newest version. */
++  const { versionIds, artifactList } = useMemo(() => {
++    const groups = new Map<string, string[]>();
++    for (const id of orderedArtifactIds) {
++      const key = artifactGroupKey(artifacts?.[id]);
++      groups.set(key, [...(groups.get(key) ?? []), id]);
++    }
++    return {
++      versionIds:
++        currentArtifact != null ? (groups.get(artifactGroupKey(currentArtifact)) ?? []) : [],
++      artifactList: [...groups.values()]
++        .map((ids) => artifacts?.[ids[ids.length - 1]])
++        .filter((artifact): artifact is Artifact => artifact != null),
++    };
++  }, [artifacts, currentArtifact, orderedArtifactIds]);
++
+   return {
+     activeTab,
+     setActiveTab,
+     currentIndex,
+     currentArtifact,
+     orderedArtifactIds,
++    versionIds,
++    artifactList,
+     setCurrentArtifactId,
+   };
+ }
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index 04a3bb8..d7b4ec5 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3114,6 +3114,11 @@
+   "com_efaiw_download_pptx": "PowerPoint (.pptx)",
+   "com_efaiw_download_excel": "Excel workbook (.xlsx)",
+   "com_efaiw_excel_no_table": "There is no table to export to Excel.",
++  "com_efaiw_artifact_version_of": "Version {{0}} of {{1}}",
++  "com_efaiw_artifact_switch": "Outputs in this chat",
++  "com_efaiw_artifact_try_fix": "Try fixing",
++  "com_efaiw_artifact_fix_prompt": "The preview of \"{{0}}\" shows this error:\n\n```\n{{1}}\n```\n\nFix it and send the complete updated output with the same identifier.",
++  "com_efaiw_artifact_open_tab": "Open in new tab",
+   "com_efaiw_print_save": "Print or save as PDF",
+   "com_efaiw_print_blocked": "The browser blocked the print page. Allow pop-ups for this site, then try again.",
+   "com_efaiw_download_default_name": "Baseer reply"
+diff --git a/client/src/utils/artifactTab.ts b/client/src/utils/artifactTab.ts
+new file mode 100644
+index 0000000..cbd6067
+--- /dev/null
++++ b/client/src/utils/artifactTab.ts
+@@ -0,0 +1,48 @@
++import { withEfFonts } from './efFonts';
++
++const TAILWIND_CDN = 'https://cdn.tailwindcss.com/3.4.17';
++
++/**
++ * EF (#153): an HTML page, SVG drawing or Markdown document in a tab of its own, like Claude's "Open in new tab".
++ * The tab is a blob page with no script of its own: the artifact runs only inside a sandboxed `srcdoc` frame without
++ * `allow-same-origin`, so it has an opaque origin and cannot reach the app, its storage or the signed-in API, and it
++ * gets no top navigation. `noopener` keeps it from steering the chat tab. Tailwind and the EF font, which Sandpack
++ * gives the panel's preview, are added the same way.
++ */
++export function openArtifactInTab(html: string, title: string): void {
++  let page = withEfFonts(html);
++  const script = `<script src="${TAILWIND_CDN}"></script>`;
++  const head = /<head\b[^>]*>/i.exec(page);
++  page = head
++    ? page.slice(0, head.index + head[0].length) + script + page.slice(head.index + head[0].length)
++    : script + page;
++
++  const doc = document.implementation.createHTMLDocument(title);
++  const referrer = doc.createElement('meta');
++  referrer.setAttribute('name', 'referrer');
++  referrer.setAttribute('content', 'no-referrer');
++  const style = doc.createElement('style');
++  style.textContent =
++    'html,body{margin:0;height:100%}iframe{display:block;border:0;width:100%;height:100%}';
++  doc.head.append(referrer, style);
++  const frame = doc.createElement('iframe');
++  frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-popups');
++  frame.setAttribute('referrerpolicy', 'no-referrer');
++  frame.setAttribute('title', title);
++  frame.setAttribute('srcdoc', page);
++  doc.body.append(frame);
++
++  const url = URL.createObjectURL(
++    new Blob([`<!DOCTYPE html>${doc.documentElement.outerHTML}`], {
++      type: 'text/html;charset=utf-8',
++    }),
++  );
++  const link = document.createElement('a');
++  link.href = url;
++  link.target = '_blank';
++  link.rel = 'noopener noreferrer';
++  document.body.appendChild(link);
++  link.click();
++  link.remove();
++  setTimeout(() => URL.revokeObjectURL(url), 60_000);
++}

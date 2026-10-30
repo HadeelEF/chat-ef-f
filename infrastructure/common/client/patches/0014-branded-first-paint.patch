@@ -1,0 +1,53 @@
+Branded first paint (#118, ADR-0013). Until the app's JavaScript arrives (about 1.8 MB brotli, 10+ s on a slow phone
+connection), index.html showed an empty white container. It now shows the «بصير» mark (brand assets/ef-baseer-icon.svg,
+unaltered) and the name in the system font, so nothing waits for the web fonts; React replaces it when it mounts. The
+mark's pulse stops for users who prefer reduced motion.
+
+diff --git a/client/index.html b/client/index.html
+index 17610cd..0f0bb18 100644
+--- a/client/index.html
++++ b/client/index.html
+@@ -28,6 +28,29 @@
+         padding: 0;
+         height: 100%;
+       }
++      /* EF (#118): the first paint while the app loads, in the system font (no web font to wait for). */
++      .efaiw-splash {
++        display: flex;
++        flex-direction: column;
++        align-items: center;
++        gap: 12px;
++        color: #2c3a82;
++        font: 600 20px/1.4 Tahoma, 'Segoe UI', Arial, sans-serif;
++      }
++      .efaiw-splash img {
++        border-radius: 14px;
++        animation: efaiw-pulse 1.6s ease-in-out infinite;
++      }
++      @keyframes efaiw-pulse {
++        50% {
++          opacity: 0.55;
++        }
++      }
++      @media (prefers-reduced-motion: reduce) {
++        .efaiw-splash img {
++          animation: none;
++        }
++      }
+     </style>
+     <script>
+       let theme = null;
+@@ -240,7 +263,12 @@
+   </head>
+   <body>
+     <div id="root">
+-      <div id="loading-container"></div>
++      <div id="loading-container">
++        <div class="efaiw-splash" role="status">
++          <img src="/assets/ef-baseer-icon.svg" width="64" height="64" alt="" />
++          <span>بصير</span>
++        </div>
++      </div>
+     </div>
+   </body>
+ </html>

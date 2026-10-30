@@ -1,0 +1,185 @@
+EF AI Workspace: chat page fixes from the retest on Railway dev after 0040 (2026-10-26).
+
+- Other blocks in the platform's own namespace (R-01). The model wrote an empty «```efaiw-brand-guidelines» block before
+  a letter and it showed as a code box.
+  - utils/efaiwFollowUps.ts: stripFollowUps drops any complete fenced block whose language starts with «efaiw-», not
+    only the suggestions block. Display, copy, read aloud and downloads all use it.
+- Letters with a letterhead (R-02). Live, a letter carried as an artifact opened with the fund's name, the date and a
+  reference number, and its greeting was «سعادة/», so it lost its Word/PDF bar.
+  - isDocumentReply reads the first ten non-empty lines, skips «---» rules, and accepts «سعادة/» and «معالي/».
+- Numbered slide titles (R-06). The model titled slides «الشريحة 1 — المقدمة» / «Slide 2: Goals».
+  - utils/efaiwPptx.ts: bareSlideTitle drops that numbering, so the slide shows «المقدمة»; the deck numbers its pages.
+
+diff --git a/client/src/utils/__tests__/efaiwFollowUps.spec.ts b/client/src/utils/__tests__/efaiwFollowUps.spec.ts
+index 595a747..1d9da45 100644
+--- a/client/src/utils/__tests__/efaiwFollowUps.spec.ts
++++ b/client/src/utils/__tests__/efaiwFollowUps.spec.ts
+@@ -123,3 +123,47 @@ describe('replies with artifacts (live QA)', () => {
+     expect(followUpsFor(letter).actions).toEqual(['email']);
+   });
+ });
++
++describe('live replies after the first fixes (retest)', () => {
++  const liveLetter = [
++    '```efaiw-brand-guidelines',
++    '```',
++    '',
++    ':::artifact{identifier="letter-extension-bids" type="text/markdown" title="خطاب طلب تمديد"}',
++    '**صندوق البيئة**',
++    '**إدارة المشاريع والتطوير**',
++    '',
++    'التاريخ: 26 أكتوبر 2026م',
++    'الرقم المرجعي: PE/ADM/EXT/2026-1026',
++    '',
++    '---',
++    '',
++    '**سعادة/ مدير إدارة المشتريات المحترم**',
++    'الموضوع: طلب تمديد موعد استلام العروض',
++    ':::',
++    '',
++    'يرجى تعبئة الحقول بين الأقواس المربعة.',
++  ].join('\n');
++
++  it('never shows another «efaiw-» block, empty or not', () => {
++    expect(visibleReplyText(liveLetter).startsWith(':::artifact')).toBe(true);
++    expect(stripFollowUps('```efaiw-brand-guidelines\nنص\n```\n\nجواب.')).toBe('جواب.');
++    expect(visibleReplyText('```efaiw-brand-guidelines\n```')).toBe('');
++  });
++
++  it('hides only that block when a suggestions block follows the reply', () => {
++    const withSuggestions = `${liveLetter}\n\n\`\`\`efaiw-followups\n{"q": ["أقصر"], "a": ["email"]}\n\`\`\``;
++    const visible = visibleReplyText(withSuggestions);
++    expect(visible.startsWith(':::artifact')).toBe(true);
++    expect(visible.endsWith('يرجى تعبئة الحقول بين الأقواس المربعة.')).toBe(true);
++    expect(isDocumentReply(withSuggestions)).toBe(true);
++    expect(stripFollowUps('```efaiw-a\n```\n\nجواب\n\n```js\nx\n```')).toBe(
++      'جواب\n\n```js\nx\n```',
++    );
++  });
++
++  it('recognises a letter whose subject comes after its letterhead, date and reference', () => {
++    expect(isDocumentReply(liveLetter)).toBe(true);
++    expect(isDocumentReply('## صندوق البيئة\n\nفقرة عادية عن المشاريع.\n\n- بند')).toBe(false);
++  });
++});
+diff --git a/client/src/utils/__tests__/efaiwReplyDocuments.test.ts b/client/src/utils/__tests__/efaiwReplyDocuments.test.ts
+index 045f4d0..8914b2d 100644
+--- a/client/src/utils/__tests__/efaiwReplyDocuments.test.ts
++++ b/client/src/utils/__tests__/efaiwReplyDocuments.test.ts
+@@ -1,6 +1,6 @@
+ import { htmlBreaksToBreaks } from '../efaiwBreaks';
+ import { buildDocxParts, textArtifactsOf } from '../efaiwDocx';
+-import { isClosingTitle } from '../efaiwPptx';
++import { isClosingTitle, markdownToSlides } from '../efaiwPptx';
+ import { markdownToXlsx } from '../efaiwXlsx';
+ 
+ /** EF (live QA 2026-10-26): what a reply's downloads read, from defects seen on the live platform. */
+@@ -78,3 +78,13 @@ describe('the closing slide', () => {
+     expect(isClosingTitle('الخلاصة التنفيذية للمشروع')).toBe(false);
+   });
+ });
++
++describe('slide titles', () => {
++  it('drop the «الشريحة 1 —» numbering the model sometimes adds', () => {
++    const deck = markdownToSlides(
++      '# عرض\n\n## الشريحة 1 — المقدمة\n\n- بند\n\n## Slide 2: Goals\n\n- one\n\n## الخلاصة\n\n- بند',
++      'عرض',
++    );
++    expect(deck.slides.map((s) => s.title)).toEqual(['المقدمة', 'Goals', 'الخلاصة']);
++  });
++});
+diff --git a/client/src/utils/efaiwFollowUps.ts b/client/src/utils/efaiwFollowUps.ts
+index c87e845..9763fac 100644
+--- a/client/src/utils/efaiwFollowUps.ts
++++ b/client/src/utils/efaiwFollowUps.ts
+@@ -58,6 +58,14 @@ const BLOCK_RE = new RegExp(
+ /** A fence at the very end whose language is still being written («```efa»), while the reply streams. */
+ const PARTIAL_FENCE_RE = /\n[ \t]*```+[ \t]*(e[a-z-]*)$/;
+ 
++/**
++ * Any other fenced block in the platform's own «efaiw-» namespace is never shown either (live QA: the model wrote an
++ * empty «```efaiw-brand-guidelines» block before a letter). Its body ends at the first fence line, so the block never
++ * reaches into the reply or the suggestions block after it.
++ */
++const OTHER_EFAIW_BLOCK_RE =
++  /(?:^|\n)[ \t]*```+[ \t]*efaiw-(?!followups)[\w-]*[^\n]*\n(?:(?![ \t]*```)[^\n]*\n)*[ \t]*```+[ \t]*(?=\n|$)/g;
++
+ /** The reply without its suggestion blocks: for display, copy, download and sharing. */
+ export function stripFollowUps(text: string): string {
+   if (!text) {
+@@ -67,10 +75,13 @@ export function stripFollowUps(text: string): string {
+   if (partial != null && FOLLOW_UPS_LANG.startsWith(partial[1])) {
+     return text.slice(0, partial.index).replace(/\s+$/, '');
+   }
+-  if (!text.includes(FOLLOW_UPS_LANG)) {
+-    return text;
++  const cleaned = text.includes('efaiw-')
++    ? text.replace(OTHER_EFAIW_BLOCK_RE, '').replace(/^\n+/, '')
++    : text;
++  if (!cleaned.includes(FOLLOW_UPS_LANG)) {
++    return cleaned;
+   }
+-  return text.replace(BLOCK_RE, '').replace(/\s+$/, '');
++  return cleaned.replace(BLOCK_RE, '').replace(/\s+$/, '');
+ }
+ 
+ /**
+@@ -157,9 +168,13 @@ export function replyLanguage(text: string): 'ar' | 'en' {
+ 
+ const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
+ 
++/** A letter opens with its letterhead, date and reference number before the greeting or subject (live QA). */
++const LETTER_HEAD_LINES = 10;
++
+ /**
+- * A letter, a memo or minutes: opens with a subject line, a formal greeting or a «محضر» title. When the reply carries
+- * its document as a Markdown artifact, the artifact is read (live QA: letters came as artifacts and lost their bar).
++ * A letter, a memo or minutes: a subject line, a formal greeting or a «محضر» title within its opening lines. When the
++ * reply carries its document as a Markdown artifact, the artifact is read (live QA: letters came as artifacts and lost
++ * their bar).
+  */
+ export function isDocumentReply(text: string): boolean {
+   const visible = visibleReplyText(text ?? '');
+@@ -167,10 +182,12 @@ export function isDocumentReply(text: string): boolean {
+     .replace(/^[\s>#*_]+/gm, '')
+     .split('\n')
+     .map((line) => line.trim())
+-    .filter(Boolean)
+-    .slice(0, 4)
++    .filter((line) => line !== '' && !/^[-–—_*]{3,}$/.test(line))
++    .slice(0, LETTER_HEAD_LINES)
+     .join('\n');
+-  return /(^|\n)(الموضوع\s*:|سعادة\s|معالي\s|السلام عليكم|محضر\s|Subject\s*:|Dear\s)/i.test(head);
++  return /(^|\n)(الموضوع\s*:|سعادة[\s/]|معالي[\s/]|السلام عليكم|محضر\s|Subject\s*:|Dear\s)/i.test(
++    head,
++  );
+ }
+ 
+ /** The rules used when the block is missing: up to two actions by the reply's shape, then translation. */
+diff --git a/client/src/utils/efaiwPptx.ts b/client/src/utils/efaiwPptx.ts
+index 6738b89..b582ccd 100644
+--- a/client/src/utils/efaiwPptx.ts
++++ b/client/src/utils/efaiwPptx.ts
+@@ -185,6 +185,13 @@ const tableBlock = (node: Node): Table => {
+   };
+ };
+ 
++/** A slide's own title, without a «الشريحة 1 —» / «Slide 1:» numbering the model sometimes adds (live QA). */
++const bareSlideTitle = (text: string) =>
++  text
++    .trim()
++    .replace(/^(?:الشريحة|شريحة|slide)\s*[\d\u0660-\u0669]+\s*[—–:.-]\s*/i, '')
++    .trim();
++
+ /** The deck: its title, subtitle and slides (before pagination). */
+ export function markdownToSlides(markdown: string, fallbackTitle: string) {
+   const tree = htmlBreaksToBreaks(
+@@ -238,7 +245,7 @@ export function markdownToSlides(markdown: string, fallbackTitle: string) {
+     switch (node.type) {
+       case 'heading':
+         if ((node.depth ?? 1) <= splitDepth) {
+-          open(plain(node).trim() || title);
++          open(bareSlideTitle(plain(node)) || title);
+         } else {
+           add(para(inlines(node.children), 'sub'));
+         }

@@ -1,0 +1,137 @@
+# Lightweight CI for a documentation/configuration repository.
+# Needs no secrets and no external services. See docs/quality/testing-strategy.md.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ACTIONLINT_VERSION: "1.7.12"
+  # sha256 of actionlint_1.7.12_linux_amd64.tar.gz (from the release checksums file)
+  ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+
+jobs:
+  repository-checks:
+    name: Repository governance checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install hash-pinned validation tools
+        run: python -m pip install --require-hashes -r scripts/validate/requirements.txt
+
+      - name: Repository structure, links, skills, requirements, ADRs
+        run: python scripts/validate/repo_checks.py
+
+      - name: YAML lint
+        run: yamllint --strict .
+
+      - name: Validate GitHub configuration against JSON schemas
+        run: |
+          check-jsonschema --builtin-schema vendor.github-workflows .github/workflows/*.yml
+          check-jsonschema --builtin-schema vendor.dependabot .github/dependabot.yml
+          check-jsonschema --builtin-schema vendor.github-issue-forms \
+            .github/ISSUE_TEMPLATE/bug.yml .github/ISSUE_TEMPLATE/feature.yml
+          check-jsonschema --builtin-schema vendor.github-issue-config .github/ISSUE_TEMPLATE/config.yml
+
+  compose-validation:
+    name: Compose policy validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install hash-pinned validation tools
+        run: python -m pip install --require-hashes -r scripts/validate/requirements.txt
+
+      - name: Static policy checks and docker compose rendering (local + on-prem profiles)
+        run: python scripts/validate/compose_checks.py
+
+  railway-iac:
+    name: Railway IaC validation (offline, no token)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the pinned Railway SDK (lockfile, no install scripts)
+        run: npm ci --prefix .railway --ignore-scripts --no-audit --no-fund
+
+      - name: Install hash-pinned validation tools
+        run: python -m pip install --require-hashes -r scripts/validate/requirements.txt
+
+      - name: Evaluate and type-check .railway/railway.ts; Dockerfile and policy drift checks
+        run: python scripts/validate/railway_checks.py
+
+      - name: Negative policy tests (weakened Compose/Railway configurations must be rejected)
+        run: tests/policy/negative-checks.sh
+
+      - name: Emergency/rollback Railway deployment path (stub CLI, no token)
+        run: tests/smoke/railway-manual-deploy.sh
+
+  actionlint:
+    name: Workflow lint (actionlint)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download and verify actionlint
+        run: |
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLO "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "${archive}" actionlint
+
+      - name: Run actionlint
+        run: ./actionlint -color

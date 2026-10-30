@@ -1,0 +1,72 @@
+name: Bug report
+description: Something does not work as documented or expected.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Redact logs before pasting. Never include secrets, tokens, real employee data or confidential documents.
+        Security vulnerabilities: follow SECURITY.md instead of opening a regular issue.
+        Note: required-field validation is enforced by GitHub only on public repositories.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Repository / CI
+        - LibreChat configuration
+        - Deployment / hosting (Railway, Windows local, Ubuntu on-prem)
+        - Authentication / access
+        - Models / endpoints
+        - Knowledge / RAG / files
+        - Agents / Skills / MCP
+        - Arabic / UX / branding
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - CI (GitHub Actions)
+        - Cloud development session
+        - Railway (cloud dev/demo)
+        - Windows local (WSL2 + Docker Engine)
+        - Ubuntu on-premises
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Repository commit SHA or release tag; LibreChat version if relevant.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence (redacted logs, screenshots, CI run link)
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: This report contains no secrets, real personal data or confidential documents.
+          required: true

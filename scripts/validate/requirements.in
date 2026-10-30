@@ -1,0 +1,6 @@
+# Validation tooling used by CI (.github/workflows/*.yml) and locally.
+# Regenerate the lock file after editing (see scripts/validate/README.md).
+pyyaml==6.0.3
+yamllint==1.38.0
+check-jsonschema==0.38.2
+zizmor==1.31.1

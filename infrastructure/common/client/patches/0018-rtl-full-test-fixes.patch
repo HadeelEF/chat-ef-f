@@ -1,0 +1,118 @@
+Full Arabic RTL test (#127): defects that CSS and the Arabic overlay cannot change.
+- The client's PostCSS converted every logical utility to left-to-right physical CSS (`.start-3{left:.75rem}`,
+  `.text-start{text-align:left}`, `.me-2{margin-right:.5rem}`), so upstream components written for both directions
+  were wrong in Arabic: the sign-in labels sat on the left until focused, then jumped right, and `text-start` meant
+  left. Logical properties now stay logical (every supported browser has them); `:dir()` is still converted.
+- Sliders (model parameters, speech) ran left to right in Arabic: Radix defaults to LTR without a direction. They
+  follow the page direction now: the minimum is on the right.
+- The floating label of the side-panel search boxes (memories, files, prompts, skills, bookmarks) sat on the left.
+- /reset-password showed its form although password reset is off; like /forgot-password (0015) it returns to sign-in.
+- The hidden heading of a user message read «نص جاهز 1:» (com_ui_prompt names a saved prompt in Arabic); it has its
+  own key now (com_efaiw_message_prefix_user), English unchanged ("Prompt").
+- Found on the way, not RTL: the phone drawer's close button handed its click event to setSidebarOpen as the
+  after-slide callback, so every close threw a TypeError from requestAnimationFrame.
+
+diff --git a/client/postcss.config.cjs b/client/postcss.config.cjs
+index 9b5194e..7f485be 100644
+--- a/client/postcss.config.cjs
++++ b/client/postcss.config.cjs
+@@ -1,7 +1,9 @@
+ module.exports = {
+   plugins: [
+     require('postcss-import'),
+-    require('postcss-preset-env'),
++    // EF (ADR-0013): keep logical properties (start-3, me-2, text-start, ...) as they are. Converted, they become
++    // left/right for left-to-right pages only, so the Arabic interface placed them on the wrong side.
++    require('postcss-preset-env')({ features: { 'logical-properties-and-values': false } }),
+     require('tailwindcss'),
+     require('autoprefixer'),
+   ],
+diff --git a/client/src/components/Auth/ResetPassword.tsx b/client/src/components/Auth/ResetPassword.tsx
+index 4a84cad..4688d27 100644
+--- a/client/src/components/Auth/ResetPassword.tsx
++++ b/client/src/components/Auth/ResetPassword.tsx
+@@ -1,5 +1,5 @@
+ import { useForm } from 'react-hook-form';
+-import { useOutletContext } from 'react-router-dom';
++import { Navigate, useOutletContext } from 'react-router-dom';
+ import { useNavigate, useSearchParams } from 'react-router-dom';
+ import { Spinner, Button, SecretInput, Alert } from '@librechat/client';
+ import { useResetPasswordMutation } from 'librechat-data-provider/react-query';
+@@ -38,6 +38,11 @@ function ResetPassword() {
+     });
+   };
+ 
++  // EF (#127): with reset off no link can exist; the form only ended in an invalid-token error.
++  if (startupConfig?.passwordResetEnabled === false) {
++    return <Navigate to="/login" replace={true} />;
++  }
++
+   if (resetPassword.isSuccess) {
+     return (
+       <>
+diff --git a/client/src/components/UnifiedSidebar/mobile/Header.tsx b/client/src/components/UnifiedSidebar/mobile/Header.tsx
+index bbaebcb..2b47760 100644
+--- a/client/src/components/UnifiedSidebar/mobile/Header.tsx
++++ b/client/src/components/UnifiedSidebar/mobile/Header.tsx
+@@ -65,7 +65,9 @@ function Header({
+         aria-keyshortcuts={toggleSidebarAriaKey}
+         tabIndex={expanded ? 0 : -1}
+         className="flex-shrink-0"
+-        onClick={onClose}
++        /* EF (#127): not `onClick={onClose}`: the click event reached setSidebarOpen as its after-slide callback and
++           requestAnimationFrame threw a TypeError on every close. */
++        onClick={() => onClose()}
+       >
+         <Sidebar className="icon-md" aria-hidden="true" />
+       </Button>
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index fcb0166..7772dd1 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -1765,6 +1765,7 @@
+   "com_efaiw_reset_contact_admin": "Forgot your password? Contact the platform administrator.",
+   "com_efaiw_signin_action": "Sign in",
+   "com_efaiw_signin_title": "Sign in to Baseer",
++  "com_efaiw_message_prefix_user": "Prompt",
+   "com_efaiw_remove_added_model": "Remove the added model",
+   "com_ui_low": "Low",
+   "com_ui_make_production": "Make Production",
+diff --git a/client/src/utils/messages.ts b/client/src/utils/messages.ts
+index 1547e98..43029ff 100644
+--- a/client/src/utils/messages.ts
++++ b/client/src/utils/messages.ts
+@@ -628,7 +628,7 @@ export const getHeaderPrefixForScreenReader = (
+   const number = getMessageNumber(message);
+   const suffix = number != null ? ` ${number}` : '';
+   return message.isCreatedByUser
+-    ? `${localize('com_ui_prompt')}${suffix}: `
++    ? `${localize('com_efaiw_message_prefix_user')}${suffix}: `
+     : `${localize('com_ui_response')}${suffix}: `;
+ };
+ 
+diff --git a/packages/client/src/components/FilterInput.tsx b/packages/client/src/components/FilterInput.tsx
+index 072102d..18b6108 100644
+--- a/packages/client/src/components/FilterInput.tsx
++++ b/packages/client/src/components/FilterInput.tsx
+@@ -42,7 +42,7 @@ const FilterInput: React.ForwardRefExoticComponent<
+         />
+         <label
+           htmlFor={inputId}
+-          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-text-secondary transition-all duration-200 peer-focus:top-0 peer-focus:bg-surface-primary peer-focus:px-1 peer-focus:text-xs peer-[:not(:placeholder-shown)]:top-0 peer-[:not(:placeholder-shown)]:bg-surface-primary peer-[:not(:placeholder-shown)]:px-1 peer-[:not(:placeholder-shown)]:text-xs"
++          className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-sm text-text-secondary transition-all duration-200 peer-focus:top-0 peer-focus:bg-surface-primary peer-focus:px-1 peer-focus:text-xs peer-[:not(:placeholder-shown)]:top-0 peer-[:not(:placeholder-shown)]:bg-surface-primary peer-[:not(:placeholder-shown)]:px-1 peer-[:not(:placeholder-shown)]:text-xs"
+         >
+           {label}
+         </label>
+diff --git a/packages/client/src/components/Slider.tsx b/packages/client/src/components/Slider.tsx
+index dc83ccc..26bd9c7 100644
+--- a/packages/client/src/components/Slider.tsx
++++ b/packages/client/src/components/Slider.tsx
+@@ -27,6 +27,8 @@ const Slider: React.ForwardRefExoticComponent<SliderProps & React.RefAttributes<
+     ) => (
+       <SliderPrimitive.Root
+         ref={ref}
++        /* EF (#127): in Arabic the minimum is on the right and the track fills from the right. */
++        dir={typeof document !== 'undefined' && document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr'}
+         {...props}
+         {...{
+           className: cn(

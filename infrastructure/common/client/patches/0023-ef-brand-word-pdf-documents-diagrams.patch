@@ -1,0 +1,362 @@
+EF brand on every output the platform builds itself (#146), whatever the model writes. Environment Fund visual identity
+guide v01 (Nov 2024): primary dark #0F1822 text, primary blue #2C3A82 headings and lines, secondary blue #0051B1 links,
+the guide's lighter shades for table headers, borders and quotes, warm grey #F1EEE8 behind code.
+- Word download (utils/efaiwDocx.ts): the palette above and Tahoma, the guide's secondary typeface (p30): the reader's
+  computer is not guaranteed to have Aktiv Grotesk, and Word does not fall back from a missing font. Was Arial and
+  #1F3864 headings.
+- PDF / print view (utils/efaiwPrint.ts): the palette and Aktiv Grotesk loaded from the platform (the app's own
+  @font-face rules and files), then Tahoma.
+- Markdown documents in the side panel (utils/markdown.ts): the palette, light like the app on any device, Aktiv
+  Grotesk when the device has it, else Tahoma (the sandbox cannot load the app's fonts). A contrast mode still wins.
+- Mermaid diagrams, inline and in the side panel (utils/mermaid.ts, hooks/Mermaid/useMermaid.ts): EF theme variables
+  on Mermaid's `base` theme, with the chart series of ai/skills/ef-brand-guidelines. A contrast mode still wins.
+
+diff --git a/client/src/hooks/Mermaid/useMermaid.ts b/client/src/hooks/Mermaid/useMermaid.ts
+index fc267fc..2aee7e7 100644
+--- a/client/src/hooks/Mermaid/useMermaid.ts
++++ b/client/src/hooks/Mermaid/useMermaid.ts
+@@ -4,6 +4,7 @@ import { Md5 } from 'ts-md5';
+ import { ThemeContext } from '@librechat/client';
+ import type { MermaidConfig } from 'mermaid';
+ import {
++  EF_MERMAID_VARIABLES,
+   contrastMermaidVariables,
+   inlineFlowchartConfig,
+   sanitizeMermaidSvg,
+@@ -97,7 +98,10 @@ export const useMermaid = ({
+   // Build mermaid configuration
+   const mermaidConfig = useMemo((): MermaidConfig => {
+     const defaultTheme = isDarkMode ? 'dark' : 'neutral';
+-    const themeVariables = contrastMermaidVariables(isDarkMode, highContrast);
++    /* EF (#146): the EF colours unless a contrast mode applies. */
++    const themeVariables =
++      contrastMermaidVariables(isDarkMode, highContrast) ??
++      (isDarkMode ? undefined : EF_MERMAID_VARIABLES);
+ 
+     return {
+       startOnLoad: false,
+diff --git a/client/src/utils/efaiwDocx.ts b/client/src/utils/efaiwDocx.ts
+index bbe0694..0588de2 100644
+--- a/client/src/utils/efaiwDocx.ts
++++ b/client/src/utils/efaiwDocx.ts
+@@ -4,6 +4,10 @@
+  * stored (uncompressed) ZIP. Paragraphs written in Arabic run right to left; code, URLs and English paragraphs left
+  * to right. Covered: headings, paragraphs, bold/italic/strike, inline code, links, ordered and bulleted lists (nested),
+  * tables, code blocks, quotes, rules. Images become their alt text.
++ * EF (#146): set in the Environment Fund palette (visual identity guide v01, p22-24: primary dark text, primary blue
++ * headings, the lightest primary-blue shade on table headers, neutral shades on rules and borders, warm grey behind
++ * code) and in Tahoma, the guide's secondary typeface (p30): the reader's computer is not guaranteed to have Aktiv
++ * Grotesk, and Word does not fall back from a missing font the way a browser does.
+  */
+ import { gfm } from 'micromark-extension-gfm';
+ import { gfmFromMarkdown } from 'mdast-util-gfm';
+@@ -24,6 +28,19 @@ type Node = {
+ 
+ type RunStyle = { bold?: boolean; italic?: boolean; strike?: boolean; code?: boolean; link?: boolean };
+ 
++/** EF (#146): Environment Fund palette (hex without #, as WordprocessingML writes colours) and document font. */
++export const EF_DOC = {
++  font: 'Tahoma',
++  text: '0F1822',
++  heading: '2C3A82',
++  link: '0051B1',
++  tint: 'EAECF8',
++  line: 'C8CACD',
++  quoteLine: '9CA6E0',
++  quoteText: '373F48',
++  code: 'F1EEE8',
++} as const;
++
+ const ARABIC = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
+ const LATIN = /[A-Za-z]/;
+ 
+@@ -127,8 +144,8 @@ class DocxWriter {
+       style.bold ? '<w:b/><w:bCs/>' : '',
+       style.italic ? '<w:i/><w:iCs/>' : '',
+       style.strike ? '<w:strike/>' : '',
+-      style.link ? '<w:color w:val="1F5FAD"/><w:u w:val="single"/>' : '',
+-      style.code ? '<w:shd w:val="clear" w:color="auto" w:fill="F2F2F2"/>' : '',
++      style.link ? `<w:color w:val="${EF_DOC.link}"/><w:u w:val="single"/>` : '',
++      style.code ? `<w:shd w:val="clear" w:color="auto" w:fill="${EF_DOC.code}"/>` : '',
+       rtl && ARABIC.test(text) ? '<w:rtl/>' : '',
+     ].join('');
+     const parts = text.split('\n');
+@@ -240,7 +257,7 @@ class DocxWriter {
+           .join('');
+       case 'thematicBreak':
+         return this.paragraph('', false, {
+-          extra: '<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="BFBFBF"/></w:pBdr>',
++          extra: `<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="${EF_DOC.line}"/></w:pBdr>`,
+         });
+       case 'table':
+         return this.table(node);
+@@ -258,7 +275,8 @@ class DocxWriter {
+     const rtl = isRtlText(plainText(node));
+     const columns = Math.max(1, ...rows.map((row) => row.children?.length ?? 0));
+     const width = Math.floor(9000 / columns);
+-    const border = (side: string) => `<w:${side} w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/>`;
++    const border = (side: string) =>
++      `<w:${side} w:val="single" w:sz="4" w:space="0" w:color="${EF_DOC.line}"/>`;
+     const tblPr = [
+       '<w:tblStyle w:val="TableGrid"/>',
+       rtl ? '<w:bidiVisual/>' : '',
+@@ -278,7 +296,7 @@ class DocxWriter {
+           const jc = align === 'center' ? '<w:jc w:val="center"/>' : '';
+           const runs = cell ? this.runs(cell.children ?? [], r === 0 ? { bold: true } : {}, cellRtl) : '';
+           const p = `<w:p><w:pPr>${cellRtl ? '<w:bidi/>' : ''}${jc}<w:spacing w:after="0"/></w:pPr>${runs}</w:p>`;
+-          const shade = r === 0 ? '<w:shd w:val="clear" w:color="auto" w:fill="EDF1F7"/>' : '';
++          const shade = r === 0 ? `<w:shd w:val="clear" w:color="auto" w:fill="${EF_DOC.tint}"/>` : '';
+           return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${shade}</w:tcPr>${p}</w:tc>`;
+         }).join('');
+         const header = r === 0 ? '<w:trPr><w:tblHeader/></w:trPr>' : '';
+@@ -325,14 +343,14 @@ class DocxWriter {
+ }
+ 
+ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+-<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/><w:sz w:val="22"/><w:szCs w:val="24"/><w:lang w:val="en-US" w:bidi="ar-SA"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="300" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:spacing w:after="240"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="1F3864"/><w:sz w:val="36"/><w:szCs w:val="40"/></w:rPr></w:style>${[1, 2, 3, 4]
++<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${EF_DOC.font}" w:hAnsi="${EF_DOC.font}" w:eastAsia="${EF_DOC.font}" w:cs="${EF_DOC.font}"/><w:color w:val="${EF_DOC.text}"/><w:sz w:val="22"/><w:szCs w:val="24"/><w:lang w:val="en-US" w:bidi="ar-SA"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="300" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:spacing w:after="240"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="${EF_DOC.heading}"/><w:sz w:val="36"/><w:szCs w:val="40"/></w:rPr></w:style>${[1, 2, 3, 4]
+   .map(
+     (d) =>
+-      `<w:style w:type="paragraph" w:styleId="Heading${d}"><w:name w:val="heading ${d}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="${d === 1 ? 360 : 240}" w:after="120"/><w:outlineLvl w:val="${d - 1}"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="1F3864"/><w:sz w:val="${[32, 28, 24, 22][d - 1]}"/><w:szCs w:val="${[36, 30, 26, 24][d - 1]}"/></w:rPr></w:style>`,
++      `<w:style w:type="paragraph" w:styleId="Heading${d}"><w:name w:val="heading ${d}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="${d === 1 ? 360 : 240}" w:after="120"/><w:outlineLvl w:val="${d - 1}"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="${EF_DOC.heading}"/><w:sz w:val="${[32, 28, 24, 22][d - 1]}"/><w:szCs w:val="${[36, 30, 26, 24][d - 1]}"/></w:rPr></w:style>`,
+   )
+   .join(
+     '',
+-  )}<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="60"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="F2F2F2"/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="19"/><w:szCs w:val="19"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:pPr><w:pBdr><w:start w:val="single" w:sz="18" w:space="8" w:color="BFBFBF"/></w:pBdr><w:ind w:start="360"/></w:pPr><w:rPr><w:color w:val="595959"/></w:rPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/></w:style></w:styles>`;
++  )}<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="60"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="${EF_DOC.code}"/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="19"/><w:szCs w:val="19"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:pPr><w:pBdr><w:start w:val="single" w:sz="18" w:space="8" w:color="${EF_DOC.quoteLine}"/></w:pBdr><w:ind w:start="360"/></w:pPr><w:rPr><w:color w:val="${EF_DOC.quoteText}"/></w:rPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/></w:style></w:styles>`;
+ 
+ /** The `document.xml` body and its parts for a Markdown text. */
+ export function buildDocxParts(markdown: string, title: string): Record<string, string> {
+diff --git a/client/src/utils/efaiwPrint.ts b/client/src/utils/efaiwPrint.ts
+index d718134..afa0c4e 100644
+--- a/client/src/utils/efaiwPrint.ts
++++ b/client/src/utils/efaiwPrint.ts
+@@ -3,6 +3,9 @@
+  * Claude offer PDF next to Word). Built from the reply's Markdown with the same parser as the Word file
+  * (utils/efaiwDocx.ts), in a new tab: right to left when written in Arabic, code left to right, no app chrome. The
+  * page carries no script of its own: the opener wires its button, so a strict CSP on the app does not stop it.
++ * EF (#146): in the Environment Fund palette (visual identity guide v01, p22-24) and in Aktiv Grotesk, the primary
++ * typeface, loaded from the platform itself (the app's own font rules and files, brand/fonts), then Tahoma, the
++ * secondary one.
+  */
+ import { gfm } from 'micromark-extension-gfm';
+ import { gfmFromMarkdown } from 'mdast-util-gfm';
+@@ -127,29 +130,61 @@ export function markdownToPrintHtml(markdown: string): string {
+   return (tree.children ?? []).map(block).join('\n');
+ }
+ 
++/**
++ * EF (#146): the app's own @font-face rules for Aktiv Grotesk (brand.css), with absolute URLs: the view is an
++ * about:blank tab, and the built file names are the bundler's.
++ */
++const appFontFaces = (): string => {
++  const rules: string[] = [];
++  for (const sheet of Array.from(document.styleSheets)) {
++    let list: CSSRuleList;
++    try {
++      list = sheet.cssRules;
++    } catch {
++      continue; /* a stylesheet from another origin */
++    }
++    const base = sheet.href ?? window.location.href;
++    for (const rule of Array.from(list)) {
++      if (
++        rule instanceof CSSFontFaceRule &&
++        rule.style.getPropertyValue('font-family').includes('EF Aktiv Grotesk')
++      ) {
++        rules.push(
++          rule.cssText.replace(
++            /url\(\s*(['"]?)([^'")]+)\1\s*\)/g,
++            (_match, _quote, url: string) => `url("${new URL(url, base).href}")`,
++          ),
++        );
++      }
++    }
++  }
++  return rules.join('\n');
++};
++
+ const STYLE = `
+ @page { size: A4; margin: 18mm 16mm; }
+ * { box-sizing: border-box; }
+-body { margin: 0; color: #17211e; background: #fff; font: 16px/1.75 "Segoe UI", "Geeza Pro", "Noto Naskh Arabic", Tahoma, Arial, sans-serif; }
++body { margin: 0; color: #0f1822; background: #fff; font: 16px/1.75 "EF Aktiv Grotesk", Tahoma, "Segoe UI", "Geeza Pro", Arial, sans-serif; }
+ main { max-width: 760px; margin: 0 auto; padding: 24px 20px 48px; }
+-h1, h2, h3, h4 { line-height: 1.4; margin: 1.2em 0 0.5em; color: #1f3864; }
++h1, h2, h3, h4 { line-height: 1.4; margin: 1.2em 0 0.5em; color: #2c3a82; font-weight: 700; }
++h2, h3, h4 { font-weight: 600; }
+ h1 { font-size: 1.6em; } h2 { font-size: 1.35em; } h3 { font-size: 1.15em; } h4 { font-size: 1em; }
+ p, li, td, th, blockquote { text-align: start; }
+ p { margin: 0 0 0.8em; }
+ ul, ol { margin: 0 0 0.8em; padding-inline-start: 1.6em; }
+ li { margin: 0.2em 0; }
+ table { border-collapse: collapse; width: 100%; margin: 0.8em 0 1.2em; font-size: 0.95em; break-inside: auto; }
+-th, td { border: 1px solid #bfbfbf; padding: 6px 10px; vertical-align: top; }
+-th { background: #edf1f7; font-weight: 600; }
++th, td { border: 1px solid #c8cacd; padding: 6px 10px; vertical-align: top; }
++th { background: #eaecf8; font-weight: 600; }
+ tr { break-inside: avoid; }
+-pre { background: #f2f2f2; border-radius: 6px; padding: 10px 12px; overflow-x: auto; white-space: pre-wrap; font: 13px/1.5 Consolas, "Courier New", monospace; text-align: left; break-inside: avoid; }
+-code { font-family: Consolas, "Courier New", monospace; font-size: 0.92em; background: #f2f2f2; padding: 0 4px; border-radius: 4px; direction: ltr; unicode-bidi: isolate; }
++pre { background: #f1eee8; border-radius: 6px; padding: 10px 12px; overflow-x: auto; white-space: pre-wrap; font: 13px/1.5 Consolas, "Courier New", monospace; text-align: left; break-inside: avoid; }
++code { font-family: Consolas, "Courier New", monospace; font-size: 0.92em; background: #f1eee8; padding: 0 4px; border-radius: 4px; direction: ltr; unicode-bidi: isolate; }
+ pre code { background: none; padding: 0; }
+-blockquote { margin: 0 0 0.8em; padding-inline-start: 12px; border-inline-start: 3px solid #bfbfbf; color: #595959; }
+-hr { border: 0; border-top: 1px solid #bfbfbf; margin: 1.2em 0; }
+-a { color: #1f5fad; }
+-.bar { position: sticky; top: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 10px 20px; background: #f6f8f7; border-bottom: 1px solid #d9e1de; }
+-.bar button { font: inherit; font-size: 15px; padding: 8px 18px; border-radius: 999px; border: 0; background: #2b3a8f; color: #fff; cursor: pointer; }
++blockquote { margin: 0 0 0.8em; padding-inline-start: 12px; border-inline-start: 3px solid #9ca6e0; color: #373f48; }
++hr { border: 0; border-top: 1px solid #c8cacd; margin: 1.2em 0; }
++a { color: #0051b1; }
++.bar { position: sticky; top: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 10px 20px; background: #eaecf8; border-bottom: 1px solid #c3c9ec; }
++.bar button { font: inherit; font-size: 15px; padding: 8px 18px; border-radius: 999px; border: 0; background: #2c3a82; color: #fff; cursor: pointer; }
+ @media print { .bar { display: none; } main { padding: 0; } }
+ `;
+ 
+@@ -170,7 +205,7 @@ export function openPrintView(
+   doc.open();
+   doc.write(`<!doctype html><html lang="${labels.lang}" dir="${labels.dir}"><head><meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title>
+-<style>${STYLE}</style></head><body><div class="bar"><button type="button" id="efaiw-print">${esc(labels.print)}</button></div>
++<style>${appFontFaces()}${STYLE}</style></head><body><div class="bar"><button type="button" id="efaiw-print">${esc(labels.print)}</button></div>
+ <main dir="${isRtlText(markdown) ? 'rtl' : 'ltr'}">${markdownToPrintHtml(markdown)}</main></body></html>`);
+   doc.close();
+   doc.getElementById('efaiw-print')?.addEventListener('click', () => view.print());
+diff --git a/client/src/utils/markdown.ts b/client/src/utils/markdown.ts
+index 366ba6f..5723d6d 100644
+--- a/client/src/utils/markdown.ts
++++ b/client/src/utils/markdown.ts
+@@ -325,6 +325,27 @@ const EFAIW_BIDI_CSS = `
+ .markdown-body pre, .markdown-body code { direction: ltr; unicode-bidi: isolate; text-align: left; }
+ `;
+ 
++/**
++ * EF (#146): documents in the Environment Fund palette and type (visual identity guide v01, p22-24 and p28-30), light
++ * like the app (patch 0012) whatever the device's colour scheme. Aktiv Grotesk when the device has it, else Tahoma,
++ * the secondary typeface: the preview runs in the sandbox's own origin, which cannot load the app's font files. A
++ * contrast mode (contrastCSS, after this) still wins.
++ */
++const EFAIW_BRAND_CSS = `
++html, body { background-color: #FFFFFF; }
++.markdown-body { font-family: "Aktiv Grotesk", Tahoma, "Segoe UI", "Geeza Pro", Arial, sans-serif; color: #0F1822; background-color: #FFFFFF; }
++.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 { color: #2C3A82; }
++.markdown-body h1 { font-weight: 700; }
++.markdown-body h2, .markdown-body h3, .markdown-body h4 { font-weight: 600; }
++.markdown-body h1, .markdown-body h2 { border-bottom-color: #C8CACD; }
++.markdown-body a, .markdown-body a:hover { color: #0051B1; }
++.markdown-body table thead { background-color: #EAECF8; }
++.markdown-body table th, .markdown-body table td { border-color: #C8CACD; }
++.markdown-body blockquote { border-left: 0; border-inline-start: 0.25em solid #9CA6E0; color: #373F48; }
++.markdown-body hr { background-color: #C8CACD; }
++.markdown-body code, .markdown-body pre { color: #0F1822; background-color: #F1EEE8; }
++`;
++
+ function generateMarkdownHtml(content: string, contrastCSS = ''): string {
+   const normalizedContent = content.replace(/^( {2})(-|\d+\.)/gm, '    $2');
+   const escapedContent = escapeForTemplateLiteral(normalizedContent);
+@@ -335,7 +356,7 @@ function generateMarkdownHtml(content: string, contrastCSS = ''): string {
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ <title>Markdown Preview</title>
+-<style>${markdownCSS}${EFAIW_BIDI_CSS}${contrastCSS}</style>
++<style>${markdownCSS}${EFAIW_BIDI_CSS}${EFAIW_BRAND_CSS}${contrastCSS}</style>
+ </head>
+ <body>
+ <div class="markdown-body" id="content" dir="auto" style="padding:2rem;margin:1rem;min-height:100vh"></div>
+diff --git a/client/src/utils/mermaid.ts b/client/src/utils/mermaid.ts
+index c1a0831..dd53e4c 100644
+--- a/client/src/utils/mermaid.ts
++++ b/client/src/utils/mermaid.ts
+@@ -128,6 +128,79 @@ const gitVariables = (slots: string[], canvas: string, ink: string): Record<stri
+     ]).flat(),
+   );
+ 
++/**
++ * EF (#146): Environment Fund colours for every diagram in the light appearance (the only one the app offers, patch
++ * 0012), inline in a reply and in the side panel. From the visual identity guide v01 (p22-24): primary blue edges and
++ * borders on the lightest primary-blue fill, primary dark text, warm grey, brown and green shades for the secondary
++ * series; the chart series follow the order in ai/skills/ef-brand-guidelines. Aktiv Grotesk where the page has it
++ * (the app), Tahoma otherwise (the side panel's sandbox). A contrast mode still wins (contrastMermaidVariables).
++ */
++export const EF_MERMAID_VARIABLES: Record<string, string> = {
++  fontFamily: '"EF Aktiv Grotesk", "Aktiv Grotesk", Tahoma, Arial, sans-serif',
++  background: '#FFFFFF',
++  mainBkg: '#EAECF8',
++  primaryColor: '#EAECF8',
++  primaryBorderColor: '#2C3A82',
++  primaryTextColor: '#0F1822',
++  secondaryColor: '#F1EEE8',
++  secondaryBorderColor: '#A18E77',
++  secondaryTextColor: '#0F1822',
++  tertiaryColor: '#ECF1D1',
++  tertiaryBorderColor: '#87952E',
++  tertiaryTextColor: '#0F1822',
++  nodeBorder: '#2C3A82',
++  clusterBkg: '#F5F3F0',
++  clusterBorder: '#C8CACD',
++  lineColor: '#2C3A82',
++  textColor: '#0F1822',
++  titleColor: '#2C3A82',
++  edgeLabelBackground: '#FFFFFF',
++  actorBkg: '#EAECF8',
++  actorBorder: '#2C3A82',
++  actorTextColor: '#0F1822',
++  actorLineColor: '#9CA6E0',
++  signalColor: '#2C3A82',
++  signalTextColor: '#0F1822',
++  labelBoxBkgColor: '#EAECF8',
++  labelBoxBorderColor: '#2C3A82',
++  labelTextColor: '#0F1822',
++  loopTextColor: '#0F1822',
++  noteBkgColor: '#F1EEE8',
++  noteBorderColor: '#A18E77',
++  noteTextColor: '#0F1822',
++  activationBkgColor: '#C3C9EC',
++  activationBorderColor: '#2C3A82',
++  sectionBkgColor: '#EAECF8',
++  sectionBkgColor2: '#FFFFFF',
++  altSectionBkgColor: '#F5F3F0',
++  gridColor: '#C8CACD',
++  taskBkgColor: '#2C3A82',
++  taskBorderColor: '#1E285F',
++  taskTextColor: '#FFFFFF',
++  taskTextLightColor: '#FFFFFF',
++  taskTextDarkColor: '#0F1822',
++  taskTextOutsideColor: '#0F1822',
++  activeTaskBkgColor: '#0051B1',
++  activeTaskBorderColor: '#003A85',
++  doneTaskBkgColor: '#C3C9EC',
++  doneTaskBorderColor: '#9CA6E0',
++  critBkgColor: '#A18E77',
++  critBorderColor: '#6D5B46',
++  todayLineColor: '#0051B1',
++  pie1: '#2C3A82',
++  pie2: '#0051B1',
++  pie3: '#C0CB6C',
++  pie4: '#A18E77',
++  pie5: '#4E61C8',
++  pie6: '#87952E',
++  pie7: '#CDC0B2',
++  pieTitleTextColor: '#2C3A82',
++  pieSectionTextColor: '#FFFFFF',
++  pieLegendTextColor: '#0F1822',
++  pieStrokeColor: '#FFFFFF',
++  pieOuterStrokeColor: '#C8CACD',
++};
++
+ /**
+  * Mermaid's built-in `neutral` and `dark` themes carry their own palette, which
+  * no app token can reach, so a diagram keeps mid-grey nodes and mid-grey edges
+@@ -634,7 +707,10 @@ export default App;
+ };
+ 
+ export const getMermaidFiles = (content: string, isDarkMode = true, highContrast = false) => {
+-  const themeVariables = contrastMermaidVariables(isDarkMode, highContrast);
++  /* EF (#146): the EF colours unless a contrast mode applies. */
++  const themeVariables =
++    contrastMermaidVariables(isDarkMode, highContrast) ??
++    (isDarkMode ? undefined : EF_MERMAID_VARIABLES);
+   const standardTheme = isDarkMode ? 'dark' : 'neutral';
+   /** `base` is the only built-in mermaid theme that honours themeVariables. */
+   const mermaidTheme = themeVariables ? 'base' : standardTheme;

@@ -1,0 +1,110 @@
+Chat page QA (#133): screen-reader names on the chat page, in Arabic and matching what is on screen.
+- Toast region: Radix's default label «Notifications (F8)» was announced in English on every page; it now uses the
+  interface language (com_efaiw_notifications_region, the {hotkey} placeholder is Radix's own).
+- Model button: its accessible name was always «اختر نموذجًا» while it shows «بصير لايت» (WCAG 2.5.3 Label in Name,
+  level A: a voice-control user saying the visible name could not reach it). The name now starts with the visible
+  model name and keeps the action: «بصير لايت، اختر نموذجًا». With nothing selected it stays «اختر نموذجًا».
+- History item: a chat without a generated title showed «دردشة جديدة» but was announced as «محادثة New Chat» (the
+  stored default title); the accessible name now uses the displayed title.
+
+diff --git a/client/src/App.jsx b/client/src/App.jsx
+index c210b47..8dd81bb 100644
+--- a/client/src/App.jsx
++++ b/client/src/App.jsx
+@@ -6,7 +6,7 @@ import * as RadixToast from '@radix-ui/react-toast';
+ import { HTML5Backend } from 'react-dnd-html5-backend';
+ import { QueryClient, QueryClientProvider, QueryCache } from '@tanstack/react-query';
+ import { Toast, ThemeProvider, ToastProvider, useInputModality } from '@librechat/client';
+-import { ScreenshotProvider, useApiErrorBoundary } from './hooks';
++import { ScreenshotProvider, useApiErrorBoundary, useLocalize } from './hooks';
+ import WakeLockManager from '~/components/System/WakeLockManager';
+ import QueryDevtoolsGate from '~/components/QueryDevtoolsGate';
+ import LanguageSync from '~/components/System/LanguageSync';
+@@ -15,6 +15,17 @@ import { initializeFontSize } from '~/store/fontSize';
+ import { LiveAnnouncer } from '~/a11y';
+ import { router } from './routes';
+ 
++/** The toast region is announced in the interface language, not as Radix's English «Notifications (F8)». */
++const ToastViewport = () => {
++  const localize = useLocalize();
++  return (
++    <RadixToast.Viewport
++      label={localize('com_efaiw_notifications_region')}
++      className="pointer-events-none fixed inset-x-0 top-0 z-[1000] mx-auto my-2 flex max-w-[560px] flex-col items-stretch justify-start"
++    />
++  );
++};
++
+ const App = () => {
+   const { setError } = useApiErrorBoundary();
+   useInputModality();
+@@ -87,7 +98,7 @@ const App = () => {
+                   <WakeLockManager />
+                   <QueryDevtoolsGate />
+                   <Toast />
+-                  <RadixToast.Viewport className="pointer-events-none fixed inset-x-0 top-0 z-[1000] mx-auto my-2 flex max-w-[560px] flex-col items-stretch justify-start" />
++                  <ToastViewport />
+                 </DndProvider>
+               </ToastProvider>
+             </RadixToast.Provider>
+diff --git a/client/src/components/Chat/Menus/Endpoints/ModelSelector.tsx b/client/src/components/Chat/Menus/Endpoints/ModelSelector.tsx
+index 3df54d0..a7bd952 100644
+--- a/client/src/components/Chat/Menus/Endpoints/ModelSelector.tsx
++++ b/client/src/components/Chat/Menus/Endpoints/ModelSelector.tsx
+@@ -70,9 +70,14 @@ function ModelSelectorContent({ variant }: { variant: ModelSelectorVariant }) {
+   );
+ 
+   const inComposer = variant === 'composer';
++  /** WCAG 2.5.3: the accessible name starts with the visible model name, then says what the button does. */
++  const triggerLabel =
++    selectedDisplayValue && selectedDisplayValue !== localize('com_ui_select_model')
++      ? localize('com_efaiw_model_selector_label', { model: selectedDisplayValue })
++      : localize('com_ui_select_model');
+   const trigger = (
+     <TooltipAnchor
+-      aria-label={localize('com_ui_select_model')}
++      aria-label={triggerLabel}
+       description={modelSelectorHint}
+       render={
+         <button
+@@ -83,7 +88,7 @@ function ModelSelectorContent({ variant }: { variant: ModelSelectorVariant }) {
+               ? 'flex h-9 max-w-full items-center gap-1 rounded-full px-2.5 text-sm font-medium text-text-secondary hover:bg-surface-hover hover:text-text-primary'
+               : 'my-1 flex h-9 max-w-full items-center gap-2 rounded-xl border border-border-light bg-presentation px-3 py-2 text-sm text-text-primary hover:bg-surface-active-alt'
+           }
+-          aria-label={localize('com_ui_select_model')}
++          aria-label={triggerLabel}
+         >
+           {!inComposer && selectedIcon && React.isValidElement(selectedIcon) && (
+             <div className="flex flex-shrink-0 items-center justify-center overflow-hidden">
+diff --git a/client/src/components/Conversations/ConvoLink.tsx b/client/src/components/Conversations/ConvoLink.tsx
+index efa5442..50e1920 100644
+--- a/client/src/components/Conversations/ConvoLink.tsx
++++ b/client/src/components/Conversations/ConvoLink.tsx
+@@ -138,12 +138,8 @@ const ConvoLink: React.FC<ConvoLinkProps> = ({
+       aria-keyshortcuts={keyShortcuts}
+       aria-label={
+         isSharedBadgeVisible
+-          ? localize('com_ui_conversation_label_shared', {
+-              title: title || localize('com_ui_untitled'),
+-            })
+-          : localize('com_ui_conversation_label', {
+-              title: title || localize('com_ui_untitled'),
+-            })
++          ? localize('com_ui_conversation_label_shared', { title: displayTitle })
++          : localize('com_ui_conversation_label', { title: displayTitle })
+       }
+     >
+       {children}
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index 2feebe3..a741cbd 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3097,5 +3097,7 @@
+   "com_efaiw_rail_bookmarks": "Bookmarks",
+   "com_efaiw_rail_files": "Files",
+   "com_efaiw_rail_parameters": "Parameters",
+-  "com_efaiw_tools_options": "Tools Options"
++  "com_efaiw_tools_options": "Tools Options",
++  "com_efaiw_notifications_region": "Notifications ({hotkey})",
++  "com_efaiw_model_selector_label": "{{model}}, select a model"
+ }

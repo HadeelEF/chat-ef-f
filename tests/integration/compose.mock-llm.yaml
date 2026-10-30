@@ -1,0 +1,47 @@
+# TEST-ONLY overlay for the synthetic chat regression test (#38): never use it on Railway, a workstation or a server.
+# Usage: tests/integration/mock_chat.py layers it on compose.yaml + compose.local.yaml with throwaway secrets.
+#   - mock-llm: deterministic OpenAI-compatible stub (mock-llm/mock-llm.mjs) run by the Node.js runtime of the SAME
+#     digest-pinned LibreChat image (no extra image); attached ONLY to the internal backend network: no published port,
+#     no internet route, reachable only by LibreChat.
+#   - librechat: reads a generated librechat.yaml (the shared infrastructure/common/librechat.yaml + the mock endpoints
+#     in librechat.mock-endpoints.yaml) instead of the shared file, and receives the per-run mock key.
+services:
+  librechat:
+    depends_on:
+      mock-llm:
+        condition: service_healthy
+    environment:
+      MOCK_LLM_API_KEY: ${MOCK_LLM_API_KEY:?generated per test run}
+    volumes:
+      - type: bind
+        source: ${MOCK_LIBRECHAT_YAML:?generated per test run}
+        target: /app/librechat.yaml
+        read_only: true
+
+  mock-llm:
+    image: ghcr.io/librechat-ai/librechat:v0.8.8@sha256:5b706bcee1ca154a1e2987303aaeca0eb27f97919cccee4bb604226c2f8abf61
+    entrypoint: ["node", "/mock/mock-llm.mjs"]
+    environment:
+      MOCK_LLM_API_KEY: ${MOCK_LLM_API_KEY:?generated per test run}
+    volumes:
+      # Absolute path set by the test: relative paths resolve against infrastructure/compose (the first compose file).
+      - type: bind
+        source: ${MOCK_LLM_DIR:?set by the test run}
+        target: /mock
+        read_only: true
+    networks:
+      - backend
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

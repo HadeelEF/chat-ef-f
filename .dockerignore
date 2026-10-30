@@ -1,0 +1,9 @@
+# Build context for infrastructure/railway/*.Dockerfile (built from the repository root by Railway).
+# Allow-list only what the images COPY; everything else (including any local .env file) stays out of the context.
+*
+!infrastructure/common/
+!infrastructure/railway/
+# Platform Skills baked into the LibreChat image (ADR-0017).
+!ai/skills/
+# EF ready commands baked into the LibreChat image (ADR-0018).
+!ai/prompts/

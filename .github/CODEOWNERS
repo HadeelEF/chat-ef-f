@@ -1,0 +1,12 @@
+# Code owners are requested for review automatically.
+# Enforcement requires branch protection with "Require review from Code Owners" (see project/CURRENT_STATE.md).
+*                     @faenazi
+
+# Governance-critical paths (explicit for visibility when more owners are added)
+/.github/             @faenazi
+/.claude/             @faenazi
+/AGENTS.md            @faenazi
+/CLAUDE.md            @faenazi
+/SECURITY.md          @faenazi
+/docs/architecture/   @faenazi
+/docs/security/       @faenazi

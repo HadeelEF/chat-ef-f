@@ -1,0 +1,55 @@
+B-07, B-13, B-11 (#89, ADR-0013): the message box follows the text direction (dir=auto) instead of fixed LTR;
+code blocks stay LTR inside Arabic replies; in RTL the active-chat marker moves to the right and switch thumbs
+slide left (`rtl:` variants, because postcss-preset-env compiles logical utilities such as `start-0` to `left`).
+
+diff --git a/client/src/components/Conversations/Convo.tsx b/client/src/components/Conversations/Convo.tsx
+index 40dd746..f31e0f0 100644
+--- a/client/src/components/Conversations/Convo.tsx
++++ b/client/src/components/Conversations/Convo.tsx
+@@ -314,7 +314,7 @@ function Conversation({
+       className={cn(
+         'group relative flex h-12 w-full items-center rounded-lg outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-text-primary md:h-9',
+         isActiveConvo || isPopoverActive
+-          ? 'bg-surface-active-alt before:absolute before:bottom-1 before:left-0 before:top-1 before:w-0.5 before:rounded-full before:bg-text-primary'
++          ? 'bg-surface-active-alt before:absolute before:bottom-1 before:left-0 rtl:before:left-auto rtl:before:right-0 before:top-1 before:w-0.5 before:rounded-full before:bg-text-primary'
+           : 'hover:bg-surface-active-alt',
+       )}
+       onPointerEnter={(event) => {
+diff --git a/client/src/components/Messages/Content/CodeBlock.tsx b/client/src/components/Messages/Content/CodeBlock.tsx
+index 2b82a38..2ffce2d 100644
+--- a/client/src/components/Messages/Content/CodeBlock.tsx
++++ b/client/src/components/Messages/Content/CodeBlock.tsx
+@@ -101,6 +101,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({
+   return (
+     <div
+       ref={containerRef}
++      dir="ltr"
+       className="relative w-full overflow-hidden rounded-xl border border-border-light text-xs"
+       onMouseEnter={handleMouseEnter}
+       onMouseLeave={handleMouseLeave}
+diff --git a/packages/client/src/components/Switch.tsx b/packages/client/src/components/Switch.tsx
+index 0617750..d7a2c57 100644
+--- a/packages/client/src/components/Switch.tsx
++++ b/packages/client/src/components/Switch.tsx
+@@ -31,7 +31,7 @@ const Switch: React.ForwardRefExoticComponent<
+     >
+       <SwitchPrimitives.Thumb
+         className={cn(
+-          'pointer-events-none block h-5 w-5 rounded-full bg-surface-primary shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-5 data-[state=unchecked]:translate-x-0',
++          'pointer-events-none block h-5 w-5 rounded-full bg-surface-primary shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-5 data-[state=unchecked]:translate-x-0 rtl:data-[state=checked]:-translate-x-5',
+         )}
+       />
+     </SwitchPrimitives.Root>
+diff --git a/packages/client/src/store.ts b/packages/client/src/store.ts
+index 660b825..98a8869 100644
+--- a/packages/client/src/store.ts
++++ b/packages/client/src/store.ts
+@@ -3,7 +3,7 @@ import { NotificationSeverity } from '~/common';
+ 
+ export const chatDirectionAtom: PrimitiveAtom<string> & {
+   init: string;
+-} = atom<string>('ltr');
++} = atom<string>('auto');
+ export const fontSizeAtom: PrimitiveAtom<string> & {
+   init: string;
+ } = atom<string>('text-base');

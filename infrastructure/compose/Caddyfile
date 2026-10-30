@@ -1,0 +1,39 @@
+# EF AI Workspace — on-premises HTTPS reverse proxy (Caddy). Used only by compose.onprem.yaml.
+# Values come from the container environment and are substituted before parsing:
+#   EFAIW_HOSTNAME        internal DNS name users open, e.g. ai-workspace.internal.example
+#   EFAIW_ADMIN_HOSTNAME  internal DNS name of the Admin Panel (ADR-0016), e.g. admin.ai-workspace.internal.example;
+#                         with certificate files, the certificate must cover both names (SAN)
+#   EFAIW_TLS       one of (docs/operations/ubuntu-onprem.md §TLS):
+#                     /etc/caddy/tls/fullchain.pem /etc/caddy/tls/privkey.pem   enterprise CA certificate (recommended)
+#                     internal                                                   Caddy's own CA (lab/pilot only)
+#                     ops@example.com                                            public ACME (only for publicly resolvable names)
+
+# Global options are left at their defaults: the admin API listens on the container loopback only (localhost:2019),
+# and no trusted_proxies are set, so Caddy ignores client-supplied X-Forwarded-For and sends the real client address.
+# Caddy is the single proxy hop in front of LibreChat (TRUST_PROXY=1 in infrastructure/common/librechat.env).
+
+(efaiw_site) {
+	tls {$EFAIW_TLS}
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+{$EFAIW_HOSTNAME} {
+	import efaiw_site
+
+	# Server-sent events (chat streaming) are flushed immediately by Caddy for text/event-stream responses.
+	reverse_proxy librechat:3080
+}
+
+{$EFAIW_ADMIN_HOSTNAME} {
+	import efaiw_site
+
+	reverse_proxy admin-panel:3000
+}

@@ -1,0 +1,249 @@
+# EF AI Workspace — platform foundation for Docker Compose hosts: LibreChat + MongoDB + Meilisearch (conversation search)
+# + the LibreChat Admin Panel (ADR-0016).
+#
+# Base file shared by two environments (ADR-0008); never run it alone:
+#   - Windows 11 local (Ubuntu WSL2 + Docker Engine): compose.yaml + compose.local.yaml -> http://localhost:3080 (loopback only)
+#   - Ubuntu Server on-premises (Docker Engine): compose.yaml + compose.onprem.yaml  -> HTTPS via the Caddy reverse proxy
+# Railway (cloud dev/demo) runs the same images and the same infrastructure/common/ configuration via .railway/railway.ts.
+# Docs: docs/operations/deployment.md · Decisions: ADR-0007 (versions), ADR-0008 (hosting)
+#
+# Security model:
+#   - No service publishes a host port here. Overrides add the entry point: loopback ports for LibreChat and the Admin
+#     Panel locally, the single HTTPS proxy on-prem.
+#   - MongoDB runs with authentication on an internal-only network; LibreChat uses a least-privilege readWrite user.
+#   - Meilisearch (search index, rebuilt from MongoDB) sits on the same internal-only network behind its master key.
+#   - The Admin Panel holds no data and never reaches MongoDB: it calls LibreChat's /api/admin/* on the frontend network,
+#     and LibreChat checks admin rights on every request. Reachable only through the overrides' single entry point.
+#   - Every secret is required (${VAR:?}) and has no default; values live only in a local, git-ignored .env file.
+#   - Application policy (self-registration on, shared links behind the login, ...) comes from infrastructure/common/librechat.env.
+name: ef-ai-workspace
+
+services:
+  librechat:
+    # LibreChat v0.8.8 (upstream tag e8f3be0, 2026-09-30). Multi-arch index digest; identical on docker.io/librechat/librechat.
+    # The same digest is the base of infrastructure/railway/librechat.Dockerfile (checked by railway_checks.py).
+    image: ghcr.io/librechat-ai/librechat:v0.8.8@sha256:5b706bcee1ca154a1e2987303aaeca0eb27f97919cccee4bb604226c2f8abf61
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    expose:
+      - "3080"
+    # The image's own `npm run backend`, after the MCP permissions of the two roles (ADR-0021; the server does not
+    # start if they cannot be set) and with the one-off creation of the EF ready commands in the background (ADR-0018;
+    # the script waits for the server's roles and an ADMIN account, then exits). Railway: librechat-start.sh.
+    command:
+      - sh
+      - -c
+      # yamllint disable-line rule:line-length
+      - node config/efaiw-roles-policy.js || exit 1; node config/efaiw-prompts-seed.js /app/efaiw-prompts/ef-templates.json & exec npm run backend
+    env_file:
+      - path: ../common/librechat.env
+        required: true
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3080"
+      # A URI cannot be folded across lines, hence the long line below.
+      # yamllint disable-line rule:line-length
+      MONGO_URI: mongodb://${MONGO_APP_USERNAME:?set MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD:?set MONGO_APP_PASSWORD}@mongodb:27017/${MONGO_APP_DATABASE:-LibreChat}?authSource=${MONGO_APP_DATABASE:-LibreChat}
+      DOMAIN_CLIENT: ${DOMAIN_CLIENT:?set DOMAIN_CLIENT to the URL users open}
+      DOMAIN_SERVER: ${DOMAIN_SERVER:?set DOMAIN_SERVER to the URL users open}
+      # URL admins open for the Admin Panel (ADR-0016): the Settings link for admins, and a trusted origin for admin login.
+      ADMIN_PANEL_URL: ${ADMIN_PANEL_URL:?set ADMIN_PANEL_URL to the URL admins open for the admin panel}
+      # Secrets: hex values generated per environment (scripts/setup/new-env.sh).
+      CREDS_KEY: ${CREDS_KEY:?set CREDS_KEY (64 hex chars)}
+      CREDS_IV: ${CREDS_IV:?set CREDS_IV (32 hex chars)}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET}
+      # Conversation search (#125, SEARCH=true in librechat.env): the private Meilisearch service below.
+      MEILI_HOST: http://meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?set MEILI_MASTER_KEY (64 hex chars)}
+      # Approved LLM provider key (#37, OD-01). Optional for local stacks: empty or unset leaves the Qwen endpoint
+      # configured but unusable (every chat ends with the generic provider error). Never put a real key in Git.
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+    volumes:
+      - type: bind
+        source: ../common/librechat.yaml
+        target: /app/librechat.yaml
+        read_only: true
+      # Platform Skills (ADR-0017): read-only Skills shown to every user; /app/skill is LibreChat's default
+      # DEPLOYMENT_SKILLS_DIR. The Railway image bakes the same folder.
+      - type: bind
+        source: ../../ai/skills
+        target: /app/skill
+        read_only: true
+      # EF ready commands (ADR-0018): the templates and the script that creates them once (see `command` below).
+      - type: bind
+        source: ../../ai/prompts
+        target: /app/efaiw-prompts
+        read_only: true
+      - type: bind
+        source: ../common/prompts-seed.js
+        target: /app/config/efaiw-prompts-seed.js
+        read_only: true
+      # MCP servers for admins only (ADR-0021): the script that `command` runs before the server.
+      - type: bind
+        source: ../common/roles-policy.js
+        target: /app/config/efaiw-roles-policy.js
+        read_only: true
+      - librechat-uploads:/app/uploads
+      - librechat-images:/app/client/public/images
+      - librechat-logs:/app/logs
+      - librechat-data:/app/data
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  mongodb:
+    # MongoDB 8.0.34: latest patch of the 8.0 series used by upstream LibreChat v0.8.8 (mongo:8.0.20).
+    # The same digest is the base of infrastructure/railway/mongodb.Dockerfile (checked by railway_checks.py).
+    image: mongo:8.0.34@sha256:4a4ab5d4834207389e0d7270fac988e21ffedccecba77991a552f755df229907
+    restart: unless-stopped
+    command: ["mongod", "--auth"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?set MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD}
+      # Used once by infrastructure/common/mongo-init/ to create the least-privilege application user on an empty volume.
+      MONGO_APP_DATABASE: ${MONGO_APP_DATABASE:-LibreChat}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME:?set MONGO_APP_USERNAME}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?set MONGO_APP_PASSWORD}
+    volumes:
+      - mongodb-data:/data/db
+      - type: bind
+        source: ../common/mongo-init
+        target: /docker-entrypoint-initdb.d
+        read_only: true
+    networks:
+      - backend
+    healthcheck:
+      # Readiness = the application user can authenticate (it exists only after first-run initialisation completes).
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --norc "mongodb://127.0.0.1:27017/$$MONGO_APP_DATABASE"
+          -u "$$MONGO_APP_USERNAME" -p "$$MONGO_APP_PASSWORD" --authenticationDatabase "$$MONGO_APP_DATABASE"
+          --eval "quit(db.runCommand({ ping: 1 }).ok === 1 ? 0 : 1)"
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # Required by the official entrypoint to fix volume ownership and drop to the mongodb user.
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+    logging: *default-logging
+
+  meilisearch:
+    # Meilisearch 1.54.3 (2026-10-01), latest patch of 1.54. Upstream LibreChat v0.8.8 pins v1.35.1, which carries
+    # 2 CRITICAL / 27 HIGH findings (Trivy 0.76.0, 2026-10-21); 1.54.3 has 0 / 10 (curl only). The search API that
+    # LibreChat's client (meilisearch-js 0.38) calls is stable across 1.x. Multi-arch index digest from Docker Hub.
+    # The same digest is the base of infrastructure/railway/meilisearch.Dockerfile (checked by railway_checks.py).
+    image: getmeili/meilisearch:v1.54.3@sha256:e68913ab7d6f5b159529e472cfd362ce3c741fafd3c127961b2142abbe41b3c9
+    restart: unless-stopped
+    environment:
+      # production: the master key is mandatory (>= 16 bytes) and the built-in search preview page is off.
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?set MEILI_MASTER_KEY (64 hex chars)}
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      # Derived data only: LibreChat re-indexes it from MongoDB when it is empty (no backup needed).
+      - meilisearch-data:/meili_data
+    tmpfs:
+      - /tmp
+    read_only: true
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+
+  admin-panel:
+    # LibreChat Admin Panel, upstream commit 82fb4b6 (2026-10-15; Preview, ADR-0016). Multi-arch index digest from
+    # ghcr.io/librechat-ai (the image namespace since upstream #156). It ships TanStack Start 1.167.30 (CVE-2026-102989,
+    # CRITICAL): Compose keeps it on loopback / the internal network only. Railway runs the remediated derivation
+    # infrastructure/railway/admin-panel.Dockerfile, built FROM this exact digest (checked by railway_checks.py).
+    # yamllint disable-line rule:line-length
+    image: ghcr.io/librechat-ai/librechat-admin-panel:82fb4b61409d5c2e6eceb3d116b89bc957c1620e@sha256:75b30880268f7e9351963e9e278d12eefd8845405fbb7867c36e35a993ce662f
+    restart: unless-stopped
+    depends_on:
+      librechat:
+        condition: service_healthy
+    expose:
+      - "3000"
+    environment:
+      PORT: "3000"
+      SESSION_SECRET: ${ADMIN_PANEL_SESSION_SECRET:?set ADMIN_PANEL_SESSION_SECRET (64 hex chars)}
+      # Server-side API calls stay on the stack network; the browser-facing URL (OAuth redirects) is the one users open.
+      API_SERVER_URL: http://librechat:3080
+      VITE_API_BASE_URL: ${DOMAIN_CLIENT:?set DOMAIN_CLIENT to the URL users open}
+      SESSION_COOKIE_SECURE: "true"
+    networks:
+      - frontend
+    tmpfs:
+      - /tmp
+    read_only: true
+    healthcheck:
+      test:
+        - CMD
+        - bun
+        - -e
+        - "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+
+networks:
+  frontend: {}
+  backend:
+    # No route outside the host: MongoDB and Meilisearch cannot reach the internet and nothing outside this stack can
+    # reach them.
+    internal: true
+
+volumes:
+  mongodb-data: {}
+  meilisearch-data: {}
+  librechat-uploads: {}
+  librechat-images: {}
+  librechat-logs: {}
+  librechat-data: {}

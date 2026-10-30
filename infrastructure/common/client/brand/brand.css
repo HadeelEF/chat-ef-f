@@ -1,0 +1,1709 @@
+/*
+ * Environment Fund (صندوق البيئة) brand for the EF AI Workspace web client (ADR-0013, owner decision D-04, #7).
+ * Appended to client/src/style.css by build.sh, so these declarations override the upstream defaults of the same
+ * selectors. Source: ef-brand-guidelines (EF Brand Identity Guideline, version 01, November 2024).
+ *
+ * Colors are bare "R G B" triplets (LibreChat's theme contract). Palette values come from the guide (primary,
+ * secondary and extended shades); which shade plays which UI role is a project choice, not a rule of the guide.
+ * Every text/background pair below meets WCAG AA 4.5:1 (checked in #92). Status, syntax and chart colors stay upstream:
+ * the guide defines no error, warning or success colors.
+ */
+
+/* Aktiv Grotesk (primary brand typeface, Latin and Arabic). Original OTF files, unmodified: the font files forbid
+   modification without Dalton Maag's written permission, so they are not converted or subset. Three weights, the guide's
+   hierarchy (p31: Regular body, SemiBold subheadings, Bold headings): Medium is not loaded (#118, about 420 KB less on a
+   first visit), so text set in 500 renders Regular. Its file stays in brand/fonts/ for a one-rule revert. */
+@font-face {
+  font-family: 'EF Aktiv Grotesk';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('$fonts/aktiv-grotesk-regular.otf') format('opentype');
+}
+@font-face {
+  font-family: 'EF Aktiv Grotesk';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('$fonts/aktiv-grotesk-semibold.otf') format('opentype');
+}
+@font-face {
+  font-family: 'EF Aktiv Grotesk';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('$fonts/aktiv-grotesk-bold.otf') format('opentype');
+}
+
+/* Color tokens (#108). One light appearance (patch 0012 resolves dark and system modes to light). From the EF palette:
+   text in the primary dark #0F1822 and the neutral dark family; primary actions, active items and the user's own messages
+   in the primary blue family (#2C3A82, #1E285F, #EAECF8); links and focus in the secondary blue #0051B1 and #4E61C8.
+   Side surfaces, hover and borders are cool tints of the primary blue on white (#F6F7FB, #EEF0F7, #E6E8EF, #D5D8E3):
+   product tokens of this platform, not brand colors. Every text pair is at least 4.6:1 (WCAG AA), focus 5.4:1. */
+html {
+  --text-primary: 15 24 34;
+  --text-secondary: 55 63 72;
+  --text-secondary-alt: 100 106 113;
+  --text-tertiary: 100 106 113;
+  --text-fixed: 15 24 34;
+  --brand-purple: 44 58 130;
+  --accent-primary: 44 58 130;
+  --accent-primary-hover: 30 40 95;
+  --surface-submit: 44 58 130;
+  --surface-submit-hover: 30 40 95;
+  --link: 0 81 177;
+  --link-hover: 0 58 133;
+  --ring-primary: 78 97 200;
+  --presentation: 255 255 255;
+  --surface-primary: 255 255 255;
+  --surface-primary-alt: 246 247 251;
+  --surface-primary-contrast: 238 240 247;
+  --surface-secondary: 246 247 251;
+  --surface-secondary-alt: 230 232 239;
+  --surface-tertiary: 238 240 247;
+  --surface-tertiary-alt: 255 255 255;
+  --surface-hover: 238 240 247;
+  --surface-hover-alt: 230 232 239;
+  --surface-composer-hover: 246 247 251;
+  --surface-active: 234 236 248;
+  --surface-active-alt: 234 236 248;
+  --surface-chat: 255 255 255;
+  --surface-dialog: 255 255 255;
+  --header-primary: 255 255 255;
+  --header-hover: 246 247 251;
+  --header-button-hover: 238 240 247;
+  /* LibreChat's "inverted" pair is its primary-action role (default buttons, switches, checkboxes, confirm
+     dialogs): primary blue with white, like the send button. */
+  --surface-inverted: 44 58 130;
+  --surface-inverted-hover: 30 40 95;
+  --text-inverted: 255 255 255;
+  --border-light: 230 232 239;
+  --border-medium: 213 216 227;
+  --border-medium-alt: 213 216 227;
+  --border-heavy: 149 153 158;
+  --border-xheavy: 100 106 113;
+  /* !important (#152): the high-contrast theme writes its own `Inter` inline on <html>; the brand face stays. */
+  --theme-font-family: 'EF Aktiv Grotesk', Tahoma, Inter, sans-serif !important;
+  color-scheme: light;
+}
+
+::selection {
+  background-color: rgb(44 58 130 / 0.18);
+}
+
+/* Sign-in brand panel (patch 0007): primary blue with the white logo, the platform name in white, the tagline in the
+   secondary green (5.9:1) and the note in the lightest blue (8.77:1). The radial graphic is the guide's original
+   EF-RADIAL-MASTER, unaltered, a quarter of it showing from the panel's end corner: the top corner on the small-screen
+   band, the bottom corner on the side panel. Physical sides, because postcss-preset-env compiles logical ones to LTR. */
+.efaiw-auth-brand {
+  background-color: #2c3a82;
+  color: #ffffff;
+}
+.efaiw-auth-tagline {
+  color: #c0cb6c;
+}
+.efaiw-auth-note {
+  color: #eaecf8;
+  max-width: 48%;
+}
+.efaiw-auth-radial {
+  position: absolute;
+  top: 0;
+  right: 0;
+  /* Scales down on the narrowest phones so the rays keep clear of the logo. */
+  width: min(15rem, 50vw);
+  max-width: none;
+  transform: translate(50%, -50%);
+  pointer-events: none;
+  user-select: none;
+}
+[dir='rtl'] .efaiw-auth-radial {
+  right: auto;
+  left: 0;
+  transform: translate(-50%, -50%);
+}
+@media (min-width: 1024px) {
+  .efaiw-auth-radial {
+    top: auto;
+    bottom: 0;
+    width: 100%;
+    transform: translate(50%, 50%);
+  }
+  [dir='rtl'] .efaiw-auth-radial {
+    transform: translate(-50%, 50%);
+  }
+}
+
+/* UX audit wave 1 (#100). Mixed Arabic/English replies (U-01): each paragraph, heading, quote and table cell takes its
+   base direction from its own first strong character, so an English sentence inside an Arabic reply keeps its full
+   stop at its end. List items keep the list's alignment (the marker stays beside the text) and only fix the order. */
+.markdown :is(p, h1, h2, h3, h4, h5, h6, blockquote, th, td, li) {
+  unicode-bidi: plaintext;
+}
+.markdown li {
+  text-align: left;
+}
+[dir='rtl'] .markdown li {
+  text-align: right;
+}
+
+/* Tables (U-02): upstream draws per-cell left/right borders and radii for LTR only, so in RTL the right edge is open
+   and each column looks like a separate box. One direction-free grid instead: collapsed inner borders, the outer edge
+   and the rounded corners on the scroll wrapper (patch 0009 gives each table its own direction). */
+.markdown .markdown-table-wrapper {
+  border: 1px solid rgb(var(--border-medium));
+  border-radius: 0.75rem;
+  padding-bottom: 0;
+  margin-block: 0.5rem 1rem;
+}
+.markdown .markdown-table-wrapper table {
+  border-collapse: collapse;
+  border-style: hidden;
+  margin: 0;
+}
+.markdown .markdown-table-wrapper.markdown-table-wrapper :is(th, td) {
+  border: 1px solid rgb(var(--border-medium));
+  border-radius: 0;
+}
+.markdown .markdown-table-wrapper.markdown-table-wrapper th {
+  background-color: #eaecf8;
+  color: #1e285f;
+}
+
+/* Menus (U-10): item icons carry a physical `mr-2`, which in RTL puts the gap on the wrong side of the icon. */
+[dir='rtl'] [role='menu'] .mr-2 {
+  margin-right: 0;
+  margin-left: 0.5rem;
+}
+
+/* Short phone screens (#105), also while the on-screen keyboard is open: the starter cards pushed the composer below the
+   fold. Two cards below 740 px of height, none below 560 px; the composer stays in view. Hook: patch 0011. */
+@media (max-width: 639px) and (max-height: 740px) {
+  [data-efaiw='starters'] {
+    margin-bottom: 1rem;
+  }
+  [data-efaiw='starters'] > :nth-child(n + 3) {
+    display: none;
+  }
+}
+@media (max-width: 639px) and (max-height: 560px) {
+  [data-efaiw='starters'] {
+    display: none;
+  }
+}
+
+/* Home page and composer (#108): the composer is the page's one object, so it carries the depth; focus shows a blue
+   outline (5.4:1) instead of upstream's grey shadow. */
+form .bg-surface-chat.border {
+  border-color: rgb(var(--border-medium));
+  box-shadow:
+    0 1px 2px rgb(15 24 34 / 0.04),
+    0 8px 24px rgb(44 58 130 / 0.07);
+}
+form .bg-surface-chat.border:focus-within {
+  border-color: rgb(78 97 200);
+  box-shadow:
+    0 0 0 3px rgb(44 58 130 / 0.1),
+    0 8px 24px rgb(44 58 130 / 0.08);
+}
+
+/* Chat after ChatGPT's conventions (#115, patch 0013; Concept 1, owner-approved), in EF colours (product roles).
+   The user's message: a bubble in the lightest primary blue with the primary dark text (16.0:1) on the end side, so
+   the reply keeps the emphasis; upstream's physical `ml-auto` pins it right, so RTL mirrors it to the left. The
+   end-side bottom corner is tighter. */
+[dir='rtl'] .user-turn.ml-auto {
+  margin-left: 0;
+  margin-right: auto;
+}
+.user-turn .efaiw-user-bubble {
+  background-color: #eaecf8;
+  color: #0f1822;
+  border-radius: 1.375rem 1.375rem 0.375rem 1.375rem;
+  padding: 0.75rem 1.25rem;
+}
+[dir='rtl'] .user-turn .efaiw-user-bubble {
+  border-radius: 1.375rem 1.375rem 1.375rem 0.375rem;
+}
+/* Search results (#125) render the message as `.markdown` without `.message-content`: same dark text. */
+.efaiw-user-bubble :is(.message-content, .markdown) {
+  color: #0f1822;
+  --tw-prose-body: #0f1822;
+  --tw-prose-headings: #1e285f;
+  --tw-prose-bold: #0f1822;
+  --tw-prose-links: #0051b1;
+  --tw-prose-code: #1e285f;
+  --tw-prose-quotes: #373f48;
+  --tw-prose-bullets: #2c3a82;
+  --tw-prose-counters: #2c3a82;
+}
+.efaiw-user-bubble .message-content a {
+  color: #0051b1;
+  text-decoration: underline;
+}
+.efaiw-user-bubble .message-content :not(pre) > code {
+  background-color: rgb(44 58 130 / 0.1);
+  color: #1e285f;
+}
+.efaiw-user-bubble .message-content li::marker {
+  color: #2c3a82;
+}
+.efaiw-user-bubble ::selection {
+  background-color: rgb(44 58 130 / 0.22);
+}
+/* «Show more» on a long message (Settings → Chat): its fade and toggle on the light bubble. */
+.efaiw-user-bubble .bg-gradient-to-t {
+  background-image: linear-gradient(to top, #eaecf8, rgb(234 236 248 / 0));
+}
+.efaiw-user-bubble button.text-xs {
+  color: #1e285f;
+}
+/* Touch screens: the user's message actions appear when the bubble is tapped (pointer screens: on hover). An older
+   reply's actions too (chat design #224); the latest reply keeps its toolbar in view. */
+@media (hover: none) {
+  .user-turn:not(.efaiw-actions-shown) .efaiw-user-actions .hover-button {
+    display: none;
+  }
+  .agent-turn:not(.efaiw-actions-shown) [data-efaiw-actions='older'] {
+    visibility: hidden;
+  }
+}
+
+/* The reply: no bubble, full column, EF identity. Text in the primary dark with an Arabic-friendly line height; headings
+   in primary blue (10.3:1), as the brand guide assigns it and as the reply's Word and PDF files carry it; links in
+   secondary blue (7.5:1); inline code and table headers in the lightest primary blue; quotes on the EF warm grey
+   with a green bar (assets/ef-chat.css holds the direction-aware sides and the list markers). The model's name moves
+   from above the reply to the end of its toolbar (#224); the heading stays for screen readers. */
+.agent-turn > h2 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+.agent-turn .markdown {
+  --tw-prose-body: #0f1822;
+  --tw-prose-headings: #2c3a82;
+  --tw-prose-bold: #0f1822;
+  --tw-prose-links: #0051b1;
+  --tw-prose-counters: #2c3a82;
+  --tw-prose-bullets: #2c3a82;
+  --tw-prose-quotes: #373f48;
+  --tw-prose-hr: #e6e8ef;
+}
+.agent-turn .markdown :is(p, li) {
+  line-height: 1.75;
+}
+.agent-turn .markdown :is(h1, h2, h3, h4) {
+  color: #2c3a82;
+  line-height: 1.45;
+}
+.agent-turn .markdown h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+.agent-turn .markdown h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+.agent-turn .markdown h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+.agent-turn .markdown a {
+  color: rgb(var(--link));
+  text-underline-offset: 3px;
+}
+.agent-turn .markdown a:hover {
+  color: rgb(var(--link-hover));
+}
+.agent-turn .markdown :not(pre) > code:not(.hljs) {
+  background-color: #eaecf8;
+  color: #1e285f;
+  border-radius: 0.375rem;
+  padding: 0.1em 0.35em;
+}
+.agent-turn .markdown blockquote {
+  background-color: #f5f3f0;
+  color: #373f48;
+  font-style: normal;
+  border-radius: 0.5rem;
+  padding-block: 0.5em;
+}
+.agent-turn .markdown blockquote p {
+  margin-block: 0.25em;
+}
+/* Aktiv Grotesk has no italic, and a slanted Arabic is the browser's distortion (#152): Arabic emphasis in SemiBold. */
+.markdown :is(em, i):dir(rtl) {
+  font-style: normal;
+  font-weight: 600;
+}
+.agent-turn .markdown blockquote p::before,
+.agent-turn .markdown blockquote p::after {
+  content: none;
+}
+.agent-turn .markdown hr {
+  border-color: #e6e8ef;
+}
+
+/* Shell (#115): a solid white top bar with borderless icon buttons (upstream fades the chat in under outlined ones),
+   40 px on phones; on phones the composer is a card floating 10 px from the screen edges with all corners rounded
+   (upstream glues it to the bottom edge). */
+[data-efaiw='chat-header'] {
+  background-color: rgb(255 255 255);
+  background-image: none;
+}
+[data-efaiw='chat-header'] :is(button, a) {
+  border-color: transparent;
+}
+@media (max-width: 767px) {
+  [data-efaiw='chat-header'] :is(button, a) {
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+  }
+}
+@media (max-width: 639px) {
+  form .bg-surface-chat.border {
+    margin: 0 0.625rem 0.625rem;
+    border-radius: 1.5rem;
+  }
+}
+
+/* Side menu rail (#108, patch 0012): a short name under each icon, the active item in primary blue, «New chat» as the
+   primary action (white icon on primary blue). */
+.efaiw-rail-label {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  /* 12 px: the smallest Arabic UI text (UX-15, #123); 11 px left the dotted letters hard to tell apart. */
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.efaiw-rail .efaiw-rail-item.efaiw-rail-active {
+  background-color: #ffffff;
+  color: #2c3a82;
+  box-shadow:
+    0 1px 2px rgb(15 24 34 / 0.06),
+    0 0 0 1px #e3ded5;
+}
+.efaiw-rail-item.efaiw-rail-active .efaiw-rail-label {
+  font-weight: 600;
+}
+.efaiw-rail-new {
+  color: rgb(var(--text-primary));
+}
+.efaiw-rail-new-icon {
+  background-color: rgb(var(--surface-submit));
+  color: #ffffff;
+}
+.efaiw-rail-new:hover .efaiw-rail-new-icon {
+  background-color: rgb(var(--surface-submit-hover));
+}
+/* The marketplace entry is a link whose icon upstream paints in the primary text color; the rail's other entries use the
+   secondary one. */
+a.efaiw-rail-item:not(.efaiw-rail-new) {
+  color: rgb(var(--text-secondary));
+}
+a.efaiw-rail-item:not(.efaiw-rail-new) svg {
+  color: inherit;
+}
+
+/* Principal UX/UI audit (#123, docs/design/audits/ux-ui-principal-audit.md §2): project tokens, not brand rules. */
+/* UX-03: the data notice also on phones and tablets, at the end of the brand band (upstream class hid it below lg). */
+@media (max-width: 1023px) {
+  .efaiw-auth-brand .efaiw-auth-note.hidden {
+    display: block;
+    max-width: none;
+  }
+}
+/* UX-11: about 48rem of reading width on wide screens (upstream 56rem gives about 120 Arabic characters a line); the
+   message column and the composer keep the same width. Patch 0044 (#243) removes «Maximize chat space», which dropped
+   these classes and the limit. */
+@media (min-width: 1280px) {
+  .message-render.xl\:max-w-4xl,
+  form.xl\:max-w-4xl {
+    max-width: 48rem;
+  }
+}
+/* UX-13: the temporary chat in EF warm neutral (brown family) instead of upstream purple, outside the brand palette. */
+[data-testid='composer-surface'].bg-series-6\/10 {
+  border-color: #a18e77;
+  background-color: #f5f3f0;
+}
+/* UX-14: 44 px touch targets for every composer control (only Send grew on touch). */
+@media (pointer: coarse) {
+  form [data-testid='composer-surface'] .size-theme-control {
+    width: 44px;
+    height: 44px;
+  }
+  form [data-testid='model-selector-button'] {
+    height: 44px !important;
+  }
+}
+/* UX-15: chat-history group headings («اليوم», «أمس») at the 12 px minimum (upstream sets 0.7rem inline). */
+[data-testid='convo-list-row'] h2 {
+  font-size: 12px !important;
+}
+/* UX-16: the destructive item of the chat menu in the product danger colour (#B42318, 6.4:1 on white). */
+button[aria-controls='delete-conversation-dialog'],
+button[aria-controls='delete-conversation-dialog'] svg {
+  color: #b42318;
+}
+/* UX-18: keyboard focus in the documented EF focus blue (#4E61C8, 5.4:1) instead of the near-black text colour.
+   :root and the element type outrank the Tailwind utilities, which come later in the bundle. */
+:root .focus-visible\:ring-text-primary:focus-visible {
+  --tw-ring-color: #4e61c8;
+}
+/* UX-19: no model icon on every history row (the oldest rows showed the provider's logo); the title takes the room. */
+[data-testid='convo-item'] > button > div:first-child {
+  display: none;
+}
+/* UX-08: the files panel date column fits a whole date («21/10/2026» and «21 Oct 2026» need about 68 px); upstream
+   gives it 25 % of the panel minus 32 px of padding, about 33 px. The widths are inline, hence !important. */
+nav [role='region'] table.table-fixed th:first-child,
+nav [role='region'] table.table-fixed td:first-child {
+  width: 66% !important;
+}
+nav [role='region'] table.table-fixed th:last-child,
+nav [role='region'] table.table-fixed td:last-child {
+  width: 34% !important;
+}
+nav [role='region'] table.table-fixed td:last-child {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+/* UX-07 (QA): the sign-in language switch reads as a control, not as loose text in the corner. */
+[data-testid='efaiw-lang-switch'] {
+  border: 1px solid rgb(var(--border-medium));
+}
+/* #163: the blue logo's width and height attributes (176 x 62) are not in its viewBox's proportion (487.12 x 162.46),
+   so a box sized by its height alone draws the artwork about 5 % smaller. The box takes the viewBox's proportion: at
+   40 px the symbol keeps its digital minimum (guide p9). The file stays as delivered. */
+img[src='assets/logo.svg'],
+img[src='/assets/logo.svg'] {
+  aspect-ratio: 487.12 / 162.46;
+}
+
+/* Concept 1 (owner-approved design, patch 0031) and sidebar v4 (#204, owner-approved Concept 2). Product roles built
+   from the EF palette; sides that depend on the interface direction live in assets/ef-chat.css (logical properties,
+   outside PostCSS). */
+/* The rail on the next darker warm tint; the chats panel and the phone drawer on the EF warm neutral (#F5F3F0, brown
+   family); hover one step darker. */
+.efaiw-rail {
+  background-color: #ece8e1;
+  border-color: #e3ddd3;
+}
+.efaiw-side,
+.efaiw-side .bg-surface-primary-alt,
+#mobile-drawer {
+  background-color: #f5f3f0;
+}
+.efaiw-rail .efaiw-rail-item:hover {
+  background-color: #e3ded5;
+}
+.efaiw-rail .efaiw-rail-sep {
+  border-color: #dcd5ca;
+}
+.efaiw-rail .efaiw-rail-item.efaiw-rail-active:hover {
+  background-color: #ffffff;
+}
+/* The chats panel: its title, and the filter menu at the size of the panel's other controls. */
+.efaiw-chats-head {
+  min-height: 4rem;
+}
+.efaiw-chats-title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  color: rgb(var(--text-primary));
+}
+.efaiw-chats-head #chat-filter-menu-button {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.5rem;
+}
+.efaiw-chats-head #chat-filter-menu-button svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+.efaiw-chats-head .efaiw-chats-close:hover,
+.efaiw-chats-head #chat-filter-menu-button:hover {
+  background-color: #ece8e1;
+}
+/* The chat search: a white field leading the history it filters (#189). */
+.efaiw-side-search > div {
+  height: 2.75rem;
+  border-radius: 0.75rem;
+  background-color: #ffffff;
+  box-shadow: 0 0 0 1px #e6e1d8;
+}
+.efaiw-side-search > div:focus-within {
+  box-shadow: 0 0 0 2px #4e61c8;
+}
+.efaiw-side-search input {
+  font-size: 15px;
+}
+.efaiw-side-search input::placeholder {
+  color: #646a71;
+}
+.efaiw-side-search svg {
+  width: 1.125rem;
+  height: 1.125rem;
+  color: #646a71;
+}
+/* The chips «All / Pinned / Project» (#204): white with a warm edge; the chosen one in the primary blue (10.3:1). */
+.efaiw-chip {
+  border: 1px solid #e0d7c6;
+  background-color: #ffffff;
+  color: #373f48;
+}
+.efaiw-chip:hover {
+  background-color: #ece8e1;
+}
+.efaiw-chip[aria-pressed='true'] {
+  border-color: #2c3a82;
+  background-color: #2c3a82;
+  color: #ffffff;
+}
+/* Projects, Skills and Documents, each with a tint from the palette (#189). */
+.efaiw-side-tile {
+  display: grid;
+  width: 1.875rem;
+  height: 1.875rem;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 0.5625rem;
+  color: rgb(var(--text-secondary));
+}
+.efaiw-tone-blue {
+  background-color: #eaecf8;
+  color: #2c3a82;
+}
+.efaiw-tone-green {
+  background-color: #ecf1d1;
+  color: #87952e;
+}
+.efaiw-tone-brown {
+  background-color: #efe9e1;
+  color: #6d5b46;
+}
+/* «Customize» and the tools' cards (#221): the secondary blue of the palette on its lightest tint (6.4:1). */
+.efaiw-tone-sec {
+  background-color: #e6eef8;
+  color: #0051b1;
+}
+/* A tool without a tint of its own (the parameters, a section new to the workspace): the warm neutral (10:1). */
+.efaiw-tone-neutral {
+  background-color: #ece8e1;
+  color: #373f48;
+}
+/* What only admins see in «Customize» (#189, #221), so they know employees do not: brown 700 on brown 50 (5.3:1). */
+.efaiw-admin-badge {
+  flex-shrink: 0;
+  border-radius: 0.5rem;
+  background-color: #efe9e1;
+  padding: 0 0.4375rem;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35rem;
+  color: #6d5b46;
+}
+/* Chat history: the open chat on white with its primary-blue bar (upstream), others hover warm. */
+.efaiw-side-panel .group.bg-surface-active-alt {
+  background-color: #ffffff;
+  box-shadow:
+    0 1px 2px rgb(15 24 34 / 0.05),
+    0 0 0 1px #ece8e1;
+}
+/* Upstream also tints the open chat's own button; inside the white card it would read as a second, inner pill. */
+.efaiw-side-panel .group.bg-surface-active-alt > button.bg-surface-active-alt {
+  background-color: transparent;
+}
+.efaiw-side-panel .group.hover\:bg-surface-active-alt:hover {
+  background-color: #ece8e1;
+}
+/* The phone (#221, owner feedback): «Baseer» on top, the three sections as white tiles under the search (the open one
+   framed in the primary blue), and «New chat» docked at the bottom in the primary blue beside the account. */
+.efaiw-chats-mobile .efaiw-chats-me [data-testid='nav-user'] {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+.efaiw-drawer-brand {
+  font-size: 18px;
+}
+.efaiw-chats-subtitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: rgb(var(--text-primary));
+}
+.efaiw-chats-sub #chat-filter-menu-button {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.5rem;
+}
+.efaiw-drawer-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+.efaiw-drawer-tile {
+  display: flex;
+  min-width: 0;
+  min-height: 4.25rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border: 1px solid #e6e1d8;
+  border-radius: 0.875rem;
+  background-color: #ffffff;
+  padding: 0.5rem 0.25rem;
+  color: #373f48;
+  text-decoration: none;
+  outline: none;
+}
+.efaiw-drawer-tile:hover {
+  background-color: #fbfaf8;
+}
+.efaiw-drawer-tile[aria-current='page'] {
+  border-color: #2c3a82;
+  box-shadow: inset 0 0 0 1px #2c3a82;
+  color: #2c3a82;
+}
+.efaiw-drawer-tile-label {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.efaiw-dock {
+  border-top: 1px solid #e6e1d8;
+  background-color: #f5f3f0;
+  padding-top: 0.625rem;
+}
+.efaiw-dock-new {
+  background-color: #2c3a82;
+  color: #ffffff;
+}
+.efaiw-dock-new:hover {
+  background-color: #1e285f;
+}
+/* «Customize» (#221): a card per tool, the whole card its link; its tint, its name, one line on what it is for, and a
+   badge for the admin tools and for a section new to the workspace. */
+.efaiw-cz-heading {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #373f48;
+}
+.efaiw-cz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.efaiw-cz-card {
+  position: relative;
+  display: flex;
+  min-height: 4.75rem;
+  align-items: center;
+  gap: 0.875rem;
+  border: 1px solid #e6e8ef;
+  border-radius: 1rem;
+  background-color: #ffffff;
+  padding: 0.875rem 1rem;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.efaiw-cz-card:hover {
+  border-color: #d5d8e3;
+  box-shadow: 0 6px 18px rgb(15 24 34 / 0.07);
+}
+.efaiw-cz-tile.efaiw-side-tile {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.75rem;
+}
+.efaiw-cz-text {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+.efaiw-cz-head {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+}
+.efaiw-cz-actions {
+  display: flex;
+  margin-top: 0.5rem;
+}
+.efaiw-cz-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f1822;
+}
+.efaiw-cz-link {
+  color: inherit;
+  text-align: start;
+  text-decoration: none;
+  outline: none;
+}
+.efaiw-cz-link::after {
+  position: absolute;
+  inset: 0;
+  border-radius: 1rem;
+  content: '';
+}
+.efaiw-cz-link:focus-visible::after {
+  box-shadow: 0 0 0 2px #4e61c8;
+}
+.efaiw-cz-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #646a71;
+}
+.efaiw-cz-chevron {
+  color: #a3a8ae;
+}
+.efaiw-cz-new {
+  flex-shrink: 0;
+  border-radius: 0.5rem;
+  background-color: #eaecf8;
+  padding: 0 0.4375rem;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35rem;
+  color: #2c3a82;
+}
+.efaiw-cz-action {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  height: 2.25rem;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 0.625rem;
+  background-color: #2c3a82;
+  padding: 0 0.75rem;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+  white-space: nowrap;
+}
+.efaiw-cz-action:hover {
+  background-color: #1e285f;
+}
+.efaiw-cz-tip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  border-radius: 0.75rem;
+  background-color: #eaecf8;
+  padding: 0.75rem 1rem;
+  font-size: 13.5px;
+  color: #1e285f;
+}
+/* Tool pages opened from «Customize» (#221): the way back above the title. */
+.efaiw-crumb {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 12px;
+  line-height: 1.2;
+  color: #646a71;
+}
+.efaiw-crumb a {
+  color: #0051b1;
+  font-weight: 600;
+  text-decoration: none;
+}
+.efaiw-crumb a:hover {
+  text-decoration: underline;
+}
+/* Focus in the rail, the panel and the drawer (#198, owner request): a thin ring in the EF light blue (5:1 on
+   the warm neutral) instead of upstream's 2 px black or blue frame, still drawn for keyboard users only. */
+.efaiw-side a:focus-visible,
+.efaiw-side button:focus-visible,
+.efaiw-side [role='button']:focus-visible,
+.efaiw-side-panel .group:focus-visible,
+.efaiw-rail a:focus-visible,
+.efaiw-rail button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px #4e61c8 !important;
+}
+/* Primary-blue controls (the rail's and the drawer's «New chat», «New assistant») keep their ring outside, with a gap. */
+.efaiw-rail .efaiw-rail-new:focus-visible,
+.efaiw-side .efaiw-dock-new:focus-visible,
+.efaiw-cz .efaiw-cz-action:focus-visible {
+  box-shadow:
+    0 0 0 2px #f5f3f0,
+    0 0 0 3.5px #4e61c8 !important;
+}
+/* Pages opened from the sidebar (#198): the line of help under the title. */
+.efaiw-page-hint {
+  color: #646a71;
+}
+
+/* Composer: the page's one object, a 28 px rounded card (24 px on phones) carrying the depth; the model button in the
+   warm neutral beside Send. */
+form .bg-surface-chat.border {
+  border-radius: 1.75rem;
+}
+form .bg-surface-chat.border:not(:focus-within) {
+  border-color: #c8cacd;
+  box-shadow:
+    0 1px 3px rgb(15 24 34 / 0.05),
+    0 12px 32px rgb(15 24 34 / 0.08);
+}
+@media (max-width: 639px) {
+  form .bg-surface-chat.border {
+    border-radius: 1.5rem;
+  }
+}
+/* The empty message box's hint («اسأل بصير») starts on the page's start side (#186); typed text keeps following its
+   own direction (dir=auto, patch 0002). */
+[dir='rtl'] #prompt-textarea:placeholder-shown {
+  direction: rtl;
+}
+.efaiw-model-button {
+  border-color: transparent !important;
+  background-color: #f5f3f0 !important;
+  font-weight: 600;
+}
+.efaiw-model-button:hover,
+.efaiw-model-button[aria-expanded='true'] {
+  background-color: #eaecf8 !important;
+}
+.efaiw-model-button[aria-expanded='true'] {
+  box-shadow: 0 0 0 2px #4e61c8;
+}
+/* Model menu: each spec on a tile in its own palette tint, the chosen one in the primary blue. */
+.efaiw-model-option[data-efaiw-speed='fast'] .efaiw-model-tile {
+  background-color: #ebf4ff;
+  color: #0051b1;
+}
+.efaiw-model-option[data-efaiw-speed='careful'] .efaiw-model-tile {
+  background-color: #eaecf8;
+  color: #2c3a82;
+}
+.efaiw-model-option[data-efaiw-speed='deep'] .efaiw-model-tile {
+  background-color: #ecf1d1;
+  color: #6d5b46;
+}
+.efaiw-model-option.efaiw-model-option-on {
+  background-color: #eaecf8;
+}
+.efaiw-model-option.efaiw-model-option-on .efaiw-model-tile {
+  background-color: #2c3a82;
+  color: #ffffff;
+}
+.efaiw-model-backdrop {
+  display: none;
+}
+/* Touch screens: 44 px targets for the web-search chip and the search field's clear button (UX-14). */
+@media (pointer: coarse) {
+  form [data-testid='composer-surface'] button[role='checkbox'] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .efaiw-side-search button {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}
+/* Phones: the model menu is a bottom sheet over a backdrop, with a handle, a title and a close button. */
+@media (max-width: 767px) {
+  .efaiw-model-menu-wrap {
+    position: fixed !important;
+    inset: auto 0 0 0 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    transform: none !important;
+    z-index: 130 !important;
+  }
+  .efaiw-model-menu {
+    width: 100% !important;
+    max-width: none !important;
+    border: 0 !important;
+    border-radius: 1.625rem 1.625rem 0 0 !important;
+    padding: 0.625rem 1rem calc(1rem + env(safe-area-inset-bottom, 0px)) !important;
+    box-shadow: 0 -10px 30px rgb(15 24 34 / 0.15) !important;
+  }
+  .efaiw-model-menu::before {
+    content: '';
+    display: block;
+    width: 2.5rem;
+    height: 5px;
+    margin: 0 auto 0.5rem;
+    border-radius: 3px;
+    background-color: #c8cacd;
+  }
+  .efaiw-model-menu .efaiw-model-menu-close {
+    display: flex;
+  }
+  .efaiw-model-menu .efaiw-model-menu-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: rgb(var(--text-primary));
+  }
+  .efaiw-model-menu .efaiw-model-option {
+    padding-block: 0.875rem;
+  }
+  .efaiw-model-menu .efaiw-model-menu-foot {
+    border-top: 0;
+    text-align: center;
+  }
+  .efaiw-model-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 129;
+    background-color: rgb(15 24 34 / 0.42);
+  }
+}
+
+/* Welcome screen: the Baseer emblem above the greeting by first name in the primary blue and the configured welcome
+   in the secondary text (#186); on phones the EF logo heads it instead. From 640 px the centred composer sits under a
+   taller greeting block, so the block keeps more room above it. */
+@media (min-width: 640px) {
+  [data-efaiw='landing'] {
+    padding-bottom: 7rem;
+  }
+}
+[data-efaiw='landing'] .efaiw-landing-icon {
+  width: 3.5rem;
+  height: 3.5rem;
+  margin-bottom: 0.75rem;
+}
+[data-efaiw='landing'] .efaiw-landing-greeting {
+  color: #2c3a82;
+  font-size: 2.125rem;
+  line-height: 1.35;
+}
+[data-efaiw='landing'] .efaiw-landing-sub {
+  margin-top: -0.25rem;
+  font-size: 1.25rem;
+  line-height: 1.5;
+  color: #646a71;
+}
+.efaiw-landing-logo {
+  display: none;
+}
+@media (max-width: 767px) {
+  [data-efaiw='landing'] .efaiw-landing-icon {
+    display: none;
+  }
+  .efaiw-landing-logo {
+    display: block;
+    height: 46px;
+    width: auto;
+    margin-bottom: 1.625rem;
+  }
+  [data-efaiw='landing'] .efaiw-landing-greeting {
+    font-size: 1.5625rem;
+  }
+  [data-efaiw='landing'] .efaiw-landing-sub {
+    font-size: 1.0625rem;
+  }
+}
+/* A quarter of EF-RADIAL-MASTER (unaltered) in the welcome screen's end corner: the bottom left in Arabic, the bottom
+   right in English; on phones at the end edge just above the composer. */
+.efaiw-landing-radial {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  z-index: 0;
+  width: 230px;
+  height: 230px;
+  background-image: url('/assets/ef-radial-master.svg');
+  background-repeat: no-repeat;
+  background-size: 460px 460px;
+  background-position: -230px 0;
+  opacity: 0.55;
+  pointer-events: none;
+}
+[dir='ltr'] .efaiw-landing-radial {
+  left: auto;
+  right: 0;
+  background-position: 0 0;
+}
+@media (max-width: 767px) {
+  .efaiw-landing-radial {
+    bottom: 200px;
+    width: 150px;
+    height: 150px;
+    background-size: 300px 300px;
+    background-position: -150px 0;
+    opacity: 0.5;
+  }
+  [dir='ltr'] .efaiw-landing-radial {
+    background-position: 0 0;
+  }
+}
+
+/* Header: the open conversation's title at the start of the bar, centred on phones. */
+.efaiw-header-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: rgb(var(--text-secondary));
+}
+@media (max-width: 767px) {
+  .efaiw-header-title {
+    flex: 1 1 auto;
+    text-align: center;
+    color: rgb(var(--text-primary));
+  }
+}
+
+/* Chat design #224 (owner-approved). Built from the product roles above: primary blue for actions, the lightest blue
+   for surfaces that guide, the EF green family (#4D5C12 on #EEF2D6, 7.3:1) for skills, warm neutrals for quiet parts. */
+
+/* The reply's toolbar: the model's name at its end, quiet. */
+.efaiw-reply-model {
+  margin-inline-start: auto;
+  align-self: center;
+  padding-inline: 0.5rem;
+  font-size: 12px;
+  color: #646a71;
+  white-space: nowrap;
+}
+[data-efaiw-actions] {
+  flex: 1 1 auto;
+  align-items: center;
+}
+
+/* Suggestions under the latest reply: questions as quiet rows, actions as primary-blue chips. */
+.efaiw-followups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  max-width: 40rem;
+}
+.efaiw-fu-question {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 44px;
+  padding: 0.5rem 0.85rem;
+  border: 1px solid #d5d8e3;
+  border-radius: 0.875rem;
+  background-color: #fff;
+  color: #0f1822;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: start;
+}
+.efaiw-fu-question svg {
+  flex: none;
+  color: #2c3a82;
+}
+[dir='rtl'] .efaiw-fu-question svg {
+  transform: scaleX(-1);
+}
+.efaiw-fu-question:hover {
+  background-color: #f5f3f0;
+}
+.efaiw-fu-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.efaiw-fu-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 36px;
+  padding: 0 0.85rem;
+  border: 1px solid #c9d0ef;
+  border-radius: 999px;
+  background-color: #fff;
+  color: #2c3a82;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.efaiw-fu-action:hover {
+  background-color: #eaecf8;
+}
+@media (hover: none) {
+  .efaiw-fu-action {
+    min-height: 44px;
+  }
+}
+
+/* Formats as badges: Word in its blue, PDF in red, Excel in green, PowerPoint in orange, Markdown in warm grey. */
+.efaiw-fmt {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 42px;
+  height: 36px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  direction: ltr;
+}
+.efaiw-fmt-docx {
+  background-color: #e3ecfa;
+  color: #1f4e9a;
+}
+.efaiw-fmt-pdf {
+  background-color: #fbe7e5;
+  color: #b42318;
+}
+.efaiw-fmt-xlsx {
+  background-color: #e3f2e8;
+  color: #1e6b3a;
+}
+.efaiw-fmt-pptx {
+  background-color: #fdeee3;
+  color: #9a3412;
+}
+.efaiw-fmt-md {
+  background-color: #ece8e1;
+  color: #373f48;
+}
+.efaiw-fmt-text,
+.efaiw-menu-text,
+.efaiw-docbar-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  text-align: start;
+}
+.efaiw-fmt-text > span,
+.efaiw-menu-text > span {
+  font-weight: 600;
+}
+.efaiw-fmt-text small,
+.efaiw-menu-text small,
+.efaiw-docbar-text small {
+  font-size: 12px;
+  font-weight: 400;
+  color: #646a71;
+}
+#tools-dropdown-menu [role='menuitem'],
+[id^='download-'][role='menuitem'] {
+  gap: 0.75rem;
+}
+
+/* Menu headers and notes: the download menu's title and file name; the «+» menu's line on web search. */
+.efaiw-menu-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start !important;
+  cursor: default !important;
+  opacity: 1 !important;
+}
+.efaiw-menu-head > span {
+  font-weight: 700;
+  color: #0f1822;
+}
+.efaiw-menu-head small {
+  font-size: 12px;
+  color: #646a71;
+}
+.efaiw-menu-head:hover,
+.efaiw-menu-note:hover {
+  background-color: transparent !important;
+}
+.efaiw-menu-note {
+  justify-content: flex-start !important;
+  gap: 0.5rem !important;
+  cursor: default !important;
+  opacity: 1 !important;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #646a71 !important;
+}
+.efaiw-menu-note svg {
+  flex: none;
+}
+
+/* The «+» menu: each row an icon tile, a name and a hint, and the key that opens it from the box. */
+#tools-dropdown-menu {
+  min-width: 17rem;
+}
+.efaiw-menu-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.75rem;
+}
+.efaiw-menu-icon {
+  display: grid;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: 0.6rem;
+  background-color: #f5f3f0;
+  color: #373f48;
+}
+.efaiw-menu-kbd {
+  display: grid;
+  flex: none;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  place-items: center;
+  border: 1px solid #d5d8e3;
+  border-radius: 0.35rem;
+  font-family: inherit;
+  font-size: 12px;
+  color: #373f48;
+}
+@media (hover: none) {
+  .efaiw-menu-kbd {
+    display: none;
+  }
+}
+
+/* A skill: «$» on the EF green family, in its tile, its chip and its badge. */
+.efaiw-skill-tile {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 1.25rem;
+  place-items: center;
+  border-radius: 0.45rem;
+  background-color: #eef2d6;
+  color: #4d5c12;
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 1;
+}
+.efaiw-menu-icon:has(.efaiw-skill-tile) {
+  background-color: #eef2d6;
+}
+.efaiw-skill-row small {
+  white-space: nowrap;
+}
+.efaiw-skill-badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background-color: #eef2d6;
+  color: #4d5c12;
+  font-size: 11px;
+  font-weight: 700;
+}
+.efaiw-skill-chip {
+  display: inline-flex;
+  max-width: 14rem;
+  height: 2rem;
+  align-items: center;
+  gap: 0.35rem;
+  padding-inline: 0.65rem 0.35rem;
+  border: 1px solid #dfe6b8;
+  border-radius: 999px;
+  background-color: #eef2d6;
+  color: #4d5c12;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.efaiw-skill-chip > b {
+  font-weight: 700;
+}
+.efaiw-skill-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.efaiw-skill-chip > button {
+  display: grid;
+  width: 1.5rem;
+  height: 1.5rem;
+  place-items: center;
+  border-radius: 999px;
+  color: #4d5c12;
+  font-size: 16px;
+}
+.efaiw-skill-chip > button:hover {
+  background-color: #dfe6b8;
+}
+
+/* The skills list from «$»: how a skill works in three steps, two-line rows, then manage and create (phones: #241). */
+.efaiw-skills-howto {
+  margin: 0.25rem 0.25rem 0.5rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.75rem;
+  background-color: #eaecf8;
+  color: #1e285f;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.efaiw-skills-howto ol {
+  margin: 0.15rem 0 0;
+  padding-inline-start: 1.1rem;
+  list-style: decimal;
+}
+.efaiw-skills-foot {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 0.25rem 0.15rem;
+}
+.efaiw-skills-foot > button {
+  flex: 1;
+  min-height: 40px;
+  border: 1px solid #d5d8e3;
+  border-radius: 0.65rem;
+  background-color: #fff;
+  color: #373f48;
+  font-size: 13px;
+  font-weight: 600;
+}
+.efaiw-skills-foot > .efaiw-skills-new {
+  border-color: #2c3a82;
+  color: #2c3a82;
+}
+
+/* A chat saved without search, from before the switch was removed: one chip that turns it back on. */
+.efaiw-noweb-chip {
+  display: inline-flex;
+  height: 2.25rem;
+  align-items: center;
+  gap: 0.35rem;
+  padding-inline: 0.75rem 0.5rem;
+  border: 1px solid #f6d7c3;
+  border-radius: 999px;
+  background-color: #fff4ec;
+  color: #9a3412;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Pro's line in the model menu. */
+.efaiw-model-noweb {
+  margin-top: 0.15rem;
+}
+
+/* A letter or minutes: its Word/PDF bar above the actions. */
+.efaiw-docbar {
+  display: flex;
+  max-width: 40rem;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #d5d8e3;
+  border-radius: 0.875rem;
+  background-color: #fff;
+}
+.efaiw-docbar-text {
+  flex: 1;
+}
+.efaiw-docbar-text > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 14px;
+}
+.efaiw-docbar-pill {
+  display: inline-flex;
+  flex: none;
+  min-height: 36px;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0 0.75rem;
+  border: 1px solid #d5d8e3;
+  border-radius: 999px;
+  background-color: #fff;
+  color: #373f48;
+  font-size: 13px;
+  font-weight: 600;
+}
+.efaiw-docbar-primary {
+  border-color: #2c3a82;
+  background-color: #2c3a82;
+  color: #fff;
+}
+@media (max-width: 480px) {
+  .efaiw-docbar-text small {
+    display: none;
+  }
+}
+
+/* A reply with nothing to show (live QA): a quiet line on the warm neutral, and a retry chip like the actions. */
+.efaiw-empty-reply {
+  display: flex;
+  max-width: 40rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.25rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: 0.875rem;
+  background-color: #f5f3f0;
+  color: #373f48;
+  font-size: 14px;
+}
+.efaiw-empty-retry {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0 0.85rem;
+  border: 1px solid #c9d0ef;
+  border-radius: 999px;
+  background-color: #fff;
+  color: #2c3a82;
+  font-size: 13px;
+  font-weight: 600;
+}
+.efaiw-empty-retry:hover {
+  background-color: #eaecf8;
+}
+@media (hover: none) {
+  .efaiw-empty-retry {
+    min-height: 44px;
+  }
+}
+
+/* The skills tip, once on a new chat: navy with a pointer to the box. */
+.efaiw-skills-tip {
+  position: relative;
+  display: flex;
+  max-width: 48rem;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0 auto 0.75rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 0.875rem;
+  background-color: #1e285f;
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.efaiw-skills-tip::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  inset-inline-start: 1.25rem;
+  width: 12px;
+  height: 12px;
+  background-color: #1e285f;
+  transform: rotate(45deg);
+}
+.efaiw-skills-tip > button {
+  align-self: flex-end;
+  min-height: 36px;
+  padding: 0 1rem;
+  border-radius: 999px;
+  background-color: #fff;
+  color: #1e285f;
+  font-weight: 600;
+}
+@media (max-width: 639px) {
+  .efaiw-skills-tip {
+    margin-inline: 0.625rem;
+  }
+}
+
+/* Phones: the floating composer clears the home indicator on devices with one. */
+@media (max-width: 639px) {
+  form .bg-surface-chat.border {
+    margin-bottom: max(0.625rem, env(safe-area-inset-bottom));
+  }
+}
+
+/* Phones (chat design #224): «+», a reply's «More» and its download menu are bottom sheets, as the model menu is. */
+@media (max-width: 767px) {
+  div:has(> #tools-dropdown-menu),
+  div:has(> .efaiw-reply-more-menu),
+  div:has(> .efaiw-download-menu) {
+    position: fixed !important;
+    inset: auto 0 0 0 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    transform: none !important;
+    z-index: 130 !important;
+  }
+  #tools-dropdown-menu,
+  .efaiw-reply-more-menu,
+  .efaiw-download-menu {
+    width: 100% !important;
+    max-width: none !important;
+    max-height: 80vh;
+    overflow-y: auto;
+    border: 0 !important;
+    border-radius: 1.625rem 1.625rem 0 0 !important;
+    padding: 0.625rem 0.75rem calc(1rem + env(safe-area-inset-bottom, 0px)) !important;
+    box-shadow: 0 -10px 30px rgb(15 24 34 / 0.15) !important;
+    background-color: #fff !important;
+  }
+  #tools-dropdown-menu::before,
+  .efaiw-reply-more-menu::before,
+  .efaiw-download-menu::before {
+    content: '';
+    display: block;
+    width: 2.5rem;
+    height: 5px;
+    margin: 0 auto 0.5rem;
+    border-radius: 3px;
+    background-color: #c8cacd;
+  }
+}
+
+/* Phones (#241): the lists the message box opens while typing («$» skills, «/» ready commands, «@» mentions) sit
+   right above the box, as ChatGPT, Claude and Gemini show theirs, so the box and what is typed stay in view, also
+   with the keyboard open (upstream anchors them 7rem above the form's bottom, over the box's first lines). The skills
+   list (two and a half rows, patch 0043) leaves out its three steps, which the first-visit tip and the box's hint
+   already give, and keeps «Manage» and «Create» as one slim row. */
+@media (max-width: 767px) {
+  form div.absolute.bottom-28:has(> .popover.p-2) {
+    bottom: calc(100% + 0.375rem);
+  }
+  .efaiw-skills-howto {
+    display: none;
+  }
+  .efaiw-skills-foot {
+    gap: 0.25rem;
+    margin-top: 0.25rem;
+    padding: 0.25rem 0 0;
+    border-top: 1px solid #eceef3;
+  }
+  .efaiw-skills-foot > button {
+    min-height: 44px;
+    border: 0;
+    background-color: transparent;
+  }
+}
+
+/* Phone app feel (#238). Touch screens: text fields at 16 px at least, because iOS zooms the page into any smaller
+   field when it takes focus; 44 px targets (UX-14, Apple's minimum) for the chat header, the reply toolbar, the
+   password eye, the sign-up link and the drawer's controls; interface chrome neither selects text nor opens the
+   long-press menu, as in an app, while message text and fields stay selectable. */
+@media (pointer: coarse) {
+  input:is([type='text'], [type='email'], [type='password'], [type='search'], [type='url'], [type='tel'], [type='number'], :not([type])),
+  textarea,
+  select {
+    font-size: max(16px, 1em) !important;
+  }
+  [data-efaiw='chat-header'] button,
+  .hover-button,
+  .group\/secret-input button,
+  .efaiw-chats-close,
+  #chat-filter-menu-button,
+  button[id^='conversation-menu-'] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  a[href$='/register'] {
+    min-height: 44px;
+    align-items: center;
+  }
+  button,
+  [role='button'],
+  [role='menuitem'],
+  [role='tab'],
+  [role='option'],
+  nav,
+  label,
+  [data-efaiw='chat-header'],
+  .efaiw-dock {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+  input,
+  textarea,
+  [contenteditable='true'] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+/* The reply toolbar on a narrow phone (360 px): the 44 px buttons keep their row and the model's name moves under
+   them, at the end, instead of running off the screen; a name longer than the column ends in «…». */
+[data-efaiw-actions] {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.efaiw-reply-model {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* iPhone landscape: with viewport-fit=cover the page reaches the screen edges, so it keeps clear of the notch. */
+body {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+/* The iPhone install hint and the new-version bar: a card under the header, in the skills tip's dark EF blue. */
+.efaiw-install-hint,
+.efaiw-update-bar {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 60px);
+  inset-inline: 12px;
+  z-index: 130;
+  display: flex;
+  max-width: 28rem;
+  align-items: center;
+  gap: 0.75rem;
+  margin-inline: auto;
+  padding: 0.75rem 0.9rem;
+  border-radius: 0.875rem;
+  background-color: #1e285f;
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.6;
+  box-shadow: 0 8px 24px rgba(15, 24, 34, 0.18);
+}
+.efaiw-install-hint-icon {
+  display: grid;
+  flex: none;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.14);
+}
+.efaiw-install-hint-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.efaiw-update-bar > span {
+  flex: 1;
+}
+.efaiw-install-hint > button,
+.efaiw-update-bar > button {
+  flex: none;
+  min-height: 44px;
+  padding: 0 1rem;
+  border-radius: 999px;
+  background-color: #fff;
+  color: #1e285f;
+  font-weight: 600;
+}

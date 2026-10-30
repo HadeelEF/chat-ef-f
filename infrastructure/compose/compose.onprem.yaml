@@ -1,0 +1,61 @@
+# Ubuntu Server LTS on-premises (Docker Engine + Compose plugin): adds the HTTPS reverse proxy.
+# Usage (from this directory): docker compose -f compose.yaml -f compose.onprem.yaml up -d
+# Guide: docs/operations/ubuntu-onprem.md · Decision: ADR-0008
+#
+# Caddy is the only service with published ports (80 -> redirect, 443 -> HTTPS). LibreChat and MongoDB stay private.
+# The Admin Panel (ADR-0016) is served by the same proxy on a second internal name, EFAIW_ADMIN_HOSTNAME.
+# TLS mode comes from EFAIW_TLS (see .env.example): enterprise CA certificate files, Caddy's internal CA, or ACME.
+services:
+  proxy:
+    # Caddy 2.11.7 (alpine). Multi-arch index digest from Docker Hub (verified 2026-10-18).
+    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+    restart: unless-stopped
+    depends_on:
+      librechat:
+        condition: service_healthy
+    ports:
+      - "${EFAIW_BIND_ADDRESS:-0.0.0.0}:${EFAIW_HTTP_PORT:-80}:80"
+      - "${EFAIW_BIND_ADDRESS:-0.0.0.0}:${EFAIW_HTTPS_PORT:-443}:443"
+    environment:
+      EFAIW_HOSTNAME: ${EFAIW_HOSTNAME:?set EFAIW_HOSTNAME to the internal DNS name users open}
+      EFAIW_ADMIN_HOSTNAME: ${EFAIW_ADMIN_HOSTNAME:?set EFAIW_ADMIN_HOSTNAME to the internal DNS name of the admin panel}
+      EFAIW_TLS: ${EFAIW_TLS:?set EFAIW_TLS (certificate files, internal, or an ACME e-mail)}
+    volumes:
+      - type: bind
+        source: ./Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+      - type: bind
+        source: ${EFAIW_TLS_DIR:-./tls}
+        target: /etc/caddy/tls
+        read_only: true
+        bind:
+          create_host_path: true
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - frontend
+    healthcheck:
+      # The admin API listens on the container loopback only; a valid config response proves Caddy is serving.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+volumes:
+  # Issued/internal certificates and Caddy's internal CA. Not application data; rebuildable, but back it up when
+  # using EFAIW_TLS=internal so client trust in the internal root survives a rebuild.
+  caddy-data: {}
+  caddy-config: {}

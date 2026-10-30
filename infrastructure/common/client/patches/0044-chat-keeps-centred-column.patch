@@ -1,0 +1,78 @@
+EF AI Workspace (#243): the chat keeps its centred reading column on every screen, as ChatGPT and Claude do.
+
+- Settings (Nav/Settings/registry.tsx): no «تكبير مساحة الدردشة» (Maximize chat space). Turned on in a desktop browser,
+  it dropped the 48rem reading width (brand.css UX-11): one long line per reply, a screen-wide message box, and the
+  model name far from the reply. ChatGPT (about 48rem) and Claude keep a centred column with no full-width option.
+- store/settings.ts: maximizeChatSpace is a plain atom, false, no longer read from localStorage, so a browser that
+  saved «maximize» gets the centred column back without doing anything. Its readers stay as upstream.
+  - store/__tests__/maximizeChatSpace.spec.ts: a saved «maximize» is ignored; Settings does not offer it.
+
+diff --git a/client/src/components/Nav/Settings/registry.tsx b/client/src/components/Nav/Settings/registry.tsx
+index 5b18dc2..d668db4 100644
+--- a/client/src/components/Nav/Settings/registry.tsx
++++ b/client/src/components/Nav/Settings/registry.tsx
+@@ -115,17 +115,7 @@ export const registry: SettingEntry[] = [
+     Component: WeekStartSelector,
+   },
+   // General · Layout
+-  {
+-    id: 'maximizeChatSpace',
+-    tab: GENERAL,
+-    section: 'layout',
+-    labelKey: 'com_nav_maximize_chat_space',
+-    Component: toggleControl({
+-      stateAtom: store.maximizeChatSpace,
+-      localizationKey: 'com_nav_maximize_chat_space',
+-      switchId: 'maximizeChatSpace',
+-    }),
+-  },
++  // EF (#243): no «Maximize chat space»; the chat keeps its centred column (store/settings.ts).
+   {
+     id: 'centerFormOnLanding',
+     tab: GENERAL,
+diff --git a/client/src/store/__tests__/maximizeChatSpace.spec.ts b/client/src/store/__tests__/maximizeChatSpace.spec.ts
+new file mode 100644
+index 0000000..dd73e5b
+--- /dev/null
++++ b/client/src/store/__tests__/maximizeChatSpace.spec.ts
+@@ -0,0 +1,18 @@
++import { snapshot_UNSTABLE } from 'recoil';
++import { registry } from '~/components/Nav/Settings/registry';
++import settings from '../settings';
++
++/** EF (#243): the chat keeps its centred reading column on wide screens, as ChatGPT and Claude do. */
++describe('maximizeChatSpace', () => {
++  afterEach(() => localStorage.clear());
++
++  it('ignores a «maximize» saved in this browser', () => {
++    localStorage.setItem('maximizeChatSpace', JSON.stringify(true));
++
++    expect(snapshot_UNSTABLE().getLoadable(settings.maximizeChatSpace).valueOrThrow()).toBe(false);
++  });
++
++  it('is not offered in Settings', () => {
++    expect(registry.find((entry) => entry.id === 'maximizeChatSpace')).toBeUndefined();
++  });
++});
+diff --git a/client/src/store/settings.ts b/client/src/store/settings.ts
+index 335e82e..9f5610f 100644
+--- a/client/src/store/settings.ts
++++ b/client/src/store/settings.ts
+@@ -32,6 +32,9 @@ const staticAtoms = {
+   }),
+   showPopover: atom<boolean>({ key: 'showPopover', default: false }),
+   speechSettingsInitialized: atom<boolean>({ key: 'speechSettingsInitialized', default: false }),
++  /** EF (#243): the chat keeps its centred reading column, as ChatGPT and Claude do; Settings no longer offers the
++   *  switch and a «maximize» saved in this browser is no longer read. */
++  maximizeChatSpace: atom<boolean>({ key: 'maximizeChatSpace', default: false }),
+ };
+ 
+ /** Read synchronously: `useMediaQuery` only resolves after the first paint. */
+@@ -81,7 +84,6 @@ const localStorageAtoms = {
+    * regardless — this only governs the default Enter/steer route.
+    */
+   steerInterruptsByDefault: atomWithLocalStorage('steerInterruptsByDefault', false),
+-  maximizeChatSpace: atomWithLocalStorage('maximizeChatSpace', false),
+   chatDirection: atomWithLocalStorage('chatDirection', 'LTR'),
+   autoExpandTools: atomWithLocalStorage(LocalStorageKeys.AUTO_EXPAND_TOOLS, false),
+   saveDrafts: atomWithLocalStorage('saveDrafts', true),

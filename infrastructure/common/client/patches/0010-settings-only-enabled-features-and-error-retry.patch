@@ -1,0 +1,178 @@
+UX audit wave 2 (#103, ADR-0013). Settings show only what works in this deployment: the memory switch needs memories to
+be usable (the opt-out permission alone kept it visible with memories off), shared links need sharing enabled, revoking
+user keys needs an endpoint that takes them, and the badge/tool switches need agent tool capabilities. A reply whose
+content is a provider error gets a labelled «إعادة المحاولة» button and no read-aloud, fork or feedback actions (the
+error arrives as a content part, so `message.error` alone missed it). On phones the configured footer (the trust notice)
+shows above the composer of the welcome screen, because upstream hides the footer below 640 px.
+
+diff --git a/client/src/components/Chat/ChatView.tsx b/client/src/components/Chat/ChatView.tsx
+index ef6949d..9530d08 100644
+--- a/client/src/components/Chat/ChatView.tsx
++++ b/client/src/components/Chat/ChatView.tsx
+@@ -203,6 +203,14 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
+                           )}
+                         >
+                           {isLandingPage && <ConversationStarters />}
++                          {/* EF (#103): upstream hides the footer below 640 px, where the composer meets the
++                            screen edge; the deployment's notice still belongs on the welcome screen. */}
++                          {isLandingPage && configuredFooter && (
++                            <Footer
++                              configuredOnly
++                              className="flex justify-center px-4 pb-2 text-center text-xs text-text-muted sm:hidden"
++                            />
++                          )}
+                           {isSubagentThreadReadOnly ? (
+                             <div
+                               className="mx-auto w-full max-w-3xl px-4 py-3 text-center text-sm text-text-secondary xl:max-w-4xl"
+diff --git a/client/src/components/Chat/Messages/HoverButtons.tsx b/client/src/components/Chat/Messages/HoverButtons.tsx
+index 0dc465d..69f4064 100644
+--- a/client/src/components/Chat/Messages/HoverButtons.tsx
++++ b/client/src/components/Chat/Messages/HoverButtons.tsx
+@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, memo } from 'react';
+ import { Copy, Check } from 'lucide';
+ import { useAtomValue } from 'jotai';
+ import { useRecoilState } from 'recoil';
+-import { findMessageById, isUserInitiatedCompaction } from 'librechat-data-provider';
++import { ContentTypes, findMessageById, isUserInitiatedCompaction } from 'librechat-data-provider';
+ import {
+   Button,
+   EditIcon,
+@@ -215,7 +215,12 @@ const HoverButtons = ({
+     return null;
+   }
+ 
+-  const { isCreatedByUser, error } = message;
++  const { isCreatedByUser } = message;
++  /** Provider failures arrive as an error content part; `message.error` only covers older errors. */
++  const error =
++    message.error === true ||
++    (Array.isArray(message.content) &&
++      message.content.some((part) => part?.type === ContentTypes.ERROR));
+   const isSubagentThreadReadOnly = conversation.subagentThread != null;
+ 
+   const onEdit = () => {
+@@ -298,8 +303,21 @@ const HoverButtons = ({
+         <Feedback handleFeedback={handleFeedback} feedback={message.feedback} isLast={isLast} />
+       )}
+ 
++      {/* Retry Button (labelled, for a failed reply) */}
++      {!isSubagentThreadReadOnly && regenerateEnabled && error && (
++        <button
++          type="button"
++          onClick={regenerate}
++          data-testid={isLast ? 'retry-generation-button' : undefined}
++          className="mx-1 inline-flex h-8 items-center gap-1.5 rounded-full border border-border-medium px-3 text-sm font-medium text-text-primary hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-primary"
++        >
++          <RegenerateIcon size="16" />
++          {localize('com_ui_retry')}
++        </button>
++      )}
++
+       {/* Regenerate Button */}
+-      {!isSubagentThreadReadOnly && regenerateEnabled && (
++      {!isSubagentThreadReadOnly && regenerateEnabled && !error && (
+         <HoverButton
+           onClick={regenerate}
+           title={localize('com_ui_regenerate')}
+diff --git a/client/src/components/Nav/Settings/context.tsx b/client/src/components/Nav/Settings/context.tsx
+index bb725d3..eedd607 100644
+--- a/client/src/components/Nav/Settings/context.tsx
++++ b/client/src/components/Nav/Settings/context.tsx
+@@ -41,6 +41,8 @@ export function useSettingsContext(): SettingsContextValue {
+   const hasUserProvidedEndpoints = useProviderKeys().length > 0;
+   const hasStatefulCodeSessions =
+     agentsConfig?.capabilities.includes(AgentCapabilities.stateful_code_sessions) ?? false;
++  const sharedLinksEnabled = startupConfig?.sharedLinksEnabled === true;
++  const hasAgentTools = (agentsConfig?.capabilities.length ?? 0) > 0;
+ 
+   return useMemo(
+     () => ({
+@@ -48,6 +50,8 @@ export function useSettingsContext(): SettingsContextValue {
+       hasAnyPersonalizationFeature,
+       hasMemoryOptOut,
+       hasStatefulCodeSessions,
++      sharedLinksEnabled,
++      hasAgentTools,
+       hasRemoteAgents: hasRemoteAgentsBool,
+       hasUserProvidedEndpoints,
+       hasMultiConvo: hasMultiConvoBool,
+@@ -65,6 +69,8 @@ export function useSettingsContext(): SettingsContextValue {
+       hasAnyPersonalizationFeature,
+       hasMemoryOptOut,
+       hasStatefulCodeSessions,
++      sharedLinksEnabled,
++      hasAgentTools,
+       hasRemoteAgentsBool,
+       hasUserProvidedEndpoints,
+       hasMultiConvoBool,
+diff --git a/client/src/components/Nav/Settings/registry.tsx b/client/src/components/Nav/Settings/registry.tsx
+index ba831cc..5b18dc2 100644
+--- a/client/src/components/Nav/Settings/registry.tsx
++++ b/client/src/components/Nav/Settings/registry.tsx
+@@ -265,6 +265,7 @@ export const registry: SettingEntry[] = [
+     tab: CHAT,
+     section: 'sending',
+     labelKey: 'com_nav_save_badges_state',
++    show: (ctx) => ctx.hasAgentTools,
+     Component: toggleControl({
+       stateAtom: store.saveBadgesState,
+       localizationKey: 'com_nav_save_badges_state',
+@@ -395,6 +396,7 @@ export const registry: SettingEntry[] = [
+     tab: CHAT,
+     section: 'messages',
+     labelKey: 'com_nav_auto_expand_tools',
++    show: (ctx) => ctx.hasAgentTools,
+     Component: toggleControl({
+       stateAtom: store.autoExpandTools,
+       localizationKey: 'com_nav_auto_expand_tools',
+@@ -632,6 +634,7 @@ export const registry: SettingEntry[] = [
+     tab: DATA,
+     section: 'data',
+     labelKey: 'com_ui_settings_label_shared_links',
++    show: (ctx) => ctx.sharedLinksEnabled,
+     Component: SharedLinks,
+   },
+   {
+@@ -673,6 +676,7 @@ export const registry: SettingEntry[] = [
+     tab: DATA,
+     section: 'apiKeys',
+     labelKey: 'com_ui_settings_label_revoke_keys',
++    show: (ctx) => ctx.hasUserProvidedEndpoints,
+     Component: RevokeKeys,
+   },
+   // Langfuse
+diff --git a/client/src/components/Nav/Settings/types.ts b/client/src/components/Nav/Settings/types.ts
+index faf1c6b..c39e0a9 100644
+--- a/client/src/components/Nav/Settings/types.ts
++++ b/client/src/components/Nav/Settings/types.ts
+@@ -42,6 +42,8 @@ export interface SettingsContextValue {
+   hasAnyPersonalizationFeature: boolean;
+   hasMemoryOptOut: boolean;
+   hasStatefulCodeSessions: boolean;
++  sharedLinksEnabled: boolean;
++  hasAgentTools: boolean;
+   hasRemoteAgents: boolean;
+   hasUserProvidedEndpoints: boolean;
+   hasMultiConvo: boolean;
+diff --git a/client/src/hooks/usePersonalizationAccess.ts b/client/src/hooks/usePersonalizationAccess.ts
+index 9a419f4..78af289 100644
+--- a/client/src/hooks/usePersonalizationAccess.ts
++++ b/client/src/hooks/usePersonalizationAccess.ts
+@@ -2,10 +2,16 @@ import { PermissionTypes, Permissions } from 'librechat-data-provider';
+ import useHasAccess from './Roles/useHasAccess';
+ 
+ export default function usePersonalizationAccess() {
+-  const hasMemoryOptOut = useHasAccess({
++  const canOptOut = useHasAccess({
+     permissionType: PermissionTypes.MEMORIES,
+     permission: Permissions.OPT_OUT,
+   });
++  const canUseMemories = useHasAccess({
++    permissionType: PermissionTypes.MEMORIES,
++    permission: Permissions.USE,
++  });
++  /** Opting out of a feature that is off for this role is no choice at all. */
++  const hasMemoryOptOut = canOptOut && canUseMemories;
+ 
+   const hasAnyPersonalizationFeature = hasMemoryOptOut;
+ 

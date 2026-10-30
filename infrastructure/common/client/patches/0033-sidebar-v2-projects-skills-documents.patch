@@ -1,0 +1,752 @@
+EF AI Workspace (#189): sidebar v2, owner-approved 2026-10-24 («اعتمد ونفذه بدقة») after comparing ChatGPT, Claude,
+Gemini and DeepSeek.
+
+- Column (UnifiedSidebar/EfSidebarColumn.tsx): «New chat», then Projects, Skills and Documents (the files panel) with
+  their tints; «More» with memory, bookmarks, ready commands (prompts) and any other panel the deployment enables; under
+  a line, the chat search and the active panel (the history, Pinned first). Admins also find the assistants marketplace,
+  the agent builder and the parameters in «More», marked «للمسؤول».
+- Projects (Conversations/ProjectsSection.tsx `embedded`, UnifiedSidebar/EfProjectsPanel.tsx, useUnifiedSidebarLinks):
+  a panel of their own in place of the section above the history: «New project», the projects with their chats, and
+  «All projects» (the upstream /projects page). The collapsed rail and the panel shortcuts include it. With a mouse, a
+  project's name keeps the whole row until the row is hovered or focused (its actions show then).
+- Admin-only display (useUnifiedSidebarLinks): employees do not see the agent builder or the parameters in the column,
+  the rail or the shortcuts (owner decision while the owner learns them). Role permissions are unchanged.
+- Composer hint (hooks/Input/useTextarea.ts): the empty box says «… or type / for a ready command» when the «/»
+  command is on and the employee may use prompts.
+- Chat titles (Conversations/ConvoLink.tsx): the overflow fade follows the title's own direction. postcss-preset-env
+  rewrites `:dir(rtl)` as `[dir=rtl] &` (the page's direction), so an English title in the Arabic interface lost its
+  first letters to the fade.
+- Ready commands panel (Prompts/buttons/AutoSendPrompt.tsx): the «auto-send» button shows its state with a drawn box
+  instead of a second (hidden) checkbox control nested in the button (axe nested-interactive); aria-pressed is unchanged.
+
+diff --git a/client/src/components/Conversations/ConvoLink.tsx b/client/src/components/Conversations/ConvoLink.tsx
+index 50e1920..5c0cccb 100644
+--- a/client/src/components/Conversations/ConvoLink.tsx
++++ b/client/src/components/Conversations/ConvoLink.tsx
+@@ -70,6 +70,10 @@ const ConvoLink: React.FC<ConvoLinkProps> = ({
+       animation?.cancel();
+       cancelAnimationFrame(frame);
+       delete viewport.dataset.titleRevealed;
++      /** EF (#189): the fade side follows the title's own direction (`dir="auto"`). postcss-preset-env rewrites
++       * `:dir(rtl)` as `[dir=rtl] &`, which matches the page's direction instead: an English title in the Arabic
++       * interface lost its first letters to the fade (and an Arabic title in the English one). */
++      viewport.dataset.titleDir = getComputedStyle(viewport).direction;
+       const overflow = text.getBoundingClientRect().width - viewport.getBoundingClientRect().width;
+       setIsOverflowing(overflow > 0);
+       if (!isHovered || isSmallScreen || reducedMotion.matches || overflow <= 0) {
+@@ -147,9 +151,9 @@ const ConvoLink: React.FC<ConvoLinkProps> = ({
+         ref={titleRef}
+         dir="auto"
+         className={cn(
+-          'flex min-w-0 flex-1 justify-start overflow-hidden whitespace-nowrap [--convo-title-fade-width:24px] [--convo-title-reveal-duration:800ms] [mask-position:left] [mask-repeat:no-repeat] [mask-size:100%_100%] [transition-duration:0ms] [transition-property:mask-size] [transition-timing-function:linear] [&:dir(rtl)]:[mask-position:right]',
++          'flex min-w-0 flex-1 justify-start overflow-hidden whitespace-nowrap [--convo-title-fade-width:24px] [--convo-title-reveal-duration:800ms] [mask-position:left] [mask-repeat:no-repeat] [mask-size:100%_100%] [transition-duration:0ms] [transition-property:mask-size] [transition-timing-function:linear] data-[title-dir=rtl]:[mask-position:right]',
+           isOverflowing &&
+-            '[mask-image:linear-gradient(to_right,currentColor_calc(100%_-_var(--convo-title-fade-width)),transparent)] [&:dir(rtl)]:[mask-image:linear-gradient(to_left,currentColor_calc(100%_-_var(--convo-title-fade-width)),transparent)]',
++            '[mask-image:linear-gradient(to_right,currentColor_calc(100%_-_var(--convo-title-fade-width)),transparent)] data-[title-dir=rtl]:[mask-image:linear-gradient(to_left,currentColor_calc(100%_-_var(--convo-title-fade-width)),transparent)]',
+           'data-[title-revealed=true]:[mask-size:calc(100%_+_var(--convo-title-fade-width))_100%] data-[title-revealed=true]:[transition-duration:var(--convo-title-reveal-duration)]',
+         )}
+         onDoubleClick={(e) => {
+diff --git a/client/src/components/Conversations/ProjectsSection.tsx b/client/src/components/Conversations/ProjectsSection.tsx
+index edc9590..3e369bc 100644
+--- a/client/src/components/Conversations/ProjectsSection.tsx
++++ b/client/src/components/Conversations/ProjectsSection.tsx
+@@ -294,7 +294,13 @@ const ProjectItem = memo(
+             onClick={() => setExpanded((prev) => !prev)}
+             aria-expanded={expanded}
+             aria-label={project.name}
+-            className="flex min-w-0 flex-1 items-center gap-2 rounded-lg py-1.5 pl-1.5 pr-16 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-text-primary"
++            className={cn(
++              'flex min-w-0 flex-1 items-center gap-2 rounded-lg py-1.5 pl-1.5 pr-16 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-text-primary',
++              /* EF (#189): with a mouse the actions only show on hover or focus, so the name keeps the full row until
++                 then (the Projects panel is the whole sidebar width). Touch screens always show them. */
++              !isMenuOpen &&
++                '[@media(hover:hover)]:pr-1.5 [@media(hover:hover)]:group-focus-within/project-row:pr-16 [@media(hover:hover)]:group-hover/project-row:pr-16',
++            )}
+           >
+             <ChevronRight
+               className={cn(
+@@ -384,9 +390,16 @@ ProjectItem.displayName = 'ProjectItem';
+ interface ProjectsSectionProps {
+   toggleNav: () => void;
+   isAuthenticated: boolean;
++  /** EF (#189): shown as the sidebar's Projects panel, under its own heading: no section header, always open, with
++   *  «New project» first and «All projects» last. */
++  embedded?: boolean;
+ }
+ 
+-const ProjectsSection = ({ toggleNav, isAuthenticated }: ProjectsSectionProps) => {
++const ProjectsSection = ({
++  toggleNav,
++  isAuthenticated,
++  embedded = false,
++}: ProjectsSectionProps) => {
+   const localize = useLocalize();
+   const navigate = useNavigate();
+   const location = useLocation();
+@@ -417,7 +430,8 @@ const ProjectsSection = ({ toggleNav, isAuthenticated }: ProjectsSectionProps) =
+    * set before this default existed (stored === false), is always respected.
+    */
+   const respectStoredExpanded = hasToggledSection || storedExpanded === false;
+-  const isExpanded = respectStoredExpanded ? storedExpanded : isLoading || projects.length > 0;
++  const isExpanded =
++    embedded || (respectStoredExpanded ? storedExpanded : isLoading || projects.length > 0);
+ 
+   const openProjects = useCallback(() => {
+     navigate('/projects');
+@@ -433,7 +447,7 @@ const ProjectsSection = ({ toggleNav, isAuthenticated }: ProjectsSectionProps) =
+       );
+     }
+ 
+-    if (projects.length === 0) {
++    if (projects.length === 0 && !embedded) {
+       return (
+         <Button
+           type="button"
+@@ -458,7 +472,7 @@ const ProjectsSection = ({ toggleNav, isAuthenticated }: ProjectsSectionProps) =
+             isActive={project._id === highlightedProjectId}
+           />
+         ))}
+-        {hasMore && (
++        {(hasMore || embedded) && (
+           <li className="list-none">
+             <Button
+               type="button"
+@@ -478,6 +492,35 @@ const ProjectsSection = ({ toggleNav, isAuthenticated }: ProjectsSectionProps) =
+     return null;
+   }
+ 
++  const createDialog = (
++    <ProjectCreateDialog
++      open={isCreateOpen}
++      onOpenChange={setIsCreateOpen}
++      onCreated={(project) => {
++        navigate(`/projects/${project._id}`);
++        toggleNav();
++      }}
++    />
++  );
++
++  if (embedded) {
++    return (
++      <div className="efaiw-projects flex flex-col text-sm">
++        <Button
++          type="button"
++          variant="outline"
++          onClick={() => setIsCreateOpen(true)}
++          className="efaiw-projects-new mb-2 flex h-11 w-full justify-start gap-2 rounded-xl px-3 text-sm font-semibold"
++        >
++          <FolderPlus className="h-4 w-4 shrink-0" aria-hidden="true" />
++          <span className="truncate">{localize('com_ui_new_project')}</span>
++        </Button>
++        {renderProjectsBody()}
++        {createDialog}
++      </div>
++    );
++  }
++
+   return (
+     <div className="flex flex-col px-3 text-sm">
+       <div className="flex h-8 w-full items-center pr-2">
+@@ -519,14 +562,7 @@ const ProjectsSection = ({ toggleNav, isAuthenticated }: ProjectsSectionProps) =
+         <div className="pt-0.5">{renderProjectsBody()}</div>
+       </Collapse>
+ 
+-      <ProjectCreateDialog
+-        open={isCreateOpen}
+-        onOpenChange={setIsCreateOpen}
+-        onCreated={(project) => {
+-          navigate(`/projects/${project._id}`);
+-          toggleNav();
+-        }}
+-      />
++      {createDialog}
+     </div>
+   );
+ };
+diff --git a/client/src/components/Prompts/buttons/AutoSendPrompt.tsx b/client/src/components/Prompts/buttons/AutoSendPrompt.tsx
+index 21194e2..a734066 100644
+--- a/client/src/components/Prompts/buttons/AutoSendPrompt.tsx
++++ b/client/src/components/Prompts/buttons/AutoSendPrompt.tsx
+@@ -1,5 +1,6 @@
++import { Check } from 'lucide-react';
+ import { useRecoilState } from 'recoil';
+-import { Button, Checkbox } from '@librechat/client';
++import { Button } from '@librechat/client';
+ import { useLocalize } from '~/hooks';
+ import store from '~/store';
+ 
+@@ -27,13 +28,15 @@ export default function AutoSendPrompt({
+       aria-pressed={autoSendPrompts}
+       className={`relative h-9 w-full gap-2 rounded-lg border-border-light font-medium ${autoSendPrompts ? 'bg-surface-hover hover:bg-surface-hover' : ''}`}
+     >
+-      <Checkbox
+-        checked={autoSendPrompts}
+-        tabIndex={-1}
++      {/* EF (#189): a picture of the checkbox, not a second control inside the button (axe nested-interactive);
++       * the button's aria-pressed carries the state. */}
++      <span
+         aria-hidden="true"
+-        aria-label={localize('com_nav_auto_send_prompts')}
+-        className="pointer-events-none"
+-      />
++        data-state={autoSendPrompts ? 'checked' : 'unchecked'}
++        className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-border-xheavy data-[state=checked]:bg-surface-inverted data-[state=checked]:text-text-inverted"
++      >
++        {autoSendPrompts && <Check className="h-4 w-4" />}
++      </span>
+       {localize('com_nav_auto_send_prompts')}
+     </Button>
+   );
+diff --git a/client/src/components/UnifiedSidebar/ConversationsSection.tsx b/client/src/components/UnifiedSidebar/ConversationsSection.tsx
+index 42684ad..0e601a8 100644
+--- a/client/src/components/UnifiedSidebar/ConversationsSection.tsx
++++ b/client/src/components/UnifiedSidebar/ConversationsSection.tsx
+@@ -16,7 +16,6 @@ import {
+   useTitleGeneration,
+ } from '~/data-provider';
+ import { useLocalize, useAuthContext, useLocalStorage, useNavScrolling } from '~/hooks';
+-import ProjectsSection from '~/components/Conversations/ProjectsSection';
+ import ChatFilterMenu from '~/components/Conversations/ChatFilterMenu';
+ import PinnedSection from '~/components/Conversations/PinnedSection';
+ import useSidebarToggle from '~/hooks/Nav/useSidebarToggle';
+@@ -145,13 +144,13 @@ const ConversationsSection = memo(() => {
+     search.isTyping ||
+     (!!search.query && (isLoading || (isFetching && conversations.length === 0)));
+ 
+-  /** Projects, Pinned and Chats share one scroll container so the sidebar scrolls
++  /** Pinned and Chats share one scroll container so the sidebar scrolls
+    *  as a single surface: the chats list is virtualized against this viewport
+    *  rather than scrolling inside a pane of its own. */
+   const [scrollViewport, setScrollViewport] = useState<HTMLDivElement | null>(null);
+   const [scrollContent, setScrollContent] = useState<HTMLDivElement | null>(null);
+ 
+-  /** Searching replaces what the surface holds: Projects and Pinned leave and
++  /** Searching replaces what the surface holds: Pinned leaves and
+    *  the chats become results. A scroll position kept from the previous
+    *  contents would open those results partway down whenever they are long
+    *  enough for the browser not to clamp it, so the surface returns to the top
+@@ -178,9 +177,7 @@ const ConversationsSection = memo(() => {
+         {/* `min-h-full` keeps the sections filling a tall sidebar, so the chats
+             list still claims the space below them when there is little to show. */}
+         <div ref={setScrollContent} className="flex min-h-full flex-col">
+-          {!search.query && (
+-            <ProjectsSection toggleNav={toggleNav} isAuthenticated={isAuthenticated} />
+-          )}
++          {/* EF (#189): Projects open from their own sidebar row (EfProjectsPanel); Pinned leads the history. */}
+           {!search.query && (
+             <PinnedSection
+               conversations={pinnedConversations}
+diff --git a/client/src/components/UnifiedSidebar/EfProjectsPanel.tsx b/client/src/components/UnifiedSidebar/EfProjectsPanel.tsx
+new file mode 100644
+index 0000000..3e4723f
+--- /dev/null
++++ b/client/src/components/UnifiedSidebar/EfProjectsPanel.tsx
+@@ -0,0 +1,37 @@
++import { memo, useCallback } from 'react';
++import { useMediaQuery } from '@librechat/client';
++import ProjectsSection from '~/components/Conversations/ProjectsSection';
++import useSidebarToggle from '~/hooks/Nav/useSidebarToggle';
++import { useAuthContext } from '~/hooks';
++
++/**
++ * EF (#189, owner-approved sidebar): «المشاريع» is a row of the sidebar that opens this panel, in place of the
++ * Projects section above the chat history: new project, the projects with their chats, and «All projects» (the
++ * upstream /projects page). Choosing a project or a chat on a phone closes the drawer, as in the chat history.
++ */
++function EfProjectsPanel() {
++  const isSmallScreen = useMediaQuery('(max-width: 768px)');
++  const { isAuthenticated } = useAuthContext();
++  const { setSidebarOpen } = useSidebarToggle();
++
++  const toggleNav = useCallback(
++    (afterSlide?: () => void) => {
++      if (isSmallScreen) {
++        setSidebarOpen(false, afterSlide);
++        return;
++      }
++      afterSlide?.();
++    },
++    [isSmallScreen, setSidebarOpen],
++  );
++
++  return (
++    <div className="flex h-full min-h-0 flex-col overflow-hidden pb-3 pt-1">
++      <div className="scrollbar-gutter-stable min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1">
++        <ProjectsSection toggleNav={toggleNav} isAuthenticated={isAuthenticated} embedded={true} />
++      </div>
++    </div>
++  );
++}
++
++export default memo(EfProjectsPanel);
+diff --git a/client/src/components/UnifiedSidebar/EfSidebarColumn.tsx b/client/src/components/UnifiedSidebar/EfSidebarColumn.tsx
+index c6969fd..ed0a4d4 100644
+--- a/client/src/components/UnifiedSidebar/EfSidebarColumn.tsx
++++ b/client/src/components/UnifiedSidebar/EfSidebarColumn.tsx
+@@ -2,6 +2,7 @@ import { memo, lazy, Suspense, useCallback, useEffect, useRef } from 'react';
+ import { useRecoilValue } from 'recoil';
+ import { Link, useLocation } from 'react-router-dom';
+ import { ChevronDown, ChevronLeft, Ellipsis, LayoutGrid, SquarePen, X } from 'lucide-react';
++import { SystemRoles } from 'librechat-data-provider';
+ import { Button, Sidebar, Skeleton, TooltipAnchor } from '@librechat/client';
+ import type { NavLink } from '~/common';
+ import type { TranslationKeys } from '~/hooks';
+@@ -11,7 +12,7 @@ import {
+   useShortcutDisplay,
+   useShortcutHint,
+ } from '~/hooks/useKeyboardShortcuts';
+-import { useLocalize, useLocalStorage, useShowMarketplace } from '~/hooks';
++import { useAuthContext, useLocalize, useLocalStorage, useShowMarketplace } from '~/hooks';
+ import { CLOSE_SIDEBAR_ID } from '~/components/Chat/Menus/OpenSidebar';
+ import SidePanelNav from '~/components/SidePanel/Nav';
+ import SearchBar from '~/components/Nav/SearchBar';
+@@ -23,28 +24,39 @@ import store from '~/store';
+ 
+ const AccountSettings = lazy(() => import('~/components/Nav/AccountSettings'));
+ 
+-/** EF (Concept 1, owner-approved): the names of the panels listed under «More». The builder keeps its full name so it
+- *  is not confused with the agents row above it, which opens the marketplace. */
+-const MORE_LABELS: Record<string, TranslationKeys> = {
+-  agents: 'com_sidepanel_agent_builder',
++/** EF (#189, owner-approved sidebar): the panels named in the column. The builder keeps its full name so it is not
++ *  confused with «المساعدون», which opens the marketplace. Files are presented as the employee's documents. */
++const PANEL_LABELS: Record<string, TranslationKeys> = {
++  projects: 'com_ui_projects',
+   skills: 'com_efaiw_rail_skills',
+-  prompts: 'com_ui_prompts',
++  files: 'com_efaiw_documents',
+   memories: 'com_efaiw_rail_memories',
+   bookmarks: 'com_efaiw_rail_bookmarks',
+-  files: 'com_efaiw_rail_files',
++  prompts: 'com_efaiw_rail_prompts',
++  agents: 'com_sidepanel_agent_builder',
+   parameters: 'com_efaiw_rail_parameters',
+ };
++/** The column's main rows, each with its tint from the palette (brand.css). */
++const MAIN_PANELS: ReadonlyArray<{ id: string; tone: string }> = [
++  { id: 'projects', tone: 'efaiw-tone-blue' },
++  { id: 'skills', tone: 'efaiw-tone-green' },
++  { id: 'files', tone: 'efaiw-tone-brown' },
++];
++/** «More» lists these first, then any other panel the deployment enables; the admin-only ones come last. */
++const MORE_FIRST = ['memories', 'bookmarks', 'prompts'];
++const ADMIN_PANELS = ['agents', 'parameters'];
+ 
+ const rowClass =
+   'efaiw-side-row flex h-11 w-full items-center gap-3 rounded-xl px-3 text-start text-[15px] text-text-primary outline-none transition-colors hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring-primary';
+ 
+ /**
+- * EF (Concept 1, owner-approved): the expanded sidebar as one column after ChatGPT's, on the desktop and in the phone
+- * drawer. Top to bottom: the EF logo and the close control; «New chat» in the primary blue; the chat search; the agents
+- * marketplace; «More», which lists every other panel LibreChat offers (agent builder, skills, prompts, memory,
+- * bookmarks, files, parameters, and any the deployment enables); the active panel (the chat history by default, with a
+- * way back to it from any other panel); the account menu. Nothing LibreChat offers is removed: the collapsed desktop
+- * sidebar keeps the labelled rail, and the hidden shortcut targets keep the panel shortcuts working.
++ * EF (Concept 1, sidebar v2 #189, owner-approved): the expanded sidebar as one column, on the desktop and in the phone
++ * drawer. Top to bottom: the EF logo and the close control; «New chat» in the primary blue; Projects, Skills and
++ * Documents (the files panel); «More» with memory, bookmarks, ready commands (prompts) and any other panel the
++ * deployment enables, and for admins the assistants marketplace, their builder and the parameters; under a line, the
++ * chat search and the active panel (the chat history by default, pinned first, with a way back to it from any other
++ * panel); the account menu. Nothing LibreChat offers is removed: the collapsed desktop sidebar keeps the labelled rail,
++ * and the hidden shortcut targets keep the panel shortcuts working.
+  */
+ function EfSidebarColumn({
+   links,
+@@ -67,13 +79,29 @@ function EfSidebarColumn({
+   const showMarketplace = useShowMarketplace();
+   const [moreOpen, setMoreOpen] = useLocalStorage('efaiwSidebarMoreOpen', false);
+   const closeRef = useRef<HTMLButtonElement>(null);
++  const { user } = useAuthContext();
++  const isAdmin = user?.role === SystemRoles.ADMIN;
+ 
+   const isInsightsRoute = location.pathname.startsWith('/insights');
+   const routeActiveId = isInsightsRoute ? 'insights' : undefined;
+   const activeId = routeActiveId ?? resolveActivePanel(active, links);
+   const activeLink = links.find((link) => link.id === activeId);
+-  const moreLinks = links.filter((link) => link.id !== DEFAULT_PANEL);
+-  const labelOf = (link: NavLink) => localize(MORE_LABELS[link.id] ?? link.title);
++  const mainIds = MAIN_PANELS.map((panel) => panel.id);
++  const byId = (id: string) => links.find((link) => link.id === id);
++  /* The agent builder and the parameters only reach this list for admins (useUnifiedSidebarLinks). */
++  const moreLinks = [
++    ...MORE_FIRST.map(byId),
++    ...links.filter(
++      (link) =>
++        link.id !== DEFAULT_PANEL &&
++        !mainIds.includes(link.id) &&
++        !MORE_FIRST.includes(link.id) &&
++        !ADMIN_PANELS.includes(link.id),
++    ),
++  ].filter((link): link is NavLink => link != null);
++  const adminLinks = ADMIN_PANELS.map(byId).filter((link): link is NavLink => link != null);
++  const labelOf = (link: NavLink) => localize(PANEL_LABELS[link.id] ?? link.title);
++  const adminBadge = <span className="efaiw-admin-badge">{localize('com_efaiw_admin_only')}</span>;
+ 
+   const toggleLabel = 'com_nav_close_sidebar';
+   const toggleHint = useShortcutHint('toggleSidebar', localize(toggleLabel));
+@@ -203,42 +231,31 @@ function EfSidebarColumn({
+           }
+         />
+ 
+-        {search.enabled === true && (
+-          <div
+-            className="efaiw-side-search flex"
+-            /* Searching filters the chat history, so the history comes back into view. */
+-            onFocusCapture={() => {
+-              if (activeId !== DEFAULT_PANEL && !routeActiveId) {
+-                setActive(DEFAULT_PANEL);
+-              }
+-            }}
+-          >
+-            <SearchBar isSmallScreen={mobile} />
+-          </div>
+-        )}
+-
+-        {showMarketplace && (
+-          <Link
+-            to="/agents"
+-            data-testid="nav-agents-marketplace-button"
+-            aria-label={localize('com_agents_marketplace')}
+-            title={localize('com_agents_marketplace')}
+-            className={rowClass}
+-            onClick={(event) => {
+-              if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) {
+-                return;
+-              }
+-              if (mobile) {
+-                onClose();
+-              }
+-            }}
+-          >
+-            <LayoutGrid className="h-5 w-5 flex-shrink-0 text-text-secondary" aria-hidden="true" />
+-            <span className="flex-1 truncate">{localize('com_efaiw_rail_agents')}</span>
+-          </Link>
+-        )}
++        {MAIN_PANELS.map(({ id, tone }) => {
++          const link = byId(id);
++          if (!link) {
++            return null;
++          }
++          const isActive = link.id === activeId;
++          return (
++            <button
++              key={link.id}
++              type="button"
++              data-testid={`efaiw-main-${link.id}`}
++              aria-pressed={isActive}
++              disabled={link.disabled}
++              className={cn(rowClass, isActive && 'efaiw-side-on')}
++              onClick={(event) => openPanel(link, event)}
++            >
++              <span className={cn('efaiw-side-tile', tone)} aria-hidden="true">
++                <link.icon className="h-[18px] w-[18px]" />
++              </span>
++              <span className="flex-1 truncate">{labelOf(link)}</span>
++            </button>
++          );
++        })}
+ 
+-        {moreLinks.length > 0 && (
++        {(moreLinks.length > 0 || adminLinks.length > 0 || (isAdmin && showMarketplace)) && (
+           <>
+             <button
+               type="button"
+@@ -248,10 +265,9 @@ function EfSidebarColumn({
+               className={cn(rowClass, moreOpen && 'efaiw-side-more-open')}
+               onClick={() => setMoreOpen(!moreOpen)}
+             >
+-              <Ellipsis
+-                className="efaiw-side-more-icon h-5 w-5 flex-shrink-0 text-text-secondary"
+-                aria-hidden="true"
+-              />
++              <span className="efaiw-side-tile" aria-hidden="true">
++                <Ellipsis className="efaiw-side-more-icon h-[18px] w-[18px]" />
++              </span>
+               <span className="flex-1 truncate">{localize('com_efaiw_more')}</span>
+               <ChevronDown
+                 className={cn(
+@@ -285,6 +301,59 @@ function EfSidebarColumn({
+                     </li>
+                   );
+                 })}
++                {/* Admins only (owner decision, #189): the assistants marketplace, their builder and the parameters. */}
++                {isAdmin && showMarketplace && (
++                  <li>
++                    <Link
++                      to="/agents"
++                      data-testid="nav-agents-marketplace-button"
++                      aria-label={localize('com_agents_marketplace')}
++                      title={localize('com_agents_marketplace')}
++                      // `li a` in style.css makes links bold, blue and underlined: keep the row's own look.
++                      className={cn(rowClass, 'h-10 text-[14.5px] font-normal no-underline')}
++                      onClick={(event) => {
++                        if (
++                          event.button !== 0 ||
++                          event.ctrlKey ||
++                          event.metaKey ||
++                          event.shiftKey
++                        ) {
++                          return;
++                        }
++                        if (mobile) {
++                          onClose();
++                        }
++                      }}
++                    >
++                      <LayoutGrid className="h-[18px] w-[18px] flex-shrink-0" aria-hidden="true" />
++                      <span className="flex-1 truncate">{localize('com_efaiw_rail_agents')}</span>
++                      {adminBadge}
++                    </Link>
++                  </li>
++                )}
++                {adminLinks.map((link) => {
++                  const isActive = link.id === activeId;
++                  return (
++                    <li key={link.id}>
++                      <button
++                        type="button"
++                        data-testid={`efaiw-more-${link.id}`}
++                        aria-pressed={isActive}
++                        disabled={link.disabled}
++                        className={cn(
++                          rowClass,
++                          'h-10 text-[14.5px]',
++                          isActive && 'efaiw-side-active',
++                        )}
++                        onClick={(event) => openPanel(link, event)}
++                      >
++                        <link.icon className="h-[18px] w-[18px] flex-shrink-0" aria-hidden="true" />
++                        <span className="flex-1 truncate">{labelOf(link)}</span>
++                        {adminBadge}
++                      </button>
++                    </li>
++                  );
++                })}
+               </ul>
+             )}
+           </>
+@@ -292,6 +361,12 @@ function EfSidebarColumn({
+       </div>
+ 
+       <div className="efaiw-side-panel flex min-h-0 flex-1 flex-col">
++        {/* Under the line, the search field leads the chat history it filters (#189). */}
++        {search.enabled === true && activeId === DEFAULT_PANEL && !routeActiveId && (
++          <div className="efaiw-side-search flex flex-shrink-0">
++            <SearchBar isSmallScreen={mobile} />
++          </div>
++        )}
+         {activeId !== DEFAULT_PANEL && activeLink && !routeActiveId && (
+           <div className="efaiw-side-panel-head flex flex-shrink-0 items-center gap-2">
+             <button
+diff --git a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
+index fca81d7..f6d53ac 100644
+--- a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
++++ b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
+@@ -20,12 +20,13 @@ const AccountSettings = lazy(() => import('~/components/Nav/AccountSettings'));
+  *  visible name (WCAG 2.5.3), so "الدردشات" is not announced as "سجل الدردشة". */
+ const RAIL_LABELS: Record<string, TranslationKeys> = {
+   conversations: 'com_efaiw_rail_chats',
++  projects: 'com_ui_projects',
+   agents: 'com_efaiw_rail_agents',
+   skills: 'com_efaiw_rail_skills',
+   prompts: 'com_efaiw_rail_prompts',
+   memories: 'com_efaiw_rail_memories',
+   bookmarks: 'com_efaiw_rail_bookmarks',
+-  files: 'com_efaiw_rail_files',
++  files: 'com_efaiw_documents',
+   parameters: 'com_efaiw_rail_parameters',
+ };
+ 
+diff --git a/client/src/components/UnifiedSidebar/__tests__/ConversationsSection.spec.tsx b/client/src/components/UnifiedSidebar/__tests__/ConversationsSection.spec.tsx
+index 0a298fb..1e497ca 100644
+--- a/client/src/components/UnifiedSidebar/__tests__/ConversationsSection.spec.tsx
++++ b/client/src/components/UnifiedSidebar/__tests__/ConversationsSection.spec.tsx
+@@ -225,17 +225,15 @@ const renderSection = (searchQuery = '') =>
+   );
+ 
+ describe('ConversationsSection section order', () => {
+-  it('renders Pinned between Projects and Chats', async () => {
+-    const { getByTestId } = renderSection();
++  /** EF (#189): Projects open from their own sidebar row (EfProjectsPanel); Pinned leads the history. */
++  it('renders Pinned before Chats, without Projects', async () => {
++    const { getByTestId, queryByTestId } = renderSection();
+     await settleRenders();
+ 
+-    const projects = getByTestId('projects-stub');
+     const pinned = getByTestId('pinned-stub');
+     const chats = getByTestId('conversations-stub');
+ 
+-    expect(
+-      projects.compareDocumentPosition(pinned) & Node.DOCUMENT_POSITION_FOLLOWING,
+-    ).toBeTruthy();
++    expect(queryByTestId('projects-stub')).not.toBeInTheDocument();
+     expect(pinned.compareDocumentPosition(chats) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+   });
+ });
+@@ -311,7 +309,7 @@ describe('ConversationsSection search refetch', () => {
+         });
+       });
+ 
+-      expect(screen.getByTestId('projects-stub')).toBeInTheDocument();
++      expect(screen.getByTestId('pinned-stub')).toBeInTheDocument();
+       expect(screen.queryByText('Old search match')).not.toBeInTheDocument();
+       expect(screen.getByTestId('search-spinner')).toBeInTheDocument();
+     } finally {
+diff --git a/client/src/hooks/Input/useTextarea.ts b/client/src/hooks/Input/useTextarea.ts
+index 73e9607..ba1d9b2 100644
+--- a/client/src/hooks/Input/useTextarea.ts
++++ b/client/src/hooks/Input/useTextarea.ts
+@@ -3,7 +3,13 @@ import { v4 } from 'uuid';
+ import debounce from 'lodash/debounce';
+ import { useToastContext } from '@librechat/client';
+ import { useRecoilValue, useRecoilState } from 'recoil';
+-import { Constants, EToolResources, isAssistantsEndpoint } from 'librechat-data-provider';
++import {
++  Constants,
++  Permissions,
++  EToolResources,
++  PermissionTypes,
++  isAssistantsEndpoint,
++} from 'librechat-data-provider';
+ import type { TEndpointOption } from 'librechat-data-provider';
+ import type { KeyboardEvent } from 'react';
+ import type { UploadLifecycleCallbacks } from '~/hooks/Files/useFileHandling';
+@@ -37,6 +43,7 @@ import { useInteractionHealthCheck } from '~/data-provider';
+ import { resolveComposerKeyDown } from '~/utils/shortcuts';
+ import { useChatContext } from '~/Providers/ChatContext';
+ import { globalAudioId } from '~/common';
++import useHasAccess from '~/hooks/Roles/useHasAccess';
+ import { useLocalize } from '~/hooks';
+ import store from '~/store';
+ 
+@@ -66,6 +73,11 @@ export default function useTextarea({
+   answerModeActive?: boolean;
+ }) {
+   const localize = useLocalize();
++  const slashCommandEnabled = useRecoilValue(store.slashCommand);
++  const hasAccessToPrompts = useHasAccess({
++    permissionType: PermissionTypes.PROMPTS,
++    permission: Permissions.USE,
++  });
+   const getSender = useGetSender();
+   const { setValue } = useChatFormContext();
+   const isComposing = useRef(false);
+@@ -196,9 +208,13 @@ export default function useTextarea({
+           ? getEntityName({ name: entityName, isAgent, localize })
+           : getSender(conversation as TEndpointOption);
+ 
+-      return `${localize('com_endpoint_message_new', {
+-        0: sender ? sender : localize('com_endpoint_ai'),
+-      })}`;
++      /* EF (#189): the empty box says how to reach the ready commands (prompts), when «/» can open them. */
++      return `${localize(
++        slashCommandEnabled && hasAccessToPrompts
++          ? 'com_efaiw_message_with_commands'
++          : 'com_endpoint_message_new',
++        { 0: sender ? sender : localize('com_endpoint_ai') },
++      )}`;
+     };
+ 
+     const placeholderText = getPlaceholderText();
+@@ -234,6 +250,8 @@ export default function useTextarea({
+     latestMessage,
+     isNotAppendable,
+     placeholder,
++    slashCommandEnabled,
++    hasAccessToPrompts,
+   ]);
+ 
+   const handleKeyDown = useCallback(
+diff --git a/client/src/hooks/Nav/useUnifiedSidebarLinks.ts b/client/src/hooks/Nav/useUnifiedSidebarLinks.ts
+index 92d6da4..e73b915 100644
+--- a/client/src/hooks/Nav/useUnifiedSidebarLinks.ts
++++ b/client/src/hooks/Nav/useUnifiedSidebarLinks.ts
+@@ -1,13 +1,14 @@
+ import { useMemo } from 'react';
+ import { useRecoilValue } from 'recoil';
+-import { BarChart3, MessagesSquare } from 'lucide-react';
++import { BarChart3, Folder, MessagesSquare } from 'lucide-react';
+ import { useLocation, useNavigate } from 'react-router-dom';
+ import { useUserKeyQuery } from 'librechat-data-provider/react-query';
+-import { getConfigDefaults, getEndpointField } from 'librechat-data-provider';
++import { SystemRoles, getConfigDefaults, getEndpointField } from 'librechat-data-provider';
+ import type { TEndpointsConfig } from 'librechat-data-provider';
+ import type { NavLink } from '~/common';
+ import { useGetEndpointsQuery, useGetStartupConfig, useInsightsAccessQuery } from '~/data-provider';
+ import ConversationsSection from '~/components/UnifiedSidebar/ConversationsSection';
++import EfProjectsPanel from '~/components/UnifiedSidebar/EfProjectsPanel';
+ import useSideNavLinks from '~/hooks/Nav/useSideNavLinks';
+ import { useAuthContext } from '~/hooks';
+ import store from '~/store';
+@@ -54,7 +55,7 @@ export default function useUnifiedSidebarLinks() {
+     [keyExpiry.expiresAt, userProvidesKey],
+   );
+ 
+-  const sideNavLinks = useSideNavLinks({
++  const allSideNavLinks = useSideNavLinks({
+     keyProvided,
+     endpoint,
+     endpointType,
+@@ -63,6 +64,17 @@ export default function useUnifiedSidebarLinks() {
+     includeHidePanel: false,
+   });
+ 
++  /** EF (#189, owner decision): the agent builder and the model parameters are for admins while the owner learns
++   *  them; employees do not see them in the sidebar, its rail or its shortcuts. Permissions are unchanged. */
++  const isAdmin = user?.role === SystemRoles.ADMIN;
++  const sideNavLinks = useMemo(
++    () =>
++      isAdmin
++        ? allSideNavLinks
++        : allSideNavLinks.filter((link) => link.id !== 'agents' && link.id !== 'parameters'),
++    [allSideNavLinks, isAdmin],
++  );
++
+   const links = useMemo(() => {
+     const conversationLink: NavLink = {
+       title: 'com_ui_chat_history',
+@@ -71,12 +83,20 @@ export default function useUnifiedSidebarLinks() {
+       id: 'conversations',
+       Component: ConversationsSection,
+     };
++    /** EF (#189): Projects are a panel of their own, opened from the sidebar's first row. */
++    const projectsLink: NavLink = {
++      title: 'com_ui_projects',
++      label: '',
++      icon: Folder,
++      id: 'projects',
++      Component: EfProjectsPanel,
++    };
+ 
+     if (
+       !insightsFeatureEnabled ||
+       (!isInsightsRoute && !isInsightsAccessLoading && insightsAccess?.access !== true)
+     ) {
+-      return [conversationLink, ...sideNavLinks];
++      return [conversationLink, projectsLink, ...sideNavLinks];
+     }
+ 
+     const insightsLink: NavLink = {
+@@ -95,7 +115,7 @@ export default function useUnifiedSidebarLinks() {
+     const nextLinks = [...sideNavLinks];
+     nextLinks.splice(mcpIndex >= 0 ? mcpIndex + 1 : nextLinks.length, 0, insightsLink);
+ 
+-    return [conversationLink, ...nextLinks];
++    return [conversationLink, projectsLink, ...nextLinks];
+   }, [
+     insightsAccess?.access,
+     insightsFeatureEnabled,
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index 01240e3..10194af 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3130,6 +3130,9 @@
+   "com_efaiw_greeting_evening": "Good evening",
+   "com_efaiw_greeting_evening_named": "Good evening, {{name}}",
+   "com_efaiw_welcome_question": "How can I help you today?",
++  "com_efaiw_documents": "Documents",
++  "com_efaiw_admin_only": "Admins",
++  "com_efaiw_message_with_commands": "Message {{0}} or type / for a ready command",
+   "com_efaiw_back_to_chats": "Back to chats",
+   "com_efaiw_model_menu_title": "Choose a model",
+   "com_efaiw_model_menu_hint": "You can change the model at any time during the chat."

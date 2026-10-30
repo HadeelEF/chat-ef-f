@@ -1,0 +1,51 @@
+# End-to-end container tests of the three hosting targets (ADR-0008) with throwaway secrets and synthetic data:
+#   compose-stack local  — Windows 11 / workstation profile (loopback HTTP)
+#   compose-stack onprem — Ubuntu on-premises profile (Caddy HTTPS reverse proxy)
+#   railway-emulation    — Railway images and constraints (single volumes, private network, no bind mounts)
+# Needs no secrets. Pulls the pinned images (~6 GB), so it runs only when infrastructure or its tests change.
+name: Smoke
+
+on:
+  pull_request:
+    paths:
+      - "infrastructure/**"
+      - ".railway/**"
+      - "scripts/operations/**"
+      - "scripts/setup/**"
+      - "tests/smoke/**"
+      - "tests/lib.sh"
+      - ".github/workflows/smoke.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Smoke (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [compose-local, compose-onprem, railway-emulation]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run smoke test
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          case "$TARGET" in
+            compose-local)     tests/smoke/compose-stack.sh local ;;
+            compose-onprem)    tests/smoke/compose-stack.sh onprem ;;
+            railway-emulation) tests/smoke/railway-emulation.sh ;;
+          esac

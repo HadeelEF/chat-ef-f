@@ -1,0 +1,14 @@
+{
+  "_comment": "Qwen Cloud LIST prices for an ESTIMATE in usage-report.sh only. The owner's Qwen Cloud bill is the authoritative cost (discounts, cached input, idle-hour prices and search billing differ). Update from the source pages when they change.",
+  "source": "https://docs.qwencloud.com/developer-guides/getting-started/model-prices.md; https://docs.qwencloud.com/developer-guides/tool-calling/web-search.md#billing",
+  "retrieved": "2026-10-25",
+  "region": "International (Singapore)",
+  "currency": "USD",
+  "tokens_per_price": 1000000,
+  "models": {
+    "qwen3.8-flash": {"input": 0.15, "output": 0.47},
+    "deepseek-v4.1-flash-1017": {"input": 0.3, "output": 1.2, "note": "busy-hour price (upper bound); idle hours 0.15 / 0.6"}
+  },
+  "search_per_1000_calls": 10.0,
+  "search_note": "Not computed: LibreChat does not record searches, and the OpenAI-compatible stream returns no search count (measured 2026-10-25). Read searches from the Qwen Cloud bill."
+}

@@ -1,0 +1,49 @@
+# Container image vulnerability scan (Trivy) of every digest pinned in infrastructure/compose and of the derived Railway
+# images as built. Findings and their disposition: docs/security/vulnerability-register.md.
+# REPORT-ONLY: results go to the job summary; no severity blocks a merge until the owner approves a vulnerability
+# policy (docs/security/security-baseline.md, SC-18). Never invents a threshold.
+name: Image scan
+
+on:
+  pull_request:
+    paths:
+      - "infrastructure/**"
+      - "scripts/validate/image-scan.sh"
+      - ".github/workflows/image-scan.yml"
+  schedule:
+    - cron: "41 4 * * 1" # weekly, Monday 04:41 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: image-scan-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TRIVY_VERSION: "0.76.0"
+  # sha256 of trivy_0.76.0_Linux-64bit.tar.gz (from the release checksums file)
+  TRIVY_SHA256: "e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7"
+
+jobs:
+  trivy:
+    name: Trivy (report-only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download and verify Trivy
+        run: |
+          archive="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${archive}"
+          echo "${TRIVY_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "${archive}" trivy
+
+      - name: Scan pinned and derived Railway images (summary in the job summary)
+        run: TRIVY=./trivy scripts/validate/image-scan.sh --include-railway trivy-reports >> "$GITHUB_STEP_SUMMARY"

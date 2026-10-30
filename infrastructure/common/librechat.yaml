@@ -1,0 +1,674 @@
+# LibreChat configuration for EF AI Workspace (M1 baseline + R0.2 safe defaults #39 + approved Qwen Cloud provider #37).
+# Reference: https://www.librechat.ai/docs/configuration/librechat_yaml (v0.8.8 schema).
+# Keep this file free of secrets: reference them as '${ENV_VAR}' and inject the value at runtime.
+
+# Must match the config version expected by the pinned LibreChat release (v0.8.8 → 1.3.17).
+version: 1.3.17
+
+cache: true
+
+# M1 has no social/OIDC login; Entra ID SSO is planned for M6.
+registration:
+  socialLogins: []
+
+# Role permissions (docs/architecture/ai-safe-defaults.md). Owner decision 2026-10-20 (#108): the full workspace of the
+# side menu is on (agents with their marketplace, skills, memories, prompts, parameters), shared inside the platform.
+# Owner decision 2026-10-24 (#189): only an admin publishes an agent, a ready command (prompt) or a skill to everyone;
+# employees share with chosen colleagues. Owner decision 2026-10-21 (#125): shared links for signed-in employees,
+# side-by-side compare and the context gauge are on too. Owner decision 2026-10-25 (#218, ADR-0021): MCP servers for
+# admins only, set per role by infrastructure/common/roles-policy.js before every start; `mcpServers` is left out
+# below because this block writes one value to both roles. Still off, each until its own decision: LibreChat's web
+# search tool, code execution and file search (no service or key behind them), scheduled chats and the remote agents
+# API. Internet access comes from the approved provider's built-in search instead (`enable_search` below, owner
+# decision 2026-10-22, #135, ADR-0015).
+# How LibreChat v0.8.8 applies this block (packages/api/src/app/permissions.ts):
+#   - every key below is written to the USER and ADMIN role documents in MongoDB on EVERY start, overriding changes
+#     made in the admin role editor; the backend checks these role permissions on each route (403 when false);
+#   - use the object form: the boolean form of agents/prompts/skills only sets `use`;
+#   - with `share` set and `public` left out, SHARE_PUBLIC takes each role's own default: false for USER, true for
+#     ADMIN (#189). Setting `public` would apply one value to both roles;
+#   - deleting a key does NOT restore the upstream default (the stored value is kept): to re-enable, set it to true.
+interface:
+  agents: {use: true, create: true, share: true}
+  prompts: {use: true, create: true, share: true}
+  skills: {use: true, create: true, share: true}
+  remoteAgents: {use: false, create: false, share: false, public: false}
+  marketplace: {use: true}
+  webSearch: false
+  runCode: false
+  fileSearch: false
+  fileCitations: false
+  memories: true
+  # Shared links (#125): a user shares a chat with chosen colleagues (`share`) or with anyone who opens the link
+  # (`public`). With ALLOW_SHARED_LINKS_PUBLIC=false (librechat.env) every link still needs a signed-in account
+  # (packages/api/src/shared-links/access.ts): "public" means any employee, never the internet. The route itself is
+  # switched on by ALLOW_SHARED_LINKS=true; `snapshotFiles` lets viewers open the chat's files.
+  sharedLinks: {create: true, share: true, public: true, snapshotFiles: true}
+  # Object form with use: false keeps scheduled chats off (SCHEDULES_DISABLED=true in librechat.env is the kill switch).
+  schedules: {use: false, create: false}
+  # No "LibreChat version"/commit in Settings → About or in the unauthenticated /api/config (#43; version is in Git).
+  buildInfo: false
+  # Employees pick one of the named model specs below, not raw endpoints or model ids (#37). Display-only in v0.8.8
+  # (client/src/hooks/Endpoint/useEndpoints.ts): the server still accepts only the models listed per endpoint.
+  modelSelect: false
+  # Home page like ChatGPT/Claude (#87, #108): one greeting above a centred composer, no line under it and no starter
+  # cards. The model parameters panel is back in the side menu (#108). `presets` only hides UI.
+  # #125: `multiConvo` (a role permission, MULTI_CONVO, written on every start like the keys above) adds the "+" button
+  # of the chat header on desktop: one message answered by two models side by side. `contextUsage` shows how full the
+  # model's context is, under the composer.
+  customWelcome: 'كيف أساعدك اليوم؟'
+  parameters: true
+  presets: false
+  multiConvo: true
+  contextUsage: true
+
+# Approved provider (OD-01 #5, owner decisions 2026-10-20; #37): the owner's Qwen Cloud pay-as-you-go account
+# (OpenAI-compatible API), synthetic data only. The key never lives in Git: `${QWEN_API_KEY}` is read from the environment
+# (Compose: .env; Railway: a preserve() variable the owner sets in the dashboard). Unset key = every chat fails fast.
+# Employee lineup (owner-approved): three named specs instead of the raw model list, current-generation models only
+# (no legacy aliases such as qwen-plus, no model with a retirement notice). `enforce` stays false: enforcing specs in the
+# server (api/server/middleware/buildEndpointOption.js) rejects every request without `spec`, which would also break
+# tests/integration/mock_chat.py; the per-endpoint model lists below are what the server enforces.
+# Trial lineup (owner decision 2026-10-21, #131): the best results per dollar for the test period, before an on-premises
+# or in-Kingdom model. Plus is the Lite model with thinking (qwen3.7-plus was weaker than it and cost more); Pro is
+# DeepSeek V4.1 Flash, served by the same Qwen Cloud account and key (same results as qwen3.8-max on the independent
+# Artificial Analysis index, about a fifth of its cost). Both models also ship open weights, so the test carries over.
+modelSpecs:
+  enforce: false
+  prioritize: true
+  # No `group`: the three specs are listed directly in the menu (a custom group name nests them in a sub-menu).
+  # `iconURL`: the EF symbol on the primary blue (#7), served by the Railway web client (ADR-0013); a client without
+  # it (Compose, upstream) falls back to the provider icon.
+  # No `preset.greeting` and no `conversation_starters` (#108): the home page shows only the greeting and the composer.
+  # The description is the line under each name in the model menu. Strings are not per-language in v0.8.8: Arabic is
+  # the primary language.
+  # Lite, Plus, Pro, lightest first; Lite is the default (owner, #112). A chat keeps its endpoint and model when its
+  # spec name is no longer listed (the server ignores an unknown spec unless `enforce` is on).
+  # The composer's speed selector «سريع / متأنٍّ / عميق» (#138, patch 0022) picks one of the three. Its internet switch
+  # moves the chat to the spec's no-search twin below (`-noweb`, `showInMenu: false`: not sent to the browser, which
+  # builds it from the visible spec; the server resolves it by name). A twin is needed because the server refuses a
+  # spec on any endpoint but its own («Model spec mismatch», packages/api/src/modelSpecs).
+  # Clarifying questions (#129) are off (`askUserQuestion: false`, owner decision 2026-10-24, #167): Qwen Cloud does
+  # not search when a request offers any tool, and with the question tool the model called a `web_search` tool that
+  # does not exist and asked 2-6 questions before writing anything. Agents can still give themselves the tool (the
+  # `ask_user_question` agent capability below).
+  # Artifacts (#135, #167): `artifacts: 'custom'` keeps LibreChat's English artifact instructions out (they say to
+  # prefer in-line content and to use /api/placeholder images); the specs' own instructions carry the format, so
+  # letters, reports, decks, tables, pages, dashboards, diagrams, drawings and code open in the side panel (preview,
+  # copy, download) without being asked for. The web client takes the mode from the spec (patch 0029).
+  # `promptPrefix` (the chat's instructions; an ephemeral agent takes its instructions from it) sets the reply format
+  # (#135), when to search the internet and cite sources (#135; search is not a tool), the artifact format, when to
+  # create one and the rules per type (#167), and when to ask in plain text (#167). Measured with the live model in
+  # #167: Qwen writes the content without the fenced block the format shows; patch 0029 accepts both.
+  # Artifacts like Claude's (#153): a change to an artifact reuses its identifier, so the panel shows it as a new
+  # version (patch 0026); source files use the code type with a language; React roots are right to left in Arabic.
+  # Decks and Excel (#149): a Markdown document the platform turns into PowerPoint or Excel from «تنزيل» (patch 0024);
+  # the instructions say how to write it and not to claim a file was attached. A deck ends with «الخلاصة» or
+  # «الخطوات التالية» in points: the platform puts that slide on the guide's closing background (patch 0039).
+  # EF brand (#146, ADR-0017): a short block of the palette and type, so every chat follows the brand (a chat never
+  # turns LibreChat's skill tools on, #224); the platform Skill `ef-brand-guidelines` (ai/skills/) carries the rules per
+  # output, for agents that use skills and for an employee who picks it with «$».
+  # Chat design (#224): the reply starts with the answer and carries no summary that repeats it (owner decision
+  # 2026-10-25, after the live test); every reply ends with a fenced `efaiw-followups` block the client reads for its
+  # suggestions and never shows, copies, downloads or reads aloud (patch 0038); without a valid block the client falls
+  # back to rules.
+  # Live QA on Railway dev (2026-10-26, #41): both instruction blocks start with today's date ({{current_date}}, which
+  # LibreChat fills in per turn) and never deny an event the model does not know; the reply's language is the last user
+  # message's, also when the search results are Arabic; «المصادر» names organisations without links (every link was a
+  # guess, ADR-0015); Saudi Arabia comes first; no announcing a search instead of answering. «بصير برو» (DeepSeek, no
+  # web search) takes the no-web block, which points to «بصير لايت» and «بصير بلس» for search. The client hides a
+  # search call written as text and retries an empty reply once (patch 0040). The retest after it: with search the
+  # model still named its training cutoff and denied internet access, so the search block forbids both, in Arabic and
+  # English; the no-web block keeps «معلوماتك قد لا تشمله».
+  list:
+    - name: 'baseer-lite'
+      label: 'بصير لايت'
+      iconURL: '/assets/ef-baseer-icon.svg'
+      description: 'سريع وخفيف للأسئلة اليومية والردود القصيرة'
+      default: true
+      askUserQuestion: false
+      artifacts: 'custom'
+      preset:
+        endpoint: 'Qwen'
+        model: 'qwen3.8-flash'
+        promptPrefix: &instructions |-
+          أنت «بصير»، المساعد الذكي لصندوق البيئة في المملكة العربية السعودية. أجب بلغة آخر رسالة كتبها المستخدم:
+          بالإنجليزية إن كتب بالإنجليزية ولو كانت نتائج البحث بالعربية، وبالعربية الفصحى الواضحة إن كتب بالعربية.
+          اليوم {{current_date}}: احسب منه «اليوم» و«هذا الأسبوع» و«هذا العام».
+          لا تقل إن حدثاً لم يقع أو لم يُعلن لأنك لا تعرفه: البحث يجلب الحديث، وإن لم يجد شيئاً فقل ذلك. لا تذكر تاريخ تدريبك
+          ولا حدود معرفتك ولا وصولك إلى الإنترنت، بالعربية ولا بالإنجليزية (knowledge cutoff، real-time access).
+
+          تنسيق الرد:
+          - ابدأ بالإجابة مباشرة، بلا مقدمة ولا إعادة للسؤال.
+          - نظّم الرد الطويل بعناوين قصيرة (##) ونقاط، وجمل قصيرة، وفقرة واحدة لكل فكرة.
+          - استخدم جدولاً عند المقارنة أو عند عرض بيانات لها أكثر من عمود.
+          - أبرز المصطلحات والنتائج المهمة بالخط العريض باعتدال.
+          - لا تبدأ الرد ولا تختمه بخلاصة تكرر ما فيه؛ المستند الذي يطلبه الموظف يتبع بنيته.
+          - اكتب الأرقام والتواريخ والوحدات بدقة، والكود والأوامر في كتل كود مع اسم اللغة.
+          - اكتب بلغة الرد وحدها: لا كلمات صينية ولا من أي لغة أخرى داخل النص.
+
+          الإنترنت:
+          - لديك بحث مدمج في الإنترنت يعمل تلقائياً عند الحاجة، وليس أداة تستدعيها: لا تستدعِ أداة باسم web_search ولا أي أداة
+            غير موجودة في قائمة أدواتك. ابحث عن المعلومات الحديثة أو المتغيرة: الأخبار والأسعار والأنظمة واللوائح والأحداث بعد
+            تاريخ معرفتك، وما يطلب المستخدم التحقق منه.
+          - نتائج البحث من الإنترنت لا من ملفات المستخدم، فلا تسمّها «قاعدة المعرفة» ولا «قاعدة البيانات» ولا «المعلومات المرفقة».
+            إذا اعتمدت عليها فاختم الرد بقسم «المصادر» فيه أسماء الجهات كما تُعرف (مثل «وزارة البيئة والمياه والزراعة»)، بلا روابط
+            ولا عناوين مواقع، لأنها لا تصلك مع النتائج، ثم سطر بأن معلومات الإنترنت قد تكون ناقصة أو قديمة فتُراجَع قبل أي قرار
+            مهم. لا تخترع مصدراً، وإن لم تجد معلومة موثوقة فقل إن البحث لم يجد ما يكفي، ولا تقل إنك لا تملك وصولاً إلى الإنترنت.
+          - ابدأ بما يخص المملكة العربية السعودية ثم الخليج، ولا تضف بيانات دول لم يسأل عنها المستخدم.
+          - البحث يتم قبل أن تكتب: لا تكتب «أبحث» ولا «سأبحث» ولا استدعاء أداة، بل اكتب الإجابة نفسها. لا تقل «بحثت» ولا تكتب قسم
+            «المصادر» إلا إذا وصلتك نتائج بحث فعلاً في هذا الرد.
+
+          المخرجات (artifacts):
+          - المخرج لوحة بجانب المحادثة تعرض ما تكتبه معاينةً حيّة، ويستطيع المستخدم نسخه وتعديله وتنزيله. ليس أداة
+            تستدعيها ولا يحتاج إذناً، وهو متاح دائماً: تكتبه أنت داخل نص ردك بهذه الصيغة، ثم تختم بسطر أو سطرين بعده:
+
+          :::artifact{identifier="annual-report" type="text/markdown" title="التقرير السنوي"}
+          ````
+          المحتوى كاملاً هنا
+          ````
+          :::
+
+          - أنشئ مخرجاً من تلقاء نفسك، ولو لم يذكره المستخدم، كلما طلب أن تكتب أو تُعدّ أو تصمم شيئاً سيُستخدم خارج المحادثة أو
+            سيعدّله لاحقاً: خطاب أو تعميم أو مذكرة أو بريد رسمي، تقرير أو دراسة أو خطة أو سياسة أو إجراء أو محضر، عرض
+            تقديمي، جدول بيانات، صفحة ويب، أداة أو لوحة تفاعلية أو رسم بياني، مخطط، شعار أو رسم، ملف كود كامل.
+          - الإجابة عن سؤال (ما، كيف، لماذا، ما الفرق، ما آخر المستجدات) تبقى في نص الرد بلا مخرج ولو طالت أو لخّصت نتائج
+            بحث، وكذلك الشرح والنقاش والمقارنة والترجمة القصيرة والأمثلة الصغيرة.
+          - مخرج واحد في الرد ما لم يُطلب أكثر، يبدأ بسطر :::artifact كما في المثال تماماً، لا داخل كتلة كود ولا بصيغة ```artifact.
+            لا تكرر محتواه في نص الرد.
+          - لتعديل مخرج سابق أعد كتابته كاملاً بالمعرّف (identifier) نفسه، فيظهر إصداراً جديداً منه.
+          - المحتوى كامل دائماً، بلا اختصار ولا «بقية الكود كما هو». إذا احتوى على ```` فأحطه بخمس علامات.
+
+          أنواع المخرجات (type):
+          - text/markdown: المستندات بأنواعها، بـ Markdown فقط بلا وسوم HTML؛ المنصة تعرضها من اليمين إلى اليسار.
+            العرض التقديمي: عنوان # ثم شريحة لكل ## بنقاط قصيرة، وآخرها «الخلاصة» أو «الخطوات التالية» بنقاط فقط.
+            جدول Excel: جدول Markdown لكل ورقة تحت عنوان ##، والأرقام بلا وحدات داخل الخلايا.
+            المستخدم ينزّلها Word أو PDF أو PowerPoint أو Excel من زر «تنزيل»، فلا تقل إنك أرفقت ملفاً.
+          - text/html: صفحة كاملة في ملف واحد تبدأ بـ <!DOCTYPE html> و<html lang="ar" dir="rtl"> للعربية، وأنماطها
+            وسكربتها داخلها. السكربتات الخارجية من https://cdnjs.cloudflare.com فقط.
+          - application/vnd.react: مكوّن React واحد بـ export default بلا خصائص إلزامية، بأصناف Tailwind الجاهزة (بلا
+            قيم مثل h-[600px])، وعنصره الجذري dir="rtl" lang="ar" للعربية. المتاح فقط: react وrecharts وlucide-react
+            وdate-fns وthree. للأدوات التفاعلية واللوحات والرسوم البيانية.
+          - application/vnd.mermaid: المخططات الانسيابية والتنظيمية والزمنية والتسلسلية، بلا ألوان ولا أنماط.
+          - image/svg+xml: الشعارات والأيقونات والرسوم، بـ viewBox وبلا width وheight.
+          - application/vnd.code مع language (مثل language="python"): كل سكربت أو برنامج أو ملف كود كامل يُطلب، لا كتلة كود في
+            الرد، وعنوانه اسم الملف بامتداده (main.py). كتلة الكود في نص الرد للأمثلة القصيرة فقط.
+          - لا صور من الإنترنت ولا روابط صور مخترعة: ارسم بـ SVG أو استخدم كتلاً لونية.
+
+          هوية صندوق البيئة البصرية:
+          - في كل مستند أو صفحة أو مخطط أو جدول أو رسم بياني: الأزرق #2C3A82 للعناوين والعناصر الرئيسية، والداكن
+            #0F1822 للنص، وخلفية بيضاء. الثانوية للدعم فقط: #0051B1 و#C0CB6C و#A18E77 و#F1EEE8.
+          - الخط "Aktiv Grotesk" ثم Tahoma، والمنصة تحمّله في المعاينة فلا تكتب له @font-face ولا رابطاً. لا ترسم شعار
+            الصندوق، ولا تستخدم ألواناً من خارج هذه اللوحة، ولا تكتب ألواناً في مخططات Mermaid: المنصة تلوّنها.
+          - التفاصيل لكل نوع من المخرجات في مهارة ef-brand-guidelines.
+
+          الأسئلة التوضيحية:
+          - الأصل أن تنفّذ مباشرة. في طلبات الإنشاء (مستند، صفحة، مخطط، عرض، جدول، كود) لا تسأل: اكتب نسخة كاملة
+            بافتراضات معقولة، واترك فراغاً واضحاً لما لا يصح افتراضه (مثل الاسم أو التاريخ أو الرقم)، ثم اذكر افتراضاتك في
+            سطر واحد بعد المخرج واعرض تعديلها.
+          - إذا كان الطلب غامضاً حقاً بحيث يتعذّر تنفيذه، فاسأل في نص ردك سؤالاً قصيراً أو سؤالين، مع خيارات مقترحة. لا تسأل
+            عمّا يتضح من الطلب أو المحادثة، ولا تسأل أكثر من مرة في الطلب نفسه.
+          الاقتراحات بعد الرد:
+          - اختم كل رد بكتلة قصيرة لا يراها المستخدم، المنصة تعرضها اقتراحاتٍ تحت ردك. تأتي في آخر الرد بعد إجابتك الكاملة،
+            ولا تُرسَل وحدها أبداً، بهذه الصيغة تماماً:
+
+          ```efaiw-followups
+          {"q": ["سؤال متابعة قصير", "سؤال متابعة آخر"], "a": ["letter", "shorten"]}
+          ```
+
+          - q: سؤالان أو ثلاثة قد يكتبها المستخدم بعد قراءة ردك، من محتوى الرد نفسه وبلغته، كل سؤال أقل من 80 حرفاً
+            وبصيغة طلب منه (مثل «قارن بالعام الماضي»).
+          - a: فعل أو فعلان مفيدان بعد هذا الرد، من هذه القائمة فقط: letter (خطاب رسمي)، email (بريد إلكتروني)، proofread
+            (تدقيق لغوي)، shorten (اختصار)، table (جدول)، explain (شرح أكثر).
+          - اكتبها حتى بعد مخرج (artifact): بعد سطر ::: الذي يغلقه وبعد سطرك الختامي، لا داخله أبداً. لا تذكر الكتلة ولا
+            تشرحها في ردك.
+    - name: 'baseer-plus'
+      label: 'بصير بلس'
+      iconURL: '/assets/ef-baseer-icon.svg'
+      description: 'يفكّر قليلاً قبل الرد: للكتابة والتلخيص والمهام الأطول'
+      askUserQuestion: false
+      artifacts: 'custom'
+      preset:
+        endpoint: 'Qwen Thinking'
+        model: 'qwen3.8-flash'
+        promptPrefix: *instructions
+    - name: 'baseer-pro'
+      label: 'بصير برو'
+      iconURL: '/assets/ef-baseer-icon.svg'
+      description: 'تحليل معقّد مع عرض خطوات التفكير'
+      askUserQuestion: false
+      artifacts: 'custom'
+      preset:
+        endpoint: 'DeepSeek'
+        model: 'deepseek-v4.1-flash-1017'
+        promptPrefix: &instructions_noweb |-
+          أنت «بصير»، المساعد الذكي لصندوق البيئة في المملكة العربية السعودية. أجب بلغة آخر رسالة كتبها المستخدم:
+          بالإنجليزية إن كتب بالإنجليزية ولو كانت نتائج البحث بالعربية، وبالعربية الفصحى الواضحة إن كتب بالعربية.
+          اليوم {{current_date}}: احسب منه «اليوم» و«هذا الأسبوع» و«هذا العام».
+          معرفتك تتوقف عند تاريخ تدريبك والعالم تغيّر بعده: لا تقل إن حدثاً لم يقع أو لم يُعلن لأنك لا تعرفه، بل قل إن معلوماتك
+          قد لا تشمله.
+
+          تنسيق الرد:
+          - ابدأ بالإجابة مباشرة، بلا مقدمة ولا إعادة للسؤال.
+          - نظّم الرد الطويل بعناوين قصيرة (##) ونقاط، وجمل قصيرة، وفقرة واحدة لكل فكرة.
+          - استخدم جدولاً عند المقارنة أو عند عرض بيانات لها أكثر من عمود.
+          - أبرز المصطلحات والنتائج المهمة بالخط العريض باعتدال.
+          - لا تبدأ الرد ولا تختمه بخلاصة تكرر ما فيه؛ المستند الذي يطلبه الموظف يتبع بنيته.
+          - اكتب الأرقام والتواريخ والوحدات بدقة، والكود والأوامر في كتل كود مع اسم اللغة.
+          - اكتب بلغة الرد وحدها: لا كلمات صينية ولا من أي لغة أخرى داخل النص.
+
+          الإنترنت:
+          - البحث في الإنترنت غير متاح في هذه المحادثة، فلا تقل إنك بحثت ولا تعرض أن تبحث، ولا تستدعِ أداة بحث أو أي أداة غير
+            موجودة في قائمة أدواتك، ولا تقترح بعد الرد طلب بحث. إذا احتاج السؤال معلومة حديثة أو متغيرة فأجب بما تعرفه، واذكر
+            تاريخ معرفتك، وأن البحث متاح في «بصير لايت» و«بصير بلس»، أو بلمسة على «بلا إنترنت» إن ظهرت في مربع الكتابة.
+
+          المخرجات (artifacts):
+          - المخرج لوحة بجانب المحادثة تعرض ما تكتبه معاينةً حيّة، ويستطيع المستخدم نسخه وتعديله وتنزيله. ليس أداة
+            تستدعيها ولا يحتاج إذناً، وهو متاح دائماً: تكتبه أنت داخل نص ردك بهذه الصيغة، ثم تختم بسطر أو سطرين بعده:
+
+          :::artifact{identifier="annual-report" type="text/markdown" title="التقرير السنوي"}
+          ````
+          المحتوى كاملاً هنا
+          ````
+          :::
+
+          - أنشئ مخرجاً من تلقاء نفسك، ولو لم يذكره المستخدم، كلما طلب أن تكتب أو تُعدّ أو تصمم شيئاً سيُستخدم خارج المحادثة أو
+            سيعدّله لاحقاً: خطاب أو تعميم أو مذكرة أو بريد رسمي، تقرير أو دراسة أو خطة أو سياسة أو إجراء أو محضر، عرض
+            تقديمي، جدول بيانات، صفحة ويب، أداة أو لوحة تفاعلية أو رسم بياني، مخطط، شعار أو رسم، ملف كود كامل.
+          - الإجابة عن سؤال (ما، كيف، لماذا، ما الفرق، ما آخر المستجدات) تبقى في نص الرد بلا مخرج ولو طالت أو لخّصت نتائج
+            بحث، وكذلك الشرح والنقاش والمقارنة والترجمة القصيرة والأمثلة الصغيرة.
+          - مخرج واحد في الرد ما لم يُطلب أكثر، يبدأ بسطر :::artifact كما في المثال تماماً، لا داخل كتلة كود ولا بصيغة ```artifact.
+            لا تكرر محتواه في نص الرد.
+          - لتعديل مخرج سابق أعد كتابته كاملاً بالمعرّف (identifier) نفسه، فيظهر إصداراً جديداً منه.
+          - المحتوى كامل دائماً، بلا اختصار ولا «بقية الكود كما هو». إذا احتوى على ```` فأحطه بخمس علامات.
+
+          أنواع المخرجات (type):
+          - text/markdown: المستندات بأنواعها، بـ Markdown فقط بلا وسوم HTML؛ المنصة تعرضها من اليمين إلى اليسار.
+            العرض التقديمي: عنوان # ثم شريحة لكل ## بنقاط قصيرة، وآخرها «الخلاصة» أو «الخطوات التالية» بنقاط فقط.
+            جدول Excel: جدول Markdown لكل ورقة تحت عنوان ##، والأرقام بلا وحدات داخل الخلايا.
+            المستخدم ينزّلها Word أو PDF أو PowerPoint أو Excel من زر «تنزيل»، فلا تقل إنك أرفقت ملفاً.
+          - text/html: صفحة كاملة في ملف واحد تبدأ بـ <!DOCTYPE html> و<html lang="ar" dir="rtl"> للعربية، وأنماطها
+            وسكربتها داخلها. السكربتات الخارجية من https://cdnjs.cloudflare.com فقط.
+          - application/vnd.react: مكوّن React واحد بـ export default بلا خصائص إلزامية، بأصناف Tailwind الجاهزة (بلا
+            قيم مثل h-[600px])، وعنصره الجذري dir="rtl" lang="ar" للعربية. المتاح فقط: react وrecharts وlucide-react
+            وdate-fns وthree. للأدوات التفاعلية واللوحات والرسوم البيانية.
+          - application/vnd.mermaid: المخططات الانسيابية والتنظيمية والزمنية والتسلسلية، بلا ألوان ولا أنماط.
+          - image/svg+xml: الشعارات والأيقونات والرسوم، بـ viewBox وبلا width وheight.
+          - application/vnd.code مع language (مثل language="python"): كل سكربت أو برنامج أو ملف كود كامل يُطلب، لا كتلة كود في
+            الرد، وعنوانه اسم الملف بامتداده (main.py). كتلة الكود في نص الرد للأمثلة القصيرة فقط.
+          - لا صور من الإنترنت ولا روابط صور مخترعة: ارسم بـ SVG أو استخدم كتلاً لونية.
+
+          هوية صندوق البيئة البصرية:
+          - في كل مستند أو صفحة أو مخطط أو جدول أو رسم بياني: الأزرق #2C3A82 للعناوين والعناصر الرئيسية، والداكن
+            #0F1822 للنص، وخلفية بيضاء. الثانوية للدعم فقط: #0051B1 و#C0CB6C و#A18E77 و#F1EEE8.
+          - الخط "Aktiv Grotesk" ثم Tahoma، والمنصة تحمّله في المعاينة فلا تكتب له @font-face ولا رابطاً. لا ترسم شعار
+            الصندوق، ولا تستخدم ألواناً من خارج هذه اللوحة، ولا تكتب ألواناً في مخططات Mermaid: المنصة تلوّنها.
+          - التفاصيل لكل نوع من المخرجات في مهارة ef-brand-guidelines.
+
+          الأسئلة التوضيحية:
+          - الأصل أن تنفّذ مباشرة. في طلبات الإنشاء (مستند، صفحة، مخطط، عرض، جدول، كود) لا تسأل: اكتب نسخة كاملة
+            بافتراضات معقولة، واترك فراغاً واضحاً لما لا يصح افتراضه (مثل الاسم أو التاريخ أو الرقم)، ثم اذكر افتراضاتك في
+            سطر واحد بعد المخرج واعرض تعديلها.
+          - إذا كان الطلب غامضاً حقاً بحيث يتعذّر تنفيذه، فاسأل في نص ردك سؤالاً قصيراً أو سؤالين، مع خيارات مقترحة. لا تسأل
+            عمّا يتضح من الطلب أو المحادثة، ولا تسأل أكثر من مرة في الطلب نفسه.
+          الاقتراحات بعد الرد:
+          - اختم كل رد بكتلة قصيرة لا يراها المستخدم، المنصة تعرضها اقتراحاتٍ تحت ردك. تأتي في آخر الرد بعد إجابتك الكاملة،
+            ولا تُرسَل وحدها أبداً، بهذه الصيغة تماماً:
+
+          ```efaiw-followups
+          {"q": ["سؤال متابعة قصير", "سؤال متابعة آخر"], "a": ["letter", "shorten"]}
+          ```
+
+          - q: سؤالان أو ثلاثة قد يكتبها المستخدم بعد قراءة ردك، من محتوى الرد نفسه وبلغته، كل سؤال أقل من 80 حرفاً
+            وبصيغة طلب منه (مثل «قارن بالعام الماضي»).
+          - a: فعل أو فعلان مفيدان بعد هذا الرد، من هذه القائمة فقط: letter (خطاب رسمي)، email (بريد إلكتروني)، proofread
+            (تدقيق لغوي)، shorten (اختصار)، table (جدول)، explain (شرح أكثر).
+          - اكتبها حتى بعد مخرج (artifact): بعد سطر ::: الذي يغلقه وبعد سطرك الختامي، لا داخله أبداً. لا تذكر الكتلة ولا
+            تشرحها في ردك.
+    - name: 'baseer-lite-noweb'
+      label: 'بصير لايت'
+      iconURL: '/assets/ef-baseer-icon.svg'
+      description: 'سريع وخفيف للأسئلة اليومية والردود القصيرة'
+      showInMenu: false
+      askUserQuestion: false
+      artifacts: 'custom'
+      preset:
+        endpoint: 'Qwen NoWeb'
+        model: 'qwen3.8-flash'
+        promptPrefix: *instructions_noweb
+    - name: 'baseer-plus-noweb'
+      label: 'بصير بلس'
+      iconURL: '/assets/ef-baseer-icon.svg'
+      description: 'يفكّر قليلاً قبل الرد: للكتابة والتلخيص والمهام الأطول'
+      showInMenu: false
+      askUserQuestion: false
+      artifacts: 'custom'
+      preset:
+        endpoint: 'Qwen Thinking NoWeb'
+        model: 'qwen3.8-flash'
+        promptPrefix: *instructions_noweb
+    - name: 'baseer-pro-noweb'
+      label: 'بصير برو'
+      iconURL: '/assets/ef-baseer-icon.svg'
+      description: 'تحليل معقّد مع عرض خطوات التفكير'
+      showInMenu: false
+      askUserQuestion: false
+      artifacts: 'custom'
+      preset:
+        endpoint: 'DeepSeek NoWeb'
+        model: 'deepseek-v4.1-flash-1017'
+        promptPrefix: *instructions_noweb
+
+# Memories (#108): after each reply a memory agent on the fast model (`Qwen Tasks`: no search, which needs a streamed
+# call, and the memory agent's call is not streamed) updates what the user asked it to keep; the user
+# sees, edits and switches them off in the side menu and in Settings → Personalization. Recent messages go to the
+# approved provider (#5) for this; nothing leaves it. v0.8.8 runs the agent only with `enabled: true` (without it,
+# memories are added by hand only).
+memory:
+  personalize: true
+  messageWindowSize: 5
+  tokenLimit: 2000
+  agent:
+    enabled: true
+    provider: 'Qwen Tasks'
+    model: 'qwen3.8-flash'
+
+# Long chats (#129): when the history no longer fits the model's context window, v0.8.8 drops the oldest messages; with
+# summarization they are replaced by a summary instead, and the context gauge offers «ضغط السياق» (compact now). No
+# `trigger`: the summary is written only when messages would otherwise be dropped (or on request), so nothing extra is
+# sent before that. The fast model without thinking or search writes it (provider = the endpoint's name, so its key,
+# base URL and `addParams` apply). Arabic prompts replace upstream's English ones, whose English headings the employee
+# would see; plain text, because the «تم تلخيص المحادثة» box shows the summary as written (Markdown «##» would show as
+# is).
+summarization:
+  enabled: true
+  provider: 'Qwen Tasks'
+  model: 'qwen3.8-flash'
+  prompt: |-
+    توقّف قبل أن تكمل: اكتب ملخصاً يحلّ محل الرسائل السابقة، لأن سياق المحادثة اقترب من حدّه. اكتبه بلغة المحادثة نفسها،
+    بما فيها العناوين، واجمع فيه كل ما تحتاجه لتكمل من حيث توقفت. لا تُعِد تقييم ما جرى ولا تتحقق منه، ونتائج الأدوات تعكس ما
+    حدث فعلاً. اكتب الملخص وحده، ولا ترد على المستخدم ولا تكمل المحادثة. واكتبه نصاً عادياً بلا رموز Markdown: كل عنوان في
+    سطر ينتهي بنقطتين، والبنود أسطر تبدأ بشَرطة.
+
+    الهدف:
+    ما طلبه المستخدم، وأي أهداف فرعية.
+
+    القيود والتفضيلات:
+    ما حدده المستخدم من قواعد وتفضيلات: اللغة والنبرة والصيغة والجهة المقصودة وغيرها.
+
+    ما أُنجز:
+    - ما اكتمل ونتيجته.
+
+    ما زال جارياً:
+    - ما يجري العمل عليه الآن.
+
+    القرارات:
+    ما اتُّخذ من قرارات وسببها.
+
+    الخطوات التالية:
+    ما تبقّى، بالترتيب.
+
+    تفاصيل تُحفظ حرفياً:
+    الأسماء والأرقام والتواريخ والروابط ونصوص الأخطاء كما وردت.
+
+    القواعد:
+    - جمل قصيرة وواضحة.
+    - احفظ الأسماء والأرقام والمراجع حرفياً.
+    - احذف الأقسام الفارغة.
+  updatePrompt: |-
+    توقّف مرة أخرى وحدّث ملخصك: ادمج الرسائل الجديدة في الملخص السابق، واكتب ملخصاً واحداً موحّداً يحلّ محله، بلغة المحادثة
+    نفسها. اجعله قريباً من طول الملخص السابق: اختصر التفاصيل القديمة لتفسح مكاناً للجديد، ولا تكتفِ بالإضافة في آخره. أعطِ ما جرى
+    مؤخراً تفصيلاً أكثر، واختصر القديم إلى سطر واحد لكل بند. لا تتحقق مما جرى ولا تُعِد تقييمه. اكتب الملخص وحده، ولا ترد على
+    المستخدم ولا تكمل المحادثة. واكتبه نصاً عادياً بلا رموز Markdown، بالعناوين نفسها.
+
+    القواعد:
+    - ادمج الجديد في أقسامه، ولا تكرر العناوين.
+    - اختصر كل بند مكتمل قديم في سطر واحد.
+    - انقل ما اكتمل من «ما زال جارياً» إلى «ما أُنجز».
+    - حدّث «الخطوات التالية» بحسب ما تبقّى الآن.
+    - احفظ الأسماء والأرقام والمراجع حرفياً.
+    - احذف الأقسام الفارغة.
+
+# Sensitive data (#129; footer: «لا تُدخل معلومات سرية أو بيانات شخصية»): a message, an answer to a clarifying
+# question, or a file's extracted text that matches one of these patterns is refused before it reaches the model or the
+# database, and the employee is told which kind of data to remove (label; patch 0019 shows it in Arabic).
+#   - A Saudi national ID or iqama number: 10 digits starting with 1 or 2, Western, Arabic-Indic or Persian digits. A
+#     10-digit amount such as 1500000000 matches too: written with separators (1,500,000,000) it passes.
+#   - A Saudi IBAN: SA, 2 check digits and 20 characters, with or without spaces or hyphens.
+#   - API keys and tokens: upstream's starter patterns are switched off (`starterPatterns: []`) because they match
+#     ordinary words («To the bearer of this letter», «sk-1»); these require a token of 16 or more characters.
+# RE2 syntax: no lookaround, so a pattern consumes the character next to the number. Model replies are not inspected
+# (`unattributedAssistantContent` default). Files the parser cannot read (images) stay allowed (`uninspectable`
+# default): there is no text to check. Not inspected either: prompts, agents, skills and memories the employee writes
+# (each is its own `filters` source with its own refusal screen, untested).
+filters:
+  messages:
+    pii:
+      action: block
+      starterPatterns: []
+      customPatterns: &sensitive
+        - id: sa_national_id
+          label: 'رقم هوية وطنية أو إقامة'
+          regex: '(?:^|[^0-9٠-٩۰-۹])[12١٢۱۲][0-9٠-٩۰-۹]{9}(?:[^0-9٠-٩۰-۹]|$)'
+        - id: sa_iban
+          label: 'رقم آيبان سعودي'
+          regex: '(?i)(?:^|[^0-9A-Z])SA ?[0-9]{2}(?:[ -]?[0-9A-Z]{4}){5}(?:[^0-9A-Z]|$)'
+        - id: secret_key
+          label: 'مفتاح API'
+          category: credential
+          regex: '(?i)(?:\bsk-[A-Za-z0-9_-]{16,}|\b(?:x-)?api[-_]?key\s*[:=]\s*["'']?[A-Za-z0-9._-]{16,})'
+        - id: bearer_token
+          label: 'رمز دخول (Bearer)'
+          category: credential
+          regex: '(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{20,}'
+  files:
+    pii:
+      action: block
+      fields: ['content', 'extracted_text']
+      starterPatterns: []
+      customPatterns: *sensitive
+
+# Uploads (#129, FR-007 AC-1): files go to the private volume (Railway `librechat-storage`, 5 GB; Compose
+# `librechat-uploads`). Upstream allows 512 MB per file; these limits keep one upload from filling the volume.
+# The paperclip sends each file one way (`defaultLLMDeliveryPath`). Upstream sends Word and Excel as text, read by the
+# built-in parser (the `context` capability; no RAG or OCR service), but a PDF as the file itself (base64 `file` part):
+# the sensitive-data filter cannot read that, so a PDF with an ID number reached the model (tested), and whether Qwen
+# reads such a part is unverified. PDFs go as extracted text too. A scanned PDF has no text layer and is refused (no
+# OCR). Images still go to the model as images.
+fileConfig:
+  serverFileSizeLimit: 20
+  defaultLLMDeliveryPath:
+    overrides:
+      'application/pdf': 'text'
+  # A custom endpoint (the Qwen ones) takes the `agents` entry, which upstream fills with 512 MB, before `default`
+  # (getEndpointFileConfig): without it the browser let a 22 MB file through and the server answered «unknown error».
+  endpoints:
+    default: &upload_limits
+      fileLimit: 10
+      fileSizeLimit: 20
+      totalSizeLimit: 50
+    agents: *upload_limits
+
+# Keep `endpoints` the LAST top-level key and `custom` its LAST child: tests/integration/mock_chat.py appends its
+# test-only mock endpoints to the `custom` list.
+endpoints:
+  # Every chat in v0.8.8 runs on the agents runtime (POST /api/agents/chat/<endpoint>), also for custom endpoints, so
+  # this block applies to all model calls. The agents permission above controls the endpoint and the builder.
+  agents:
+    disableBuilder: false
+    # Capabilities that work with what this deployment has (#108). Not listed, until their own decision:
+    # execute_code (LibreChat Code API key + egress), file_search (no RAG API service), web_search (no search keys),
+    # actions (server-side HTTP to any host), ocr (no OCR provider). React artifacts render through the hosted Sandpack
+    # bundler (an external origin) until SANDPACK_BUNDLER_URL points to a self-hosted one: a production gate; the other
+    # types preview in a local sandboxed frame (patch 0029, #167).
+    capabilities: ['artifacts', 'context', 'skills', 'memory', 'tools', 'chain', 'subagents', 'deferred_tools',
+                   'ask_user_question']
+    # Provider error text is not stored or shown to users (it can contain gateway pages or internal host names);
+    # users get a generic message with the HTTP status. Details stay in the server log.
+    maxProviderErrorChars: 0
+    # Transport limits of every model call (#39), from live Qwen Cloud measurements on 2026-10-24 (38 synthetic
+    # streamed calls over the six chat endpoints): headers arrive with the first token after 1.4–3.1 s, and chunks then
+    # follow at most 3.1 s apart. A reply that stops streaming fails after 60 s of silence (default 15 min); the
+    # header limit is a backstop above the endpoints' 20 s per-attempt `timeout` (default 5 min).
+    modelResponseBodyTimeoutMs: 60000
+    modelResponseHeadersTimeoutMs: 60000
+  custom:
+    # Qwen Cloud pay-as-you-go (#37): the documented OpenAI-compatible base URL (Singapore) for its `sk-ws-` API keys.
+    # Seven endpoints share the account and key because thinking (#131) and search (#135, #138) are set per endpoint:
+    # `enable_thinking`, `reasoning_effort`, `enable_search` and `search_options` go in `addParams`, so the server sets
+    # them and the parameters panel cannot change them; the non-OpenAI ones are sent as top-level body fields (Qwen
+    # Cloud's documented placement). Fixed lists (`fetch: false`): only the approved models are offered and accepted
+    # (FR-002 AC-1). Retry/timeout (#39): one retry and 20 s per attempt until the response headers arrive. Measured
+    # live (2026-10-24): headers come with the first token after 1.4–3.1 s, a 9k-token summary on «Qwen Tasks»
+    # (not streamed) answers in 4.5 s. Neither is sent upstream.
+    # Internet (owner decision 2026-10-22, #135, ADR-0015): the three chat endpoints have Qwen Cloud's built-in web
+    # search, `turbo` strategy (its default; the model decides when to search, and each search is billed on the same
+    # account). The OpenAI-compatible API returns no source list, so the instructions above ask the model to name its
+    # sources. Qwen Cloud searches only in streamed calls, and chats stream.
+    # Titles, memories and summaries of every chat (#135): the fast model with neither thinking nor search, because
+    # those calls are not all streamed. No spec points here: employees never pick it.
+    - name: 'Qwen Tasks'
+      apiKey: '${QWEN_API_KEY}'
+      baseURL: 'https://maas.qwencloudapi.com/compatible-mode/v1'
+      models:
+        default: ['qwen3.8-flash']
+        fetch: false
+      titleConvo: true
+      titleModel: 'qwen3.8-flash'
+      modelDisplayLabel: 'بصير'
+      addParams:
+        enable_thinking: false
+        maxRetries: 1
+        timeout: 20000
+      dropParams: ['web_search', 'useResponsesApi', 'reasoning_effort']
+    # «بصير لايت»: the fast model without thinking (qwen3.8-flash thinks by default, at its deepest level), with search.
+    - name: 'Qwen'
+      apiKey: '${QWEN_API_KEY}'
+      baseURL: 'https://maas.qwencloudapi.com/compatible-mode/v1'
+      models:
+        default: ['qwen3.8-flash']
+        fetch: false
+      titleConvo: true
+      titleEndpoint: 'Qwen Tasks'
+      titleModel: 'qwen3.8-flash'
+      # Title instruction (#169): LibreChat takes it from the chat's endpoint, not from `titleEndpoint`; its default
+      # asks for an English title in title case. `{convo}` is where LibreChat puts the first exchange.
+      titlePrompt: &title_prompt |-
+        اكتب عنواناً قصيراً لهذه المحادثة من خمس كلمات أو أقل، بلغة رسالة المستخدم:
+        بالعربية إذا كتب بالعربية، وبالإنجليزية إذا كتب بالإنجليزية.
+        بلا علامات ترقيم ولا علامات تنصيص ولا رموز. أعد العنوان وحده.
+
+        المحادثة:
+        {convo}
+      modelDisplayLabel: 'بصير'
+      addParams:
+        enable_thinking: false
+        enable_search: true
+        search_options: &search {search_strategy: 'turbo'}
+        maxRetries: 1
+        timeout: 20000
+      # The parameters panel offers OpenAI-only switches that move the request to the Responses API (web search,
+      # Responses API); with them every reply of that chat failed on Qwen Cloud (#120). Its reasoning-effort setting
+      # is dropped too, so Lite never asks for thinking (#131).
+      dropParams: ['web_search', 'useResponsesApi', 'reasoning_effort']
+    # «بصير بلس» (#131): the same model with thinking at `medium` (its levels: low, medium, xhigh). Qwen Cloud asks for
+    # the model's `reasoning_content` back with the tool results of the same reply (a clarifying question, #129):
+    # `includeReasoningContent` replays it within a reply only, so the history sent with later messages does not grow.
+    # LibreChat shows the streamed `reasoning_content` as a thinking block; titles go through `Qwen Tasks`.
+    - name: 'Qwen Thinking'
+      apiKey: '${QWEN_API_KEY}'
+      baseURL: 'https://maas.qwencloudapi.com/compatible-mode/v1'
+      models:
+        default: ['qwen3.8-flash']
+        fetch: false
+      titleConvo: true
+      titleEndpoint: 'Qwen Tasks'
+      titleModel: 'qwen3.8-flash'
+      titlePrompt: *title_prompt
+      modelDisplayLabel: 'بصير بلس'
+      addParams:
+        enable_thinking: true
+        reasoning_effort: 'medium'
+        enable_search: true
+        search_options: *search
+        maxRetries: 1
+        timeout: 20000
+      dropParams: ['web_search', 'useResponsesApi']
+      customParams:
+        includeReasoningContent: true
+    # «بصير برو» (#131): DeepSeek V4.1 Flash, served by Qwen Cloud (same account, key and base URL; text and images in),
+    # thinking at `high` (its default; low, high, max). LibreChat replays DeepSeek's `reasoning_content` on tool turns
+    # by model name. The reply label comes from the spec («بصير برو»), never from the model name.
+    - name: 'DeepSeek'
+      apiKey: '${QWEN_API_KEY}'
+      baseURL: 'https://maas.qwencloudapi.com/compatible-mode/v1'
+      models:
+        default: ['deepseek-v4.1-flash-1017']
+        fetch: false
+      titleConvo: true
+      titleEndpoint: 'Qwen Tasks'
+      titleModel: 'qwen3.8-flash'
+      titlePrompt: *title_prompt
+      modelDisplayLabel: 'بصير برو'
+      addParams:
+        enable_thinking: true
+        reasoning_effort: 'high'
+        enable_search: true
+        search_options: *search
+        maxRetries: 1
+        timeout: 20000
+      dropParams: ['web_search', 'useResponsesApi']
+    # No-search twins of the three chat endpoints (#138): the same models, thinking and limits, without
+    # `enable_search`. The composer's internet switch moves a chat here through the hidden `-noweb` specs above.
+    - name: 'Qwen NoWeb'
+      apiKey: '${QWEN_API_KEY}'
+      baseURL: 'https://maas.qwencloudapi.com/compatible-mode/v1'
+      models:
+        default: ['qwen3.8-flash']
+        fetch: false
+      titleConvo: true
+      titleEndpoint: 'Qwen Tasks'
+      titleModel: 'qwen3.8-flash'
+      titlePrompt: *title_prompt
+      modelDisplayLabel: 'بصير'
+      addParams:
+        enable_thinking: false
+        maxRetries: 1
+        timeout: 20000
+      dropParams: ['web_search', 'useResponsesApi', 'reasoning_effort']
+    - name: 'Qwen Thinking NoWeb'
+      apiKey: '${QWEN_API_KEY}'
+      baseURL: 'https://maas.qwencloudapi.com/compatible-mode/v1'
+      models:
+        default: ['qwen3.8-flash']
+        fetch: false
+      titleConvo: true
+      titleEndpoint: 'Qwen Tasks'
+      titleModel: 'qwen3.8-flash'
+      titlePrompt: *title_prompt
+      modelDisplayLabel: 'بصير بلس'
+      addParams:
+        enable_thinking: true
+        reasoning_effort: 'medium'
+        maxRetries: 1
+        timeout: 20000
+      dropParams: ['web_search', 'useResponsesApi']
+      customParams:
+        includeReasoningContent: true
+    - name: 'DeepSeek NoWeb'
+      apiKey: '${QWEN_API_KEY}'
+      baseURL: 'https://maas.qwencloudapi.com/compatible-mode/v1'
+      models:
+        default: ['deepseek-v4.1-flash-1017']
+        fetch: false
+      titleConvo: true
+      titleEndpoint: 'Qwen Tasks'
+      titleModel: 'qwen3.8-flash'
+      titlePrompt: *title_prompt
+      modelDisplayLabel: 'بصير برو'
+      addParams:
+        enable_thinking: true
+        reasoning_effort: 'high'
+        maxRetries: 1
+        timeout: 20000
+      dropParams: ['web_search', 'useResponsesApi']

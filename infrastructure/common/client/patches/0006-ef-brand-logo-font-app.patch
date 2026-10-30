@@ -1,0 +1,84 @@
+EF brand (D-04, #7, ADR-0013): the login logo has a light and a dark version and is 64 px high (the guide's digital
+minimum is a 40 px symbol); Aktiv Grotesk leads the font stack (Tahoma, the guide's secondary face, follows); the
+installable app, page title and description carry the platform name. Assets and colors live in ../brand/.
+
+diff --git a/client/index.html b/client/index.html
+index 9fe3086..5ef57bf 100644
+--- a/client/index.html
++++ b/client/index.html
+@@ -3,15 +3,15 @@
+   <head>
+     <meta charset="utf-8" />
+     <base href="/" />
+-    <meta name="theme-color" content="#171717" />
++    <meta name="theme-color" content="#2C3A82" />
+     <meta name="mobile-web-app-capable" content="yes" />
+     <meta name="apple-mobile-web-app-capable" content="yes" />
+     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+     <meta
+       name="description"
+-      content="LibreChat - An open source chat application with support for multiple AI models"
++      content="بصير — مساحة عمل الذكاء الاصطناعي لصندوق البيئة"
+     />
+-    <title>LibreChat</title>
++    <title>بصير | صندوق البيئة</title>
+     <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png" />
+     <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png" />
+     <link rel="apple-touch-icon" href="assets/apple-touch-icon-180x180.png" />
+diff --git a/client/src/components/Auth/AuthLayout.tsx b/client/src/components/Auth/AuthLayout.tsx
+index 57fa4e5..c14fe8b 100644
+--- a/client/src/components/Auth/AuthLayout.tsx
++++ b/client/src/components/Auth/AuthLayout.tsx
+@@ -63,10 +63,15 @@ function AuthLayout({
+     <div className="relative flex min-h-screen flex-col bg-surface-primary">
+       <Banner />
+       <BlinkAnimation active={isFetching}>
+-        <div className="mt-6 h-10 w-full bg-cover">
++        <div className="mt-8 h-16 w-full bg-cover">
+           <img
+             src="assets/logo.svg"
+-            className="h-full w-full object-contain"
++            className="h-full w-full object-contain dark:hidden"
++            alt={localize('com_ui_logo', { 0: startupConfig?.appTitle ?? 'LibreChat' })}
++          />
++          <img
++            src="assets/logo-dark.svg"
++            className="hidden h-full w-full object-contain dark:block"
+             alt={localize('com_ui_logo', { 0: startupConfig?.appTitle ?? 'LibreChat' })}
+           />
+         </div>
+diff --git a/client/tailwind.config.cjs b/client/tailwind.config.cjs
+index 2437e8d..f95a3f7 100644
+--- a/client/tailwind.config.cjs
++++ b/client/tailwind.config.cjs
+@@ -16,7 +16,7 @@ module.exports = {
+   presets: [libreChatTailwindPreset],
+   theme: {
+     fontFamily: {
+-      sans: ['Inter', 'sans-serif'],
++      sans: ['EF Aktiv Grotesk', 'Tahoma', 'Inter', 'sans-serif'],
+       /**
+        * Roboto Mono is self-hosted (the `@font-face` block in `style.css`), so code
+        * renders the same on every platform and carries real bold and italic faces
+diff --git a/client/vite.config.ts b/client/vite.config.ts
+index 5a279a9..e0de242 100644
+--- a/client/vite.config.ts
++++ b/client/vite.config.ts
+@@ -151,11 +151,13 @@ export default defineConfig(({ command }) => ({
+       },
+       includeAssets: [],
+       manifest: {
+-        name: 'LibreChat',
+-        short_name: 'LibreChat',
++        name: 'بصير | صندوق البيئة',
++        short_name: 'بصير',
++        lang: 'ar',
++        dir: 'rtl',
+         display: 'standalone',
+-        background_color: '#000000',
+-        theme_color: '#009688',
++        background_color: '#FFFFFF',
++        theme_color: '#2C3A82',
+         icons: [
+           {
+             src: 'assets/favicon-32x32.png',

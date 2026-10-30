@@ -1,0 +1,3030 @@
+EF AI Workspace (#224): chat page redesign, owner-approved 2026-10-25 («اعتمد التصميم ونفذه بكل دقة واحترافية»), with
+web search always on and skills that work with it. Compared with ChatGPT, Gemini, Claude and Copilot (the approved design
+artifact holds the comparison and all 21 states, phone and desktop).
+
+- Skills as text (utils/efaiwSkills.ts, Chat/Input/SkillsCommand.tsx, hooks/Chat/useChatFunctions.ts): Qwen stops its
+  built-in search whenever a request carries tools (#213), and LibreChat's skills switch adds its skill tools. A skill
+  picked with «$» or from «+» is now fetched and attached as a plain-text context file `<title>.efaiw-skill.txt` (the
+  route a long paste takes); a chat never turns the skill tools on (`ephemeralAgent.skills` is false at submit). The
+  «$» list opens with «How to use a skill» in three steps, shows each skill's description as its example, the
+  auto-applied brand skill first with «Automatic» and its readable name, and ends with «Manage skills» and «Create a
+  skill». The upload runs in the always-mounted wrapper, so its slow-upload notice is cleared when it ends.
+- Composer: «+» (Chat/Input/ToolsDropdown.tsx) is a file from the device or from Documents, a ready command («/») and a
+  skill («$»), memory, then a line saying web search runs by itself; the internet and skills switches are gone. A chat
+  saved on a no-search twin shows «No internet ×», which moves it back (InternetBadge.tsx); a model change always picks
+  the spec with search (composerModes.ts). Placeholders by state (hooks/Input/useTextarea.ts): default with «/» and
+  «$», a picked skill, attached files, a temporary chat. A picked skill is a green «$» chip on the box and the sent
+  message, a long paste reads «Pasted text» (Files/FileContainer.tsx); skill attachments are not listed on Documents
+  (EfPages/EfFilesPage.tsx). A one-time skills tip above a new chat's box (EfSkillsTip.tsx). Pro's line «Doesn't search
+  the web for now» in the model menu (SpeedSelector.tsx). On phones the temporary chat is in the new chat's header
+  (Chat/Header.tsx).
+- Replies: the model's name moves from above the reply (kept for screen readers, brand.css) to the end of its toolbar;
+  the toolbar is copy, download, regenerate, rating and «More» (Chat/Messages/HoverButtons.tsx, EfReplyMore.tsx: share
+  the chat first, read aloud, edit, fork to a new chat, retry with another Baseer model). Touch screens show an older
+  reply's actions on tap (ui/MessageRow.tsx). The download menu names the file and lists each format as a badge with
+  what it is for (DownloadReply.tsx, useDocumentDownloads.tsx); both menus portal into <main> (its landmark and
+  direction). A letter or minutes gets a Word/PDF bar (EfReplyExtras.tsx `EfDocBar`).
+- Suggestions under the latest finished reply (utils/efaiwFollowUps.ts, EfReplyExtras.tsx `EfFollowUps`): Baseer ends
+  a reply with a fenced `efaiw-followups` block (librechat.yaml): two or three questions from the reply and up to two
+  actions from a fixed list; questions send as they read, actions send a short request in the reply's language.
+  Without a valid block the actions come from rules on the reply's shape. The block is never shown, copied,
+  downloaded, read aloud or kept in an artifact (Content/Markdown.tsx, useCopyToClipboard.ts, DownloadReply.tsx).
+- Strings (en/translation.json; ar.json). Tests: efaiwFollowUps.spec, efaiwSkills.spec, EfReplyExtras.spec,
+  SkillsCommand.spec (the text route), FileContainer.spec (chips), HoverButtons.spec (editing in «More»),
+  useTextarea.spec (agent config mocks).
+
+diff --git a/client/src/components/Chat/Header.tsx b/client/src/components/Chat/Header.tsx
+index 9e3540b..ab998e4 100644
+--- a/client/src/components/Chat/Header.tsx
++++ b/client/src/components/Chat/Header.tsx
+@@ -136,6 +136,12 @@ function Header({
+             isSubmitting={isSubmitting}
+           />
+         )}
++        {/* EF (chat design #224): on phones the temporary chat is one tap away in a new chat, as on desktop. */}
++        {hasAccessToTemporaryChat === true && (
++          <div className="flex items-center md:hidden">
++            <TemporaryChat />
++          </div>
++        )}
+         <HeaderMenu startupConfig={startupConfig} trace={trace} className="md:hidden" />
+         <div className="hidden items-center gap-2 md:flex">
+           {trace.show && <TraceButton onClick={trace.open} />}
+diff --git a/client/src/components/Chat/Input/ChatForm.tsx b/client/src/components/Chat/Input/ChatForm.tsx
+index 8e4bb80..62d72d9 100644
+--- a/client/src/components/Chat/Input/ChatForm.tsx
++++ b/client/src/components/Chat/Input/ChatForm.tsx
+@@ -73,6 +73,7 @@ import EditBadges from './EditBadges';
+ import BadgeRow from './BadgeRow';
+ import SpeedSelector from './SpeedSelector';
+ import useComposerModes from './composerModes';
++import EfSkillsTip from './EfSkillsTip';
+ import useComposerReversed from './composerDirection';
+ import { useConfiguredFooter } from '~/components/Chat/Footer';
+ import Mention from './Mention';
+@@ -686,6 +687,8 @@ const ChatForm = memo(function ChatForm({
+               onRestoreToComposer={restoreReclaimedSteer}
+             />
+           )}
++          {/* EF (chat design #224): how to use a skill, once, on a new chat. */}
++          {isLandingPage && index === 0 && <EfSkillsTip />}
+           {(project || codeWorkspace.visible) && (
+             <div
+               data-testid="composer-context-rail"
+diff --git a/client/src/components/Chat/Input/EfSkillsTip.tsx b/client/src/components/Chat/Input/EfSkillsTip.tsx
+new file mode 100644
+index 0000000..ee84d60
+--- /dev/null
++++ b/client/src/components/Chat/Input/EfSkillsTip.tsx
+@@ -0,0 +1,56 @@
++import { memo, useState } from 'react';
++import { useRecoilValue } from 'recoil';
++import { Permissions, PermissionTypes } from 'librechat-data-provider';
++import { useAgentCapabilities, useGetAgentsConfig, useHasAccess, useLocalize } from '~/hooks';
++import store from '~/store';
++
++const SEEN_KEY = 'efaiw:skills-tip-seen';
++
++const wasSeen = () => {
++  try {
++    return localStorage.getItem(SEEN_KEY) === '1';
++  } catch {
++    return true;
++  }
++};
++
++/**
++ * EF (chat design #224): once, above the message box of a new chat, how to use a skill; «فهمت» hides it for good on
++ * this browser. Only where «$» works.
++ */
++function EfSkillsTip() {
++  const localize = useLocalize();
++  const [hidden, setHidden] = useState(wasSeen);
++  const dollarCommandEnabled = useRecoilValue(store.dollarCommand);
++  const canUseSkills = useHasAccess({
++    permissionType: PermissionTypes.SKILLS,
++    permission: Permissions.USE,
++  });
++  const { agentsConfig } = useGetAgentsConfig();
++  const { skillsEnabled } = useAgentCapabilities(agentsConfig?.capabilities);
++
++  if (hidden || !dollarCommandEnabled || !canUseSkills || !skillsEnabled) {
++    return null;
++  }
++  return (
++    <div className="efaiw-skills-tip" role="note">
++      <b>{localize('com_efaiw_skills_tip_title')}</b>
++      <span>{localize('com_efaiw_skills_tip_body')}</span>
++      <button
++        type="button"
++        onClick={() => {
++          try {
++            localStorage.setItem(SEEN_KEY, '1');
++          } catch {
++            /* Private mode: hidden for this visit only. */
++          }
++          setHidden(true);
++        }}
++      >
++        {localize('com_efaiw_skills_tip_ok')}
++      </button>
++    </div>
++  );
++}
++
++export default memo(EfSkillsTip);
+diff --git a/client/src/components/Chat/Input/Files/FileContainer.tsx b/client/src/components/Chat/Input/Files/FileContainer.tsx
+index 640ac19..158e446 100644
+--- a/client/src/components/Chat/Input/Files/FileContainer.tsx
++++ b/client/src/components/Chat/Input/Files/FileContainer.tsx
+@@ -1,7 +1,9 @@
+ import type { TFile } from 'librechat-data-provider';
+ import type { ReactNode } from 'react';
+ import type { ExtendedFile } from '~/common';
++import { isSkillFilename, skillTitleFromFilename } from '~/utils/efaiwSkills';
+ import { localizeFileTypeTitle } from '~/utils/efaiwFiles';
++import { isPastedTextFilename } from '~/utils/files';
+ import { getFileType, cn } from '~/utils';
+ import { useLocalize } from '~/hooks';
+ import FilePreview from './FilePreview';
+@@ -63,7 +65,35 @@ const FileContainer = ({
+   const localize = useLocalize();
+   const fileType = getFileType(overrideType ?? file.type);
+   const typeTitle = localizeFileTypeTitle(fileType.title, localize);
+-  const visibleName = displayName ?? file.filename ?? '';
++  const filename = file.filename ?? (file as Partial<ExtendedFile>).file?.name ?? '';
++
++  /* EF (chat design #224): a picked skill is a small «$» chip, on the message box and on the sent message. */
++  if (displayName == null && isSkillFilename(filename)) {
++    const title = skillTitleFromFilename(filename);
++    return (
++      <span
++        className={cn('efaiw-skill-chip', containerClassName)}
++        title={localize('com_efaiw_skill_chip', { 0: title })}
++      >
++        <b aria-hidden="true">$</b>
++        <span className="sr-only">{localize('com_efaiw_skill')}: </span>
++        <span className="efaiw-skill-chip-name">{title}</span>
++        {onDelete && (
++          <button
++            type="button"
++            onClick={onDelete}
++            aria-label={localize('com_efaiw_skill_remove', { 0: title })}
++          >
++            <span aria-hidden="true">×</span>
++          </button>
++        )}
++      </span>
++    );
++  }
++
++  /* EF (chat design #224): a long paste reads «نص ملصق», not its generated file name. */
++  const visibleName =
++    displayName ?? (isPastedTextFilename(filename) ? localize('com_efaiw_pasted_text') : filename);
+   const interactive = onClick != null;
+   const surfaceClassName = cn(
+     'relative overflow-hidden rounded-2xl border border-border-light bg-surface-hover-alt',
+diff --git a/client/src/components/Chat/Input/Files/__tests__/FileContainer.spec.tsx b/client/src/components/Chat/Input/Files/__tests__/FileContainer.spec.tsx
+index 65e64f3..2ff92cb 100644
+--- a/client/src/components/Chat/Input/Files/__tests__/FileContainer.spec.tsx
++++ b/client/src/components/Chat/Input/Files/__tests__/FileContainer.spec.tsx
+@@ -190,3 +190,28 @@ describe('FileContainer subtitle action', () => {
+     expect(screen.queryByText('Move back into message')).not.toBeInTheDocument();
+   });
+ });
++
++describe('FileContainer EF chips (chat design #224)', () => {
++  it('shows a picked skill as a «$» chip with its title and a remove button', async () => {
++    const onDelete = jest.fn();
++    render(
++      <FileContainer
++        file={baseFile({ filename: 'كتابة المحاضر.efaiw-skill.txt', type: 'text/plain' })}
++        onDelete={onDelete}
++      />,
++    );
++    expect(screen.getByText('كتابة المحاضر')).toBeInTheDocument();
++    expect(screen.getByText('$')).toBeInTheDocument();
++    expect(screen.queryByTestId('file-preview')).toBeNull();
++    await userEvent.click(screen.getByRole('button', { name: 'Remove the skill كتابة المحاضر' }));
++    expect(onDelete).toHaveBeenCalled();
++  });
++
++  it('labels a long paste «نص ملصق» instead of its generated name', () => {
++    render(
++      <FileContainer file={baseFile({ filename: 'pasted-text-2.txt', type: 'text/plain' })} />,
++    );
++    expect(screen.getByText('Pasted text')).toBeInTheDocument();
++    expect(screen.queryByText('pasted-text-2.txt')).toBeNull();
++  });
++});
+diff --git a/client/src/components/Chat/Input/InternetBadge.tsx b/client/src/components/Chat/Input/InternetBadge.tsx
+index 9baa790..574a115 100644
+--- a/client/src/components/Chat/Input/InternetBadge.tsx
++++ b/client/src/components/Chat/Input/InternetBadge.tsx
+@@ -1,28 +1,29 @@
+ import { memo } from 'react';
+-import { Globe } from 'lucide-react';
+-import { CheckboxButton } from '@librechat/client';
++import { X } from 'lucide-react';
+ import useComposerModes from './composerModes';
+-import { badgeAccents } from './accents';
+ import { useLocalize } from '~/hooks';
+ 
+ /**
+- * EF (#138): the chip of the provider's built-in web search (ADR-0015), shown while it is on for this chat. Tapping
+- * it moves the chat to the spec's no-search twin; the + menu turns it back on.
++ * EF (#138, chat design #224): web search is always on (ADR-0015), so there is no chip while it works. A chat saved
++ * on a spec's no-search twin, from before the switch was removed, shows «بلا إنترنت ×»: tapping it moves the chat
++ * back to the spec with search.
+  */
+ function InternetBadge() {
+   const localize = useLocalize();
+   const { available, web, setWeb } = useComposerModes();
+-  if (!available || !web) {
++  if (!available || web) {
+     return null;
+   }
+   return (
+-    <CheckboxButton
+-      checked={true}
+-      setValue={() => setWeb(false)}
+-      label={localize('com_efaiw_internet')}
+-      isCheckedClassName={badgeAccents.blue}
+-      icon={<Globe className="icon-md" aria-hidden="true" />}
+-    />
++    <button
++      type="button"
++      className="efaiw-noweb-chip"
++      onClick={() => setWeb(true)}
++      aria-label={localize('com_efaiw_no_internet_restore')}
++    >
++      <span>{localize('com_efaiw_no_internet')}</span>
++      <X className="icon-sm" aria-hidden="true" />
++    </button>
+   );
+ }
+ 
+diff --git a/client/src/components/Chat/Input/MentionItem.tsx b/client/src/components/Chat/Input/MentionItem.tsx
+index 167f858..6099657 100644
+--- a/client/src/components/Chat/Input/MentionItem.tsx
++++ b/client/src/components/Chat/Input/MentionItem.tsx
+@@ -10,6 +10,8 @@ export interface MentionItemProps {
+   icon?: React.ReactNode;
+   isActive?: boolean;
+   description?: string;
++  /** EF (chat design #224): a short tag after a skill, such as «تلقائي». */
++  badge?: string;
+   style?: React.CSSProperties;
+ }
+ 
+@@ -20,6 +22,7 @@ export default function MentionItem({
+   icon,
+   isActive,
+   description,
++  badge,
+   style,
+   type = 'mention',
+ }: MentionItemProps) {
+@@ -39,17 +42,31 @@ export default function MentionItem({
+         )}
+       >
+         <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center">{icon}</div>
+-        <div className="flex min-w-0 flex-grow items-center justify-between">
+-          <div className="truncate">
+-            <span className="font-medium">{name}</span>
+-            {description != null && description ? (
+-              <span className="text-token-text-tertiary ml-2 text-sm font-light">
++        {/* EF (chat design #224): a skill shows its description under its name, as its example. */}
++        {type === 'skill' ? (
++          <div className="efaiw-skill-row min-w-0 flex-grow text-start">
++            <span className="block truncate font-medium">{name}</span>
++            {description ? (
++              <small className="block truncate text-xs font-normal text-text-secondary">
+                 {description}
+-              </span>
++              </small>
+             ) : null}
+           </div>
+-          <Clock4 size={16} className="ml-2 flex-shrink-0" />
+-        </div>
++        ) : null}
++        {type === 'skill' && badge ? <span className="efaiw-skill-badge">{badge}</span> : null}
++        {type === 'skill' ? null : (
++          <div className="flex min-w-0 flex-grow items-center justify-between">
++            <div className="truncate">
++              <span className="font-medium">{name}</span>
++              {description != null && description ? (
++                <span className="text-token-text-tertiary ml-2 text-sm font-light">
++                  {description}
++                </span>
++              ) : null}
++            </div>
++            <Clock4 size={16} className="ml-2 flex-shrink-0" />
++          </div>
++        )}
+       </div>
+     </button>
+   );
+diff --git a/client/src/components/Chat/Input/SkillsCommand.tsx b/client/src/components/Chat/Input/SkillsCommand.tsx
+index 6ed2f75..9fba22e 100644
+--- a/client/src/components/Chat/Input/SkillsCommand.tsx
++++ b/client/src/components/Chat/Input/SkillsCommand.tsx
+@@ -1,25 +1,36 @@
+ import { memo, useState, useRef, useEffect, useMemo, useCallback } from 'react';
+-import { ScrollText } from 'lucide-react';
+-import { useSetRecoilState } from 'recoil';
+ import { useAtomValue, useSetAtom } from 'jotai';
++import { useNavigate } from 'react-router-dom';
++import { useQueryClient } from '@tanstack/react-query';
+ import { AutoSizer, List } from 'react-virtualized';
+-import { Input, Spinner, useCombobox } from '@librechat/client';
+-import { SkillsScope, resolveAgentSkillsScope } from 'librechat-data-provider';
+-import type { TSkillSummary } from 'librechat-data-provider';
++import { Input, Spinner, useCombobox, useToastContext } from '@librechat/client';
++import {
++  QueryKeys,
++  dataService,
++  EToolResources,
++  SkillsScope,
++  resolveAgentSkillsScope,
++} from 'librechat-data-provider';
++import type { TSkill, TSkillSummary } from 'librechat-data-provider';
+ import type { MentionOption } from '~/common';
+ import useInitPopoverInput from '~/hooks/Input/useInitPopoverInput';
++import { PLATFORM_SKILL_TITLES, skillContextText, skillFilename } from '~/utils/efaiwSkills';
++import useFileUploadRouter from '~/hooks/Files/useFileUploadRouter';
+ import { useLocalize, useSkillActiveState } from '~/hooks';
++import { useAgentsMapContext, useChatContext } from '~/Providers';
+ import { useSkillsInfiniteQuery } from '~/data-provider';
+ import { showSkillsPopoverFamily } from './skillsState';
+-import { useAgentsMapContext } from '~/Providers';
+-import { ephemeralAgentByConvoId } from '~/store';
+ import { isEphemeralAgent } from '~/common';
+ import MentionItem from './MentionItem';
+-import store from '~/store';
+ 
+ const commandChar = '$';
+-const ROW_HEIGHT = 44;
+-const skillIcon = <ScrollText className="icon-md text-status-info" />;
++/* EF (chat design #224): two-line rows, the skill's description reads as its example. */
++const ROW_HEIGHT = 56;
++const skillIcon = (
++  <span aria-hidden="true" className="efaiw-skill-tile">
++    $
++  </span>
++);
+ 
+ /**
+  * Determines whether a skill should appear in the `$` command popover.
+@@ -80,20 +91,17 @@ export function filterSkillsForPopover(
+ function SkillsCommandContent({
+   index,
+   textAreaRef,
+-  conversationId,
+   agentId,
++  onPick,
+ }: {
+   index: number;
+   textAreaRef: React.MutableRefObject<HTMLTextAreaElement | null>;
+-  conversationId: string;
+   agentId?: string | null;
++  onPick: (mention: MentionOption) => void;
+ }) {
+   const localize = useLocalize();
++  const navigate = useNavigate();
+   const setShowSkillsPopover = useSetAtom(showSkillsPopoverFamily(index));
+-  const setEphemeralAgent = useSetRecoilState(ephemeralAgentByConvoId(conversationId));
+-  const setPendingManualSkills = useSetRecoilState(
+-    store.pendingManualSkillsByConvoId(conversationId),
+-  );
+ 
+   const agentsMap = useAgentsMapContext();
+   const { isActive } = useSkillActiveState();
+@@ -147,9 +155,12 @@ function SkillsCommandContent({
+     }
+   }, [hasNextPage, isFetchingNextPage, isError, fetchNextPage]);
+ 
+-  const skillOptions: MentionOption[] = useMemo(() => {
++  /* EF (chat design #224): a skill that applies by itself (the brand, also in every spec's instructions) is listed
++     first with «تلقائي». */
++  const { skillOptions, autoSkillIds } = useMemo(() => {
++    const autoIds = new Set<string>();
+     if (!data?.pages) {
+-      return [];
++      return { skillOptions: [] as MentionOption[], autoSkillIds: autoIds };
+     }
+     const allSkills: TSkillSummary[] = [];
+     for (const page of data.pages) {
+@@ -160,16 +171,23 @@ function SkillsCommandContent({
+     const filtered = filterSkillsForPopover(allSkills, { agentSkillIds, isActive });
+     const options: MentionOption[] = [];
+     for (const skill of filtered) {
++      if (skill.alwaysApply === true) {
++        autoIds.add(skill._id);
++      }
++      const platformTitle = PLATFORM_SKILL_TITLES[skill.name];
+       options.push({
+-        label: skill.displayTitle ?? skill.name,
+-        value: skill.name,
+-        description: skill.description,
++        label: skill.displayTitle ?? (platformTitle ? localize(platformTitle) : skill.name),
++        /* EF: the id, so the pick can fetch the skill's text. */
++        value: skill._id,
++        description:
++          skill.alwaysApply === true ? localize('com_efaiw_skill_auto_hint') : skill.description,
+         type: 'skill',
+         icon: skillIcon,
+       });
+     }
+-    return options;
+-  }, [data?.pages, agentSkillIds, isActive]);
++    options.sort((a, b) => Number(autoIds.has(b.value)) - Number(autoIds.has(a.value)));
++    return { skillOptions: options, autoSkillIds: autoIds };
++  }, [data?.pages, agentSkillIds, isActive, localize]);
+ 
+   const [activeIndex, setActiveIndex] = useState(0);
+   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+@@ -198,35 +216,10 @@ function SkillsCommandContent({
+       setSearchValue('');
+       setOpen(false);
+       setShowSkillsPopover(false);
+-
+-      setEphemeralAgent((prev) => {
+-        if (prev?.skills) {
+-          return prev;
+-        }
+-        return { ...(prev || {}), skills: true };
+-      });
+-
+-      /* Structured channel for manual skill invocations. The submit
+-         pipeline reads this and primes SKILL.md as a meta user message
+-         before the LLM turn — no textarea-level marker is needed, and
+-         injecting `$skill-name ` as text would mislead users into thinking
+-         free-form text invocation is supported. Visual confirmation after
+-         submit comes from `SkillPills` on the user message bubble
+-         until the live skill-card stream takes over. */
+-      setPendingManualSkills((prev) =>
+-        prev.includes(mention.value) ? prev : [...prev, mention.value],
+-      );
+-
+       textAreaRef.current?.focus();
++      onPick(mention);
+     },
+-    [
+-      setSearchValue,
+-      setOpen,
+-      setShowSkillsPopover,
+-      textAreaRef,
+-      setEphemeralAgent,
+-      setPendingManualSkills,
+-    ],
++    [onPick, setOpen, setSearchValue, setShowSkillsPopover, textAreaRef],
+   );
+ 
+   useEffect(() => {
+@@ -278,6 +271,7 @@ function SkillsCommandContent({
+         name={mention.label ?? ''}
+         icon={mention.icon}
+         description={mention.description}
++        badge={autoSkillIds.has(mention.value) ? localize('com_efaiw_skill_auto') : undefined}
+         isActive={index === activeIndex}
+       />
+     );
+@@ -285,7 +279,16 @@ function SkillsCommandContent({
+ 
+   return (
+     <div className="absolute bottom-28 z-10 w-full space-y-2">
+-      <div className="popover border-token-border-light rounded-2xl border bg-surface-tertiary-alt p-2 shadow-lg">
++      <div className="popover border-token-border-light efaiw-skills-popover rounded-2xl border bg-surface-tertiary-alt p-2 shadow-lg">
++        {/* EF (chat design #224): how a skill works, in three steps, before the list. */}
++        <div className="efaiw-skills-howto">
++          <b>{localize('com_efaiw_skills_howto_title')}</b>
++          <ol>
++            <li>{localize('com_efaiw_skills_howto_1')}</li>
++            <li>{localize('com_efaiw_skills_howto_2')}</li>
++            <li>{localize('com_efaiw_skills_howto_3')}</li>
++          </ol>
++        </div>
+         <Input
+           ref={initInputRef}
+           placeholder={localize('com_ui_skills_command_placeholder')}
+@@ -352,22 +355,51 @@ function SkillsCommandContent({
+           </div>
+         )}
+         {open && matches.length > 0 && (
+-          <div className="max-h-40">
++          <div className="max-h-56">
+             <AutoSizer disableHeight>
+               {({ width }) => (
+                 <List
++                  /* EF: rows are buttons, not grid cells (axe aria-required-children); a group has no
++                     aria-readonly, and null (unlike undefined) skips react-virtualized's default. */
++                  role="group"
++                  aria-label={localize('com_ui_skills')}
++                  {...({ 'aria-readonly': null } as object)}
++                  containerRole="presentation"
+                   width={width}
+                   overscanRowCount={5}
+                   rowHeight={ROW_HEIGHT}
+                   rowCount={matches.length}
+                   rowRenderer={rowRenderer}
+                   scrollToIndex={activeIndex}
+-                  height={Math.min(matches.length * ROW_HEIGHT, 160)}
++                  height={Math.min(matches.length * ROW_HEIGHT, 224)}
+                 />
+               )}
+             </AutoSizer>
+           </div>
+         )}
++        <div className="efaiw-skills-foot">
++          <button
++            type="button"
++            onMouseDown={(e) => e.preventDefault()}
++            onClick={() => {
++              setShowSkillsPopover(false);
++              navigate('/skills');
++            }}
++          >
++            {localize('com_efaiw_skills_manage')}
++          </button>
++          <button
++            type="button"
++            className="efaiw-skills-new"
++            onMouseDown={(e) => e.preventDefault()}
++            onClick={() => {
++              setShowSkillsPopover(false);
++              navigate('/skills/new');
++            }}
++          >
++            {localize('com_efaiw_skills_create')}
++          </button>
++        </div>
+       </div>
+     </div>
+   );
+@@ -376,15 +408,54 @@ function SkillsCommandContent({
+ const SkillsCommand = memo(function SkillsCommand({
+   index,
+   textAreaRef,
+-  conversationId,
+   agentId,
+ }: {
+   index: number;
+   textAreaRef: React.MutableRefObject<HTMLTextAreaElement | null>;
++  /** Kept for the composer's call: EF (#224) attaches a skill as a file, with no per-chat skill state. */
+   conversationId: string;
+   agentId?: string | null;
+ }) {
++  const localize = useLocalize();
++  const queryClient = useQueryClient();
++  const { showToast } = useToastContext();
++  const { files } = useChatContext();
++  const routeFiles = useFileUploadRouter();
+   const show = useAtomValue(showSkillsPopoverFamily(index));
++
++  /* EF (chat design #224): the skill's text rides with the message as a context attachment (utils/efaiwSkills),
++     instead of upstream's manual-skill channel, which turns on the skill tools and with them stops Qwen's search.
++     The upload lives here, not in the list, which closes on the pick: its progress and slow-upload notice stay with
++     a component that stays mounted. */
++  const attachSkill = useCallback(
++    (mention: MentionOption) => {
++      const title = mention.label ?? '';
++      const filename = skillFilename(title);
++      for (const attached of files.values()) {
++        if ((attached.file?.name ?? attached.filename) === filename) {
++          return;
++        }
++      }
++      void queryClient
++        .fetchQuery<TSkill>([QueryKeys.skill, mention.value], () =>
++          dataService.getSkill(mention.value),
++        )
++        .then((skill) => {
++          const text = skillContextText({
++            title,
++            description: skill.description,
++            body: skill.body,
++          });
++          const file = new File([text], filename, { type: 'text/plain' });
++          return routeFiles([file], EToolResources.context);
++        })
++        .catch(() => {
++          showToast({ message: localize('com_efaiw_skill_attach_error'), status: 'error' });
++        });
++    },
++    [files, localize, queryClient, routeFiles, showToast],
++  );
++
+   if (!show) {
+     return null;
+   }
+@@ -392,8 +463,8 @@ const SkillsCommand = memo(function SkillsCommand({
+     <SkillsCommandContent
+       index={index}
+       textAreaRef={textAreaRef}
+-      conversationId={conversationId}
+       agentId={agentId}
++      onPick={attachSkill}
+     />
+   );
+ });
+diff --git a/client/src/components/Chat/Input/SpeedSelector.tsx b/client/src/components/Chat/Input/SpeedSelector.tsx
+index 342a45d..b6d41e7 100644
+--- a/client/src/components/Chat/Input/SpeedSelector.tsx
++++ b/client/src/components/Chat/Input/SpeedSelector.tsx
+@@ -21,7 +21,7 @@ const OPTIONS: ReadonlyArray<{ id: SpeedId; icon: LucideIcon; label: Translation
+  * EF (#138, Concept 1): the composer's model control over the three approved specs. The button names the spec in use
+  * («بصير لايت»), and the menu lists each spec by its name with its description from librechat.yaml, so the reply's
+  * label matches what was chosen. On desktop it is a menu above the button; on phones (styled in brand.css) it is a
+- * bottom sheet with a title, a close button and a backdrop. The chat switches in place and keeps its internet setting.
++ * bottom sheet with a title, a close button and a backdrop. The chat switches in place, always with search (#224).
+  */
+ function SpeedSelector({ disabled = false }: { disabled?: boolean }) {
+   const localize = useLocalize();
+@@ -114,6 +114,12 @@ function SpeedSelector({ disabled = false }: { disabled?: boolean }) {
+                     {spec.description}
+                   </span>
+                 ) : null}
++                {/* EF (chat design #224, #213): Pro's model does not use its search through LibreChat yet. */}
++                {option.id === 'deep' ? (
++                  <span className="efaiw-model-noweb text-[12px] text-text-secondary">
++                    {localize('com_efaiw_speed_deep_noweb')}
++                  </span>
++                ) : null}
+               </span>
+               <Check
+                 className={cn(
+diff --git a/client/src/components/Chat/Input/ToolsDropdown.tsx b/client/src/components/Chat/Input/ToolsDropdown.tsx
+index 5faf4ab..2c45899 100644
+--- a/client/src/components/Chat/Input/ToolsDropdown.tsx
++++ b/client/src/components/Chat/Input/ToolsDropdown.tsx
+@@ -1,14 +1,18 @@
+ import React, { useState, useMemo, useCallback } from 'react';
+ import * as Ariakit from '@ariakit/react';
++import { useSetAtom } from 'jotai';
++import { useNavigate } from 'react-router-dom';
++import { useRecoilValue, useSetRecoilState } from 'recoil';
+ import { TooltipAnchor, DropdownPopup, PinIcon, VectorIcon } from '@librechat/client';
+ import {
+   Brain,
+   Check,
++  FileText,
+   Globe,
+   Plus,
+   Paperclip,
+-  ScrollText,
+   Settings,
++  SquareSlash,
+   TerminalSquareIcon,
+ } from 'lucide-react';
+ import type { LucideIcon } from 'lucide-react';
+@@ -27,10 +31,11 @@ import {
+   useAgentCapabilities,
+ } from '~/hooks';
+ import MCPSubMenu from '~/components/Chat/Input/MCPSubMenu';
+-import useComposerModes from '~/components/Chat/Input/composerModes';
++import { showSkillsPopoverFamily } from '~/components/Chat/Input/skillsState';
++import { useBadgeRowContext, useChatContext } from '~/Providers';
+ import { useGetStartupConfig } from '~/data-provider';
+-import { useBadgeRowContext } from '~/Providers';
+ import { cn } from '~/utils';
++import store from '~/store';
+ 
+ interface ToolsDropdownProps {
+   disabled?: boolean;
+@@ -48,16 +53,21 @@ const openFilePicker = () => {
+   control?.click();
+ };
+ 
++/** The popovers open once the menu has closed and handed focus back, or that focus change would close them again. */
++const afterMenuCloses = (open: () => void) => window.setTimeout(open, 120);
++
+ /**
+- * EF (#138): the composer's «+» (ChatGPT, Claude and Qwen Chat put their tools behind one +): attach a file, then
+- * on/off items with a check mark — internet (the provider's search, through the spec's no-search twin), skills and
+- * memory. A tool that is on also shows as a chip in the composer. The pin buttons and the artifacts sub-menu
+- * (shadcn/ui, custom prompt mode) are gone. EF (#167): documents (artifacts) have no switch: the spec's instructions
+- * create one whenever the reply is a document, a page, a diagram or code, as in Claude.
++ * EF (#138, chat design #224): the composer's «+» (ChatGPT, Claude and Qwen Chat put their tools behind one +): a file
++ * from the device or from the employee's documents, a ready command («/») and a skill («$»), then memory. Web search
++ * has no switch: Baseer searches whenever a question needs it, and a line at the end says so. Skills have no switch
++ * either: a picked skill travels as text with the message (SkillsCommand), so search keeps working. The pin buttons
++ * and the artifacts sub-menu are gone. EF (#167): documents (artifacts) have no switch: the spec's instructions create
++ * one whenever the reply is a document, a page, a diagram or code, as in Claude.
+  */
+ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+   const localize = useLocalize();
+-  const modes = useComposerModes();
++  const navigate = useNavigate();
++  const { index } = useChatContext();
+   const { user } = useAuthContext();
+   const context = useBadgeRowContext();
+   const { data: startupConfig } = useGetStartupConfig();
+@@ -90,20 +100,22 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+     permission: Permissions.USE,
+   });
+ 
++  const canUsePrompts = useHasAccess({
++    permissionType: PermissionTypes.PROMPTS,
++    permission: Permissions.USE,
++  });
++  const slashCommandEnabled = useRecoilValue(store.slashCommand);
++  const dollarCommandEnabled = useRecoilValue(store.dollarCommand);
++  const setShowPromptsPopover = useSetRecoilState(store.showPromptsPopoverFamily(index));
++  const setShowSkillsPopover = useSetAtom(showSkillsPopoverFamily(index));
++
+   const canUseMemory = useHasMemoryAccess();
+   const showMemory = canUseMemory && memoryEnabled && user?.personalization?.memories !== false;
+ 
+   const [isPopoverActive, setIsPopoverActive] = useState(false);
+   const isDisabled = disabled ?? false;
+-  const {
+-    skills,
+-    memory,
+-    webSearch,
+-    fileSearch,
+-    mcpServerManager,
+-    codeInterpreter,
+-    searchApiKeyForm,
+-  } = context ?? {};
++  const { memory, webSearch, fileSearch, mcpServerManager, codeInterpreter, searchApiKeyForm } =
++    context ?? {};
+ 
+   const { setIsDialogOpen: setIsSearchDialogOpen, menuTriggerRef: searchMenuTriggerRef } =
+     searchApiKeyForm ?? {};
+@@ -136,11 +148,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+     fileSearch?.debouncedChange({ value: newValue });
+   }, [fileSearch]);
+ 
+-  const handleSkillsToggle = useCallback(() => {
+-    const newValue = !skills?.toggleState;
+-    skills?.debouncedChange({ value: newValue });
+-  }, [skills]);
+-
+   const handleMemoryToggle = useCallback(() => {
+     const newValue = !memory?.toggleState;
+     memory?.debouncedChange({ value: newValue });
+@@ -174,18 +181,80 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+     ),
+   });
+ 
+-  dropdownItems.push({
+-    id: 'tools-menu-attach',
+-    label: localize('com_efaiw_attach_file'),
+-    icon: <Paperclip className="icon-md" aria-hidden="true" />,
+-    onClick: openFilePicker,
++  /** A row with a title, a one-line hint and, for a typed command, its key. */
++  const richItem = (
++    id: string,
++    title: string,
++    hint: string,
++    icon: React.ReactNode,
++    onClick: () => void,
++    kbd?: string,
++  ): MenuItemProps => ({
++    id,
++    onClick,
++    render: (props) => (
++      <div {...props} data-testid={id}>
++        <div className="efaiw-menu-row">
++          <span className="efaiw-menu-icon" aria-hidden="true">
++            {icon}
++          </span>
++          <span className="efaiw-menu-text">
++            <span>{title}</span>
++            <small>{hint}</small>
++          </span>
++        </div>
++        {kbd != null && (
++          <kbd className="efaiw-menu-kbd" aria-hidden="true">
++            {kbd}
++          </kbd>
++        )}
++      </div>
++    ),
+   });
+-  dropdownItems.push({ separate: true });
+ 
+-  if (modes.available) {
++  dropdownItems.push(
++    richItem(
++      'tools-menu-attach',
++      localize('com_efaiw_attach_file'),
++      localize('com_efaiw_attach_file_hint'),
++      <Paperclip className="icon-md" />,
++      openFilePicker,
++    ),
++    richItem(
++      'tools-menu-documents',
++      localize('com_efaiw_from_documents'),
++      localize('com_efaiw_from_documents_hint'),
++      <FileText className="icon-md" />,
++      () => navigate('/files'),
++    ),
++  );
++
++  const showPrompts = canUsePrompts && slashCommandEnabled;
++  const showSkills = canUseSkills && skillsEnabled && dollarCommandEnabled;
++  if (showPrompts || showSkills) {
++    dropdownItems.push({ separate: true });
++  }
++  if (showPrompts) {
++    dropdownItems.push(
++      richItem(
++        'tools-menu-prompts',
++        localize('com_efaiw_ready_command'),
++        localize('com_efaiw_ready_command_hint'),
++        <SquareSlash className="icon-md" />,
++        () => afterMenuCloses(() => setShowPromptsPopover(true)),
++        '/',
++      ),
++    );
++  }
++  if (showSkills) {
+     dropdownItems.push(
+-      toggleItem('tools-menu-internet', localize('com_efaiw_internet'), Globe, modes.web, () =>
+-        modes.setWeb(!modes.web),
++      richItem(
++        'tools-menu-skills',
++        localize('com_efaiw_skill'),
++        localize('com_efaiw_skill_hint'),
++        <span className="efaiw-skill-tile">$</span>,
++        () => afterMenuCloses(() => setShowSkillsPopover(true)),
++        '$',
+       ),
+     );
+   }
+@@ -276,19 +345,8 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+     });
+   }
+ 
+-  if (canUseSkills && skillsEnabled) {
+-    dropdownItems.push(
+-      toggleItem(
+-        'tools-menu-skills',
+-        localize('com_ui_skills'),
+-        ScrollText,
+-        skills?.toggleState === true,
+-        handleSkillsToggle,
+-      ),
+-    );
+-  }
+-
+   if (showMemory) {
++    dropdownItems.push({ separate: true });
+     dropdownItems.push(
+       toggleItem(
+         'tools-menu-memory',
+@@ -342,9 +400,18 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+     });
+   }
+ 
+-  if (dropdownItems.length === 0) {
+-    return null;
+-  }
++  dropdownItems.push({ separate: true });
++  dropdownItems.push({
++    id: 'tools-menu-web-note',
++    disabled: true,
++    className: 'efaiw-menu-note',
++    render: (props) => (
++      <div {...props} data-testid="tools-menu-web-note">
++        <Globe className="icon-sm" aria-hidden="true" />
++        <span>{localize('com_efaiw_web_always')}</span>
++      </div>
++    ),
++  });
+ 
+   const menuTrigger = (
+     <TooltipAnchor
+diff --git a/client/src/components/Chat/Input/__tests__/SkillsCommand.spec.tsx b/client/src/components/Chat/Input/__tests__/SkillsCommand.spec.tsx
+index 6cc2a17..29433e3 100644
+--- a/client/src/components/Chat/Input/__tests__/SkillsCommand.spec.tsx
++++ b/client/src/components/Chat/Input/__tests__/SkillsCommand.spec.tsx
+@@ -1,9 +1,10 @@
+ /**
+- * Locks in the selection-flow contract that the follow-up `manualSkills`
+- * PR has to honor: when a user picks a skill in the `$` popover the
+- * component must (a) push the skill name onto the per-conversation
+- * `pendingManualSkillsByConvoId` atom, (b) flip `ephemeralAgent.skills`
+- * to true, and (c) consume only the `$` command prefix from the textarea.
++ * Locks in the selection-flow contract. EF (chat design #224): when a user
++ * picks a skill in the `$` popover the component (a) fetches the skill and
++ * attaches its text as a context file named `<title>.efaiw-skill.txt`,
++ * without touching `ephemeralAgent.skills` or the manual-skills channel (the
++ * skill tools would stop the provider's web search), and (b) consumes only
++ * the `$` command prefix from the textarea.
+  *
+  * Also covers the Phase 2 filter composition: per-agent skill scope
+  * intersects with the ACL catalog, and per-user active-state toggles
+@@ -13,7 +14,7 @@
+ import React from 'react';
+ import { act } from '@testing-library/react';
+ import userEvent from '@testing-library/user-event';
+-import { SkillsScope } from 'librechat-data-provider';
++import { EToolResources, SkillsScope } from 'librechat-data-provider';
+ import { render, screen } from '@testing-library/react';
+ import type { TSkillSummary } from 'librechat-data-provider';
+ 
+@@ -76,10 +77,32 @@ jest.mock('~/data-provider', () => ({
+    test harness swaps the agents map in so cases can configure ephemeral
+    vs. agent-scoped behavior without standing up a real provider. */
+ const mockUseAgentsMapContext = jest.fn();
++let mockAttachedFiles = new Map<string, { filename?: string; file?: File }>();
+ jest.mock('~/Providers', () => ({
+   useAgentsMapContext: () => mockUseAgentsMapContext(),
++  useChatContext: () => ({ files: mockAttachedFiles }),
+ }));
+ 
++const mockRouteFiles = jest.fn();
++jest.mock('~/hooks/Files/useFileUploadRouter', () => ({
++  __esModule: true,
++  default: () => mockRouteFiles,
++}));
++
++const mockNavigate = jest.fn();
++jest.mock('react-router-dom', () => ({
++  ...jest.requireActual('react-router-dom'),
++  useNavigate: () => mockNavigate,
++}));
++
++const mockFetchQuery = jest.fn();
++jest.mock('@tanstack/react-query', () => ({
++  ...jest.requireActual('@tanstack/react-query'),
++  useQueryClient: () => ({ fetchQuery: mockFetchQuery }),
++}));
++
++const mockShowToast = jest.fn();
++
+ const mockIsActive = jest.fn();
+ jest.mock('~/hooks', () => ({
+   useLocalize: () => (key: string) => key,
+@@ -91,6 +114,7 @@ jest.mock('@librechat/client', () => {
+   return {
+     ...actual,
+     Spinner: () => null,
++    useToastContext: () => ({ showToast: mockShowToast }),
+   };
+ });
+ 
+@@ -184,6 +208,13 @@ beforeEach(() => {
+      filter composition. */
+   mockUseAgentsMapContext.mockReturnValue({});
+   mockIsActive.mockReturnValue(true);
++  mockAttachedFiles = new Map();
++  mockFetchQuery.mockResolvedValue({
++    _id: '1',
++    name: 'brand-guidelines',
++    description: 'Apply brand styling',
++    body: 'Use the brand colours.',
++  });
+ });
+ 
+ describe('SkillsCommand', () => {
+@@ -237,7 +268,7 @@ describe('SkillsCommand', () => {
+     expect(nextTextAreaRef.current).toHaveValue('$100');
+   });
+ 
+-  it('selecting a skill pushes to pendingManualSkillsByConvoId, flips ephemeralAgent.skills, strips the $ trigger from the textarea, and closes the popover', async () => {
++  it('selecting a skill attaches its text as a context file, leaves the skill tools off, strips the $ trigger and closes the popover', async () => {
+     const user = userEvent.setup();
+     const textAreaRef = makeTextarea('$');
+     render(<SkillsCommand index={0} textAreaRef={textAreaRef} conversationId={CONVO_ID} />);
+@@ -247,32 +278,62 @@ describe('SkillsCommand', () => {
+       await user.click(skillButton);
+     });
+ 
+-    /* Structured channel: the skill name is pushed into the per-convo atom
+-       and drained by `useChatFunctions.ask` on submission. */
+-    expect(mockSetPendingManualSkills).toHaveBeenCalledTimes(1);
+-    const updater = mockSetPendingManualSkills.mock.calls[0][0] as (prev: string[]) => string[];
+-    expect(updater([])).toEqual(['brand-guidelines']);
+-    expect(updater(['brand-guidelines'])).toEqual(['brand-guidelines']);
+-
+-    /* Ephemeral agent gets skills enabled so the badge lights up and the
+-       backend includes the skill catalog. */
+-    expect(mockSetEphemeralAgent).toHaveBeenCalledTimes(1);
+-    const agentUpdater = mockSetEphemeralAgent.mock.calls[0][0] as (
+-      prev: { skills?: boolean } | null,
+-    ) => { skills?: boolean };
+-    expect(agentUpdater(null)).toEqual({ skills: true });
+-    expect(agentUpdater({ skills: true })).toEqual({ skills: true });
+-
+-    /* Textarea is cleared of the `$` trigger but no `$skill-name ` cue is
+-       inserted — visual confirmation is the `SkillPills` row that
+-       renders on the submitted user message, and injecting text would
+-       mislead users into thinking free-form `$name` invocation works. */
+-    expect(textAreaRef.current?.value).toBe('');
++    /* The skill is fetched by id and its text rides with the message. */
++    expect(mockFetchQuery).toHaveBeenCalledTimes(1);
++    expect(mockFetchQuery.mock.calls[0][0]).toEqual(['skill', '1']);
++    expect(mockRouteFiles).toHaveBeenCalledTimes(1);
++    const [files, toolResource] = mockRouteFiles.mock.calls[0];
++    expect(toolResource).toBe(EToolResources.context);
++    expect(files[0].name).toBe('Brand Guidelines.efaiw-skill.txt');
++    expect(files[0].type).toBe('text/plain');
++    /* jsdom's File has no text(). */
++    const text = await new Promise<string>((resolve) => {
++      const reader = new FileReader();
++      reader.onload = () => resolve(String(reader.result));
++      reader.readAsText(files[0] as File);
++    });
++    expect(text).toContain('Brand Guidelines');
++    expect(text).toContain('Use the brand colours.');
++
++    /* No skill tools, no manual-skills channel: they would stop web search. */
++    expect(mockSetPendingManualSkills).not.toHaveBeenCalled();
++    expect(mockSetEphemeralAgent).not.toHaveBeenCalled();
+ 
+-    /* Popover dismisses on selection. */
++    expect(textAreaRef.current?.value).toBe('');
+     expect(mockSetShowSkillsPopover).toHaveBeenCalledWith(false);
+   });
+ 
++  it('does not attach the same skill twice', async () => {
++    const user = userEvent.setup();
++    mockAttachedFiles = new Map([['f1', { filename: 'Brand Guidelines.efaiw-skill.txt' }]]);
++    const textAreaRef = makeTextarea('$');
++    render(<SkillsCommand index={0} textAreaRef={textAreaRef} conversationId={CONVO_ID} />);
++
++    await act(async () => {
++      await user.click(await screen.findByRole('button', { name: /Brand Guidelines/i }));
++    });
++
++    expect(mockFetchQuery).not.toHaveBeenCalled();
++    expect(mockRouteFiles).not.toHaveBeenCalled();
++  });
++
++  it('says so when the skill cannot be fetched', async () => {
++    const user = userEvent.setup();
++    mockFetchQuery.mockRejectedValue(new Error('offline'));
++    const textAreaRef = makeTextarea('$');
++    render(<SkillsCommand index={0} textAreaRef={textAreaRef} conversationId={CONVO_ID} />);
++
++    await act(async () => {
++      await user.click(await screen.findByRole('button', { name: /Brand Guidelines/i }));
++    });
++
++    expect(mockRouteFiles).not.toHaveBeenCalled();
++    expect(mockShowToast).toHaveBeenCalledWith({
++      message: 'com_efaiw_skill_attach_error',
++      status: 'error',
++    });
++  });
++
+   it('narrows the list to the agent-configured scope when agent.skills is set and skills_enabled is true', async () => {
+     mockUseSkillsInfiniteQuery.mockReturnValue({
+       data: twoSkillsResponse,
+diff --git a/client/src/components/Chat/Input/composerModes.ts b/client/src/components/Chat/Input/composerModes.ts
+index 8159f66..a00df89 100644
+--- a/client/src/components/Chat/Input/composerModes.ts
++++ b/client/src/components/Chat/Input/composerModes.ts
+@@ -95,14 +95,15 @@ export default function useComposerModes() {
+     [current, onSelectSpec],
+   );
+ 
++  /* EF (chat design #224): search is always on, so a new speed is always the spec with search, also from a twin. */
+   const setSpeed = useCallback(
+     (id: SpeedId) => {
+       const target = SPEEDS.find((s) => s.id === id);
+       if (target != null) {
+-        select(specFor(target, web));
++        select(specFor(target, true));
+       }
+     },
+-    [select, specFor, web],
++    [select, specFor],
+   );
+ 
+   const setWeb = useCallback(
+diff --git a/client/src/components/Chat/Messages/Content/Markdown.tsx b/client/src/components/Chat/Messages/Content/Markdown.tsx
+index 222c3d0..963a8d0 100644
+--- a/client/src/components/Chat/Messages/Content/Markdown.tsx
++++ b/client/src/components/Chat/Messages/Content/Markdown.tsx
+@@ -1,9 +1,10 @@
+-import React, { memo, useRef, useEffect } from 'react';
++import React, { memo, useRef, useEffect, useMemo } from 'react';
+ import { useRecoilValue } from 'recoil';
+ import { getRemarkPlugins, getRehypePlugins, getMarkdownComponents } from './markdownConfig';
+ import useSmoothStreaming from '~/hooks/Messages/useSmoothStreaming';
+ import MarkdownErrorBoundary from './MarkdownErrorBoundary';
+ import { FADE_HYDRATION_THRESHOLD } from './animate';
++import { stripFollowUps } from '~/utils/efaiwFollowUps';
+ import { useMessageContext } from '~/Providers';
+ import MarkdownBlocks from './MarkdownBlocks';
+ import store from '~/store';
+@@ -13,7 +14,12 @@ type TContentProps = {
+   isLatestMessage: boolean;
+ };
+ 
+-const Markdown = memo(function Markdown({ content = '', isLatestMessage }: TContentProps) {
++const Markdown = memo(function Markdown({
++  content: rawContent = '',
++  isLatestMessage,
++}: TContentProps) {
++  /* EF (chat design #224): the suggestion block Baseer ends a reply with is read by EfFollowUps, never shown. */
++  const content = useMemo(() => stripFollowUps(rawContent), [rawContent]);
+   const { isSubmitting = false } = useMessageContext() ?? {};
+   const smoothStreaming = useSmoothStreaming();
+   const LaTeXParsing = useRecoilValue<boolean>(store.LaTeXParsing);
+diff --git a/client/src/components/Chat/Messages/DownloadReply.tsx b/client/src/components/Chat/Messages/DownloadReply.tsx
+index 27a09c7..de371bb 100644
+--- a/client/src/components/Chat/Messages/DownloadReply.tsx
++++ b/client/src/components/Chat/Messages/DownloadReply.tsx
+@@ -4,14 +4,22 @@ import { Download } from 'lucide-react';
+ import { DropdownPopup, TooltipAnchor } from '@librechat/client';
+ import { ContentTypes } from 'librechat-data-provider';
+ import type { TMessage } from 'librechat-data-provider';
++import type { MenuItemProps } from '~/common';
+ import { safeFileName } from '~/utils/efaiwDocx';
+ import { hasMarkdownTable } from '~/utils/efaiwXlsx';
++import { stripFollowUps } from '~/utils/efaiwFollowUps';
+ import useDocumentDownloads from './useDocumentDownloads';
+ import { hoverButtonClasses } from './styles';
+ import { useLocalize } from '~/hooks';
+ 
+-/** The reply's own text, without its thinking or tool calls. */
+-export const replyMarkdown = (message: TMessage): string => {
++/** EF (chat design #224): menus portal into <main>, so they keep its landmark and right-to-left direction. */
++export const mainLandmark = () => document.querySelector<HTMLElement>('main');
++
++/** The reply's own text, without its thinking or tool calls, nor the suggestion block (#224). */
++export const replyMarkdown = (message: TMessage): string =>
++  stripFollowUps(rawReplyMarkdown(message));
++
++export const rawReplyMarkdown = (message: TMessage): string => {
+   if (Array.isArray(message.content) && message.content.length > 0) {
+     return message.content
+       .map((part) => {
+@@ -52,12 +60,35 @@ function DownloadReply({
+   const name = safeFileName(title, localize('com_efaiw_download_default_name'));
+   const markdown = useCallback(() => replyMarkdown(message), [message]);
+   const hasTable = useMemo(() => hasMarkdownTable(replyMarkdown(message)), [message]);
+-  const items = useDocumentDownloads({ markdown, name, hasTable, isOpen });
++  const formats = useDocumentDownloads({ markdown, name, hasTable, isOpen });
++  /* EF (chat design #224): the menu opens with what it saves: the file's name, in the fund's identity. */
++  const items = useMemo<MenuItemProps[]>(
++    () => [
++      {
++        id: 'download-head',
++        disabled: true,
++        className: 'efaiw-menu-head',
++        render: (props) => (
++          <div {...props}>
++            <span>{localize('com_efaiw_download_title')}</span>
++            <small dir="auto">{localize('com_efaiw_download_subtitle', { 0: name })}</small>
++          </div>
++        ),
++      },
++      ...formats,
++    ],
++    [formats, localize, name],
++  );
+ 
+   return (
+     <DropdownPopup
+       portal={true}
+       menuId={menuId}
++      className="efaiw-download-menu"
++      /* Inside the page's landmark and direction, without focusable aria-hidden traps around the portal (axe), as
++         the «+» menu. */
++      portalElement={mainLandmark}
++      preserveTabOrder={false}
+       focusLoop={true}
+       unmountOnHide={true}
+       isOpen={isOpen}
+diff --git a/client/src/components/Chat/Messages/EfReplyExtras.tsx b/client/src/components/Chat/Messages/EfReplyExtras.tsx
+new file mode 100644
+index 0000000..685aca3
+--- /dev/null
++++ b/client/src/components/Chat/Messages/EfReplyExtras.tsx
+@@ -0,0 +1,160 @@
++import { memo, useCallback, useMemo } from 'react';
++import {
++  CornerDownLeft,
++  Download,
++  FileText,
++  Languages,
++  Lightbulb,
++  Mail,
++  Minimize2,
++  SpellCheck,
++  Table,
++} from 'lucide-react';
++import type { LucideIcon } from 'lucide-react';
++import { ContentTypes } from 'librechat-data-provider';
++import type { TMessage } from 'librechat-data-provider';
++import type { TranslationKeys } from '~/hooks';
++import type { TAskFunction } from '~/common';
++import { followUpsFor, isDocumentReply, replyLanguage } from '~/utils/efaiwFollowUps';
++import type { EfFollowUpAction } from '~/utils/efaiwFollowUps';
++import useDocumentDownloads from './useDocumentDownloads';
++import { rawReplyMarkdown, replyMarkdown } from './DownloadReply';
++import { safeFileName } from '~/utils/efaiwDocx';
++import { useLocalize } from '~/hooks';
++
++/** What each action asks Baseer, in the reply's language so the answer keeps it. */
++const ACTION_PROMPTS: Record<EfFollowUpAction, { ar: string; en: string }> = {
++  letter: { ar: 'حوّل هذا الرد إلى خطاب رسمي.', en: 'Turn this reply into a formal letter.' },
++  email: { ar: 'اكتبه بريداً إلكترونياً موجزاً.', en: 'Write it as a short email.' },
++  proofread: {
++    ar: 'دقّق هذا النص لغوياً وصحّح أخطاءه.',
++    en: 'Proofread this text and fix its errors.',
++  },
++  shorten: { ar: 'اختصر الرد في نصف طوله.', en: 'Shorten the reply to half its length.' },
++  table: { ar: 'اعرض الرد في جدول.', en: 'Show the reply as a table.' },
++  explain: { ar: 'اشرح أكثر بمثال.', en: 'Explain more, with an example.' },
++  translate: { ar: 'ترجم الرد إلى الإنجليزية.', en: 'Translate the reply into Arabic.' },
++};
++
++const ACTION_VIEW: Record<EfFollowUpAction, { icon: LucideIcon; label: TranslationKeys }> = {
++  letter: { icon: FileText, label: 'com_efaiw_fu_letter' },
++  email: { icon: Mail, label: 'com_efaiw_fu_email' },
++  proofread: { icon: SpellCheck, label: 'com_efaiw_fu_proofread' },
++  shorten: { icon: Minimize2, label: 'com_efaiw_fu_shorten' },
++  table: { icon: Table, label: 'com_efaiw_fu_table' },
++  explain: { icon: Lightbulb, label: 'com_efaiw_fu_explain' },
++  translate: { icon: Languages, label: 'com_efaiw_fu_translate_en' },
++};
++
++/**
++ * EF (chat design #224): the suggestions under the latest finished reply. Questions come from the reply itself (the
++ * block Baseer writes, utils/efaiwFollowUps.ts) and send as they read; actions come from the fund's fixed list (or,
++ * without the block, from rules on the reply's shape) and send a short request in the reply's language.
++ */
++export const EfFollowUps = memo(function EfFollowUps({
++  message,
++  ask,
++}: {
++  message: TMessage;
++  ask: TAskFunction;
++}) {
++  const localize = useLocalize();
++  const raw = useMemo(() => rawReplyMarkdown(message), [message]);
++  const { questions, actions } = useMemo(() => followUpsFor(raw), [raw]);
++  const lang = useMemo(() => replyLanguage(raw), [raw]);
++  const send = useCallback((text: string) => ask({ text }), [ask]);
++
++  const failed =
++    Array.isArray(message.content) &&
++    message.content.some((part) => part?.type === ContentTypes.ERROR);
++  if (failed || raw.trim() === '' || (questions.length === 0 && actions.length === 0)) {
++    return null;
++  }
++  return (
++    <div className="efaiw-followups" role="group" aria-label={localize('com_efaiw_fu_title')}>
++      {questions.map((question) => (
++        <button
++          key={question}
++          type="button"
++          className="efaiw-fu-question"
++          dir="auto"
++          onClick={() => send(question)}
++        >
++          <CornerDownLeft className="icon-sm" aria-hidden="true" />
++          <span>{question}</span>
++        </button>
++      ))}
++      {actions.length > 0 && (
++        <div className="efaiw-fu-actions">
++          {actions.map((action) => {
++            const { icon: Icon, label } = ACTION_VIEW[action];
++            const text =
++              action === 'translate' && lang === 'en'
++                ? localize('com_efaiw_fu_translate_ar')
++                : localize(label);
++            return (
++              <button
++                key={action}
++                type="button"
++                className="efaiw-fu-action"
++                onClick={() => send(ACTION_PROMPTS[action][lang])}
++              >
++                <Icon className="icon-sm" aria-hidden="true" />
++                <span>{text}</span>
++              </button>
++            );
++          })}
++        </div>
++      )}
++    </div>
++  );
++});
++
++/**
++ * EF (chat design #224): a letter, a memo or minutes gets a bar with its file name and one tap to Word or PDF, in the
++ * fund's identity (the same files as the reply's download menu).
++ */
++export const EfDocBar = memo(function EfDocBar({
++  message,
++  title,
++}: {
++  message: TMessage;
++  title?: string | null;
++}) {
++  const localize = useLocalize();
++  const isDocument = useMemo(() => isDocumentReply(rawReplyMarkdown(message)), [message]);
++  const name = safeFileName(title, localize('com_efaiw_download_default_name'));
++  const markdown = useCallback(() => replyMarkdown(message), [message]);
++  const formats = useDocumentDownloads({ markdown, name, hasTable: false, isOpen: isDocument });
++
++  if (!isDocument) {
++    return null;
++  }
++  const word = formats.find((item) => item.id === 'download-docx');
++  const pdf = formats.find((item) => item.id === 'download-pdf');
++  return (
++    <div className="efaiw-docbar">
++      <span className="efaiw-fmt efaiw-fmt-docx" aria-hidden="true">
++        DOCX
++      </span>
++      <span className="efaiw-docbar-text">
++        <span dir="auto">{`${name.replace(/\.+$/, '')}.docx`}</span>
++        <small>{localize('com_efaiw_docbar_hint')}</small>
++      </span>
++      {[word, pdf].map((item, i) =>
++        item?.onClick != null ? (
++          <button
++            key={item.id}
++            type="button"
++            className={i === 0 ? 'efaiw-docbar-pill efaiw-docbar-primary' : 'efaiw-docbar-pill'}
++            aria-label={localize('com_efaiw_docbar_download', { 0: item.ariaLabel ?? '' })}
++            onClick={(e) => item.onClick?.(e)}
++          >
++            <Download className="icon-sm" aria-hidden="true" />
++            <span>{item.ariaLabel}</span>
++          </button>
++        ) : null,
++      )}
++    </div>
++  );
++});
+diff --git a/client/src/components/Chat/Messages/EfReplyMore.tsx b/client/src/components/Chat/Messages/EfReplyMore.tsx
+new file mode 100644
+index 0000000..4f30aa2
+--- /dev/null
++++ b/client/src/components/Chat/Messages/EfReplyMore.tsx
+@@ -0,0 +1,209 @@
++import { memo, useEffect, useId, useMemo, useState } from 'react';
++import * as Ariakit from '@ariakit/react';
++import { Ellipsis, GitFork, Pencil, RefreshCcw, Share2, Volume2 } from 'lucide-react';
++import { ForkOptions } from 'librechat-data-provider';
++import { DropdownPopup, TooltipAnchor, useToastContext } from '@librechat/client';
++import type { TConversation, TMessage } from 'librechat-data-provider';
++import type { MenuItemProps } from '~/common';
++import ShareButton from '~/components/Conversations/ConvoOptions/ShareButton';
++import useComposerModes, { SPEEDS } from '~/components/Chat/Input/composerModes';
++import type { SpeedId } from '~/components/Chat/Input/composerModes';
++import { useForkConvoMutation, useGetStartupConfig } from '~/data-provider';
++import { useNavigateToConvo, useLocalize } from '~/hooks';
++import { mainLandmark } from './DownloadReply';
++import { hoverButtonClasses } from './styles';
++
++/** The read-aloud control stays in the toolbar, out of view until it plays, so the menu can start it. */
++export const readAloudId = (messageId: string) => `efaiw-read-aloud-${messageId}`;
++
++const row = (icon: React.ReactNode, title: string, hint?: string) => (
++  <span className="efaiw-menu-row">
++    <span className="efaiw-menu-icon" aria-hidden="true">
++      {icon}
++    </span>
++    <span className="efaiw-menu-text">
++      <span>{title}</span>
++      {hint ? <small>{hint}</small> : null}
++    </span>
++  </span>
++);
++
++/**
++ * EF (chat design #224): «⋯» under a reply holds what is used less often, so the toolbar keeps five actions: sharing
++ * the chat first (signed-in employees only, ADR on shared links), then reading aloud, editing the reply, forking it to
++ * a new chat and asking again with each other Baseer model. Asking again switches the chat's model in place, then
++ * regenerates once the chat carries it.
++ */
++function EfReplyMore({
++  message,
++  conversation,
++  isLast,
++  canReadAloud,
++  canEdit,
++  onEdit,
++  canFork,
++  canRegenerate,
++  regenerate,
++  getLatestMessageId,
++}: {
++  message: TMessage;
++  conversation: TConversation;
++  isLast: boolean;
++  canReadAloud: boolean;
++  canEdit: boolean;
++  onEdit: () => void;
++  canFork: boolean;
++  canRegenerate: boolean;
++  regenerate: () => void;
++  getLatestMessageId?: () => string | undefined;
++}) {
++  const localize = useLocalize();
++  const menuId = useId();
++  const { showToast } = useToastContext();
++  const { data: startupConfig } = useGetStartupConfig();
++  const { navigateToConvo } = useNavigateToConvo();
++  const modes = useComposerModes();
++  const [isOpen, setIsOpen] = useState(false);
++  const [shareOpen, setShareOpen] = useState(false);
++  const [pendingSpeed, setPendingSpeed] = useState<SpeedId | null>(null);
++  const label = localize('com_efaiw_reply_more');
++  const conversationId = conversation.conversationId ?? '';
++
++  const forkConvo = useForkConvoMutation({
++    onSuccess: (data) => {
++      navigateToConvo(data.conversation);
++      showToast({ message: localize('com_ui_fork_success'), status: 'success' });
++    },
++    onError: () => showToast({ message: localize('com_ui_fork_error'), status: 'error' }),
++  });
++
++  /* Regenerate once the chat has switched to the chosen model: `regenerate` sends the chat as it is rendered. */
++  useEffect(() => {
++    if (pendingSpeed != null && modes.speed === pendingSpeed) {
++      setPendingSpeed(null);
++      regenerate();
++    }
++  }, [pendingSpeed, modes.speed, regenerate]);
++
++  const otherSpeeds = useMemo(
++    () =>
++      modes.available && canRegenerate
++        ? SPEEDS.filter((s) => s.id !== modes.speed && modes.specOf(s.id) != null)
++        : [],
++    [modes, canRegenerate],
++  );
++
++  const items: MenuItemProps[] = [];
++  if (startupConfig?.sharedLinksEnabled === true && conversationId) {
++    items.push({
++      id: 'reply-more-share',
++      onClick: () => setShareOpen(true),
++      render: (props) => (
++        <div {...props}>
++          {row(
++            <Share2 className="icon-md" />,
++            localize('com_efaiw_share_chat'),
++            localize('com_efaiw_share_chat_hint'),
++          )}
++        </div>
++      ),
++    });
++    items.push({ separate: true });
++  }
++  if (canReadAloud) {
++    items.push({
++      id: 'reply-more-read',
++      onClick: () => document.getElementById(readAloudId(message.messageId))?.click(),
++      render: (props) => (
++        <div {...props}>
++          {row(<Volume2 className="icon-md" />, localize('com_efaiw_read_aloud'))}
++        </div>
++      ),
++    });
++  }
++  if (canEdit) {
++    items.push({
++      id: 'reply-more-edit',
++      onClick: onEdit,
++      render: (props) => (
++        <div {...props}>
++          {row(<Pencil className="icon-md" />, localize('com_efaiw_edit_reply'))}
++        </div>
++      ),
++    });
++  }
++  if (canFork && conversationId) {
++    items.push({
++      id: 'reply-more-fork',
++      onClick: () =>
++        forkConvo.mutate({
++          messageId: message.messageId,
++          conversationId,
++          option: ForkOptions.DIRECT_PATH,
++          splitAtTarget: false,
++          latestMessageId: getLatestMessageId?.(),
++        }),
++      render: (props) => (
++        <div {...props}>
++          {row(<GitFork className="icon-md" />, localize('com_efaiw_fork_reply'))}
++        </div>
++      ),
++    });
++  }
++  /* One row per other Baseer model, not a sub-menu: it reads as one list on the phone's sheet. */
++  for (const s of otherSpeeds) {
++    const name = modes.specOf(s.id)?.label ?? s.id;
++    items.push({
++      id: `reply-more-redo-${s.id}`,
++      onClick: () => {
++        setPendingSpeed(s.id);
++        modes.setSpeed(s.id);
++      },
++      render: (props) => (
++        <div {...props}>
++          {row(<RefreshCcw className="icon-md" />, localize('com_efaiw_redo_with', { 0: name }))}
++        </div>
++      ),
++    });
++  }
++
++  if (items.length === 0) {
++    return null;
++  }
++
++  return (
++    <>
++      <DropdownPopup
++        portal={true}
++        menuId={menuId}
++        focusLoop={true}
++        unmountOnHide={true}
++        isOpen={isOpen}
++        setIsOpen={setIsOpen}
++        className="efaiw-reply-more-menu"
++        portalElement={mainLandmark}
++        preserveTabOrder={false}
++        trigger={
++          <TooltipAnchor
++            description={label}
++            render={
++              <Ariakit.MenuButton
++                aria-label={label}
++                data-testid={isLast ? 'reply-more-button' : undefined}
++                className={hoverButtonClasses({ isActive: isOpen || shareOpen, isLast })}
++              >
++                <Ellipsis size={19} aria-hidden="true" />
++              </Ariakit.MenuButton>
++            }
++          />
++        }
++        items={items}
++      />
++      {shareOpen && (
++        <ShareButton conversationId={conversationId} open={shareOpen} onOpenChange={setShareOpen} />
++      )}
++    </>
++  );
++}
++
++export default memo(EfReplyMore);
+diff --git a/client/src/components/Chat/Messages/HoverButtons.tsx b/client/src/components/Chat/Messages/HoverButtons.tsx
+index ad8140c..651a6ae 100644
+--- a/client/src/components/Chat/Messages/HoverButtons.tsx
++++ b/client/src/components/Chat/Messages/HoverButtons.tsx
+@@ -15,12 +15,14 @@ import type { TConversation, TMessage, TFeedback } from 'librechat-data-provider
+ import { useMessagesIsSubmitting, useOptionalMessagesOperations } from '~/Providers';
+ import { useGenerationsByLatest, useLocalize } from '~/hooks';
+ import { hasEditablePart } from './Content/editableParts';
++import { stripFollowUps } from '~/utils/efaiwFollowUps';
+ import { revealedQueuedTurnFamily } from '~/store/steer';
+ import { Fork } from '~/components/Conversations';
+ import { hoverButtonClasses } from './styles';
+ import MessageAudio from './MessageAudio';
+ import Feedback from './Feedback';
+ import DownloadReply from './DownloadReply';
++import EfReplyMore, { readAloudId } from './EfReplyMore';
+ import { cn } from '~/utils';
+ import store from '~/store';
+ 
+@@ -41,6 +43,8 @@ type THoverButtons = {
+   isLast: boolean;
+   index: number;
+   handleFeedback?: ({ feedback }: { feedback: TFeedback | undefined }) => void;
++  /** EF (chat design #224): the model that wrote the reply, at the end of its toolbar. */
++  modelLabel?: string;
+ };
+ 
+ type HoverButtonProps = {
+@@ -56,7 +60,11 @@ type HoverButtonProps = {
+   disabled?: boolean;
+ };
+ 
+-const extractMessageContent = (message: TMessage): string => {
++/* EF (chat design #224): read aloud without the suggestion block at the end of a reply. */
++const extractMessageContent = (message: TMessage): string =>
++  stripFollowUps(rawMessageContent(message));
++
++const rawMessageContent = (message: TMessage): string => {
+   if (typeof message.content === 'string') {
+     return message.content;
+   }
+@@ -140,6 +148,7 @@ const HoverButtons = ({
+   getLatestMessageId,
+   isLast,
+   handleFeedback,
++  modelLabel,
+ }: THoverButtons) => {
+   const localize = useLocalize();
+   /** Subscribed here rather than passed down: a send toggles the rerun controls on
+@@ -232,10 +241,16 @@ const HoverButtons = ({
+   };
+ 
+   const handleCopy = () => copyToClipboard(setIsCopied);
++  /* EF (chat design #224): touch screens hide an older reply's toolbar until the reply is tapped (brand.css). */
++  const latestMark = isLast ? 'last' : 'older';
++  const actionsMark = isCreatedByUser ? undefined : latestMark;
+ 
+   return (
+-    <div className="group visible flex justify-center gap-0.5 self-end focus-within:outline-none lg:justify-start">
+-      {/* Text to Speech */}
++    <div
++      className="group visible flex justify-center gap-0.5 self-end focus-within:outline-none lg:justify-start"
++      data-efaiw-actions={actionsMark}
++    >
++      {/* Text to Speech. EF (chat design #224): on a reply it starts from «⋯» and shows only while it plays. */}
+       {TextToSpeech && !error && !isActiveStreamingMessage && (
+         <MessageAudio
+           index={index}
+@@ -244,11 +259,14 @@ const HoverButtons = ({
+           content={extractMessageContent(message)}
+           renderButton={(props) => (
+             <HoverButton
++              id={isCreatedByUser ? undefined : readAloudId(message.messageId)}
+               onClick={props.onClick}
+               title={props.title}
+               icon={props.icon}
+               isActive={props.isActive}
+               isLast={isLast}
++              /* Important: upstream shows every `.hover-button` below 1024 px. */
++              className={!isCreatedByUser && !props.isActive ? '!hidden' : undefined}
+               dataTestId={isLast && !isCreatedByUser ? 'read-aloud-button' : undefined}
+             />
+           )}
+@@ -280,8 +298,40 @@ const HoverButtons = ({
+         <DownloadReply message={message} title={conversation.title} isLast={isLast} />
+       )}
+ 
++      {/* EF (chat design #224): a reply's toolbar is copy, download, regenerate, rating and «⋯»; editing and forking a
++          reply moved into «⋯». */}
++      {!isCreatedByUser && !isSubagentThreadReadOnly && regenerateEnabled && !error && (
++        <HoverButton
++          onClick={regenerate}
++          title={localize('com_ui_regenerate')}
++          icon={<RegenerateIcon size="19" />}
++          isLast={isLast}
++          dataTestId={isLast ? 'regenerate-generation-button' : undefined}
++          className="active"
++        />
++      )}
++
++      {!isCreatedByUser && !error && !isActiveStreamingMessage && handleFeedback != null && (
++        <Feedback handleFeedback={handleFeedback} feedback={message.feedback} isLast={isLast} />
++      )}
++
++      {!isCreatedByUser && !isActiveStreamingMessage && (
++        <EfReplyMore
++          message={message}
++          conversation={conversation}
++          isLast={isLast}
++          canReadAloud={TextToSpeech && !error}
++          canEdit={!isSubagentThreadReadOnly && isEditableEndpoint && !hideEditButton}
++          onEdit={onEdit}
++          canFork={!error && forkingSupported}
++          canRegenerate={!isSubagentThreadReadOnly && regenerateEnabled && !error}
++          regenerate={regenerate}
++          getLatestMessageId={getLatestMessageId ?? (() => latestMessageId)}
++        />
++      )}
++
+       {/* Edit Button */}
+-      {!isSubagentThreadReadOnly && isEditableEndpoint && !hideEditButton && (
++      {isCreatedByUser && !isSubagentThreadReadOnly && isEditableEndpoint && !hideEditButton && (
+         <HoverButton
+           id={`edit-${message.messageId}`}
+           onClick={onEdit}
+@@ -294,7 +344,7 @@ const HoverButtons = ({
+       )}
+ 
+       {/* Fork Button */}
+-      {!error && !isActiveStreamingMessage && (
++      {isCreatedByUser && !error && !isActiveStreamingMessage && (
+         <Fork
+           messageId={message.messageId}
+           conversationId={conversation.conversationId}
+@@ -304,11 +354,6 @@ const HoverButtons = ({
+         />
+       )}
+ 
+-      {/* Feedback Buttons */}
+-      {!error && !isActiveStreamingMessage && !isCreatedByUser && handleFeedback != null && (
+-        <Feedback handleFeedback={handleFeedback} feedback={message.feedback} isLast={isLast} />
+-      )}
+-
+       {/* Retry Button (labelled, for a failed reply) */}
+       {!isSubagentThreadReadOnly && regenerateEnabled && error && (
+         <button
+@@ -323,7 +368,7 @@ const HoverButtons = ({
+       )}
+ 
+       {/* Regenerate Button */}
+-      {!isSubagentThreadReadOnly && regenerateEnabled && !error && (
++      {isCreatedByUser && !isSubagentThreadReadOnly && regenerateEnabled && !error && (
+         <HoverButton
+           onClick={regenerate}
+           title={localize('com_ui_regenerate')}
+@@ -345,6 +390,12 @@ const HoverButtons = ({
+           className="active"
+         />
+       )}
++
++      {!isCreatedByUser && modelLabel && !isActiveStreamingMessage && (
++        <span className="efaiw-reply-model" dir="auto">
++          {modelLabel}
++        </span>
++      )}
+     </div>
+   );
+ };
+diff --git a/client/src/components/Chat/Messages/__tests__/EfReplyExtras.spec.tsx b/client/src/components/Chat/Messages/__tests__/EfReplyExtras.spec.tsx
+new file mode 100644
+index 0000000..cda447d
+--- /dev/null
++++ b/client/src/components/Chat/Messages/__tests__/EfReplyExtras.spec.tsx
+@@ -0,0 +1,85 @@
++import React from 'react';
++import { render, screen, fireEvent } from '@testing-library/react';
++import { ContentTypes } from 'librechat-data-provider';
++import type { TMessage } from 'librechat-data-provider';
++import { EfDocBar, EfFollowUps } from '../EfReplyExtras';
++
++jest.mock('~/hooks', () => ({
++  useLocalize: () => (key: string, vars?: Record<string, string>) =>
++    vars ? `${key}:${Object.values(vars).join(',')}` : key,
++}));
++
++const mockDocx = jest.fn();
++const mockPdf = jest.fn();
++jest.mock('../useDocumentDownloads', () => ({
++  __esModule: true,
++  default: () => [
++    { id: 'download-docx', ariaLabel: 'Word', onClick: mockDocx },
++    { id: 'download-pdf', ariaLabel: 'PDF', onClick: mockPdf },
++  ],
++}));
++
++const reply = (text: string, extra: Partial<TMessage> = {}) =>
++  ({
++    messageId: 'm1',
++    isCreatedByUser: false,
++    text: '',
++    content: [{ type: ContentTypes.TEXT, text }],
++    ...extra,
++  }) as unknown as TMessage;
++
++const BLOCK = '\n\n```efaiw-followups\n{"q":["قارن بالعام الماضي"],"a":["letter","shorten"]}\n```';
++
++describe('EfFollowUps (chat design #224)', () => {
++  it('shows the questions Baseer wrote and sends them as they read', () => {
++    const ask = jest.fn();
++    render(<EfFollowUps message={reply(`> **الخلاصة:** تحسّن.${BLOCK}`)} ask={ask} />);
++    fireEvent.click(screen.getByRole('button', { name: 'قارن بالعام الماضي' }));
++    expect(ask).toHaveBeenCalledWith({ text: 'قارن بالعام الماضي' });
++  });
++
++  it("sends an action as a short request in the reply's language", () => {
++    const ask = jest.fn();
++    render(<EfFollowUps message={reply(`> **الخلاصة:** تحسّن.${BLOCK}`)} ask={ask} />);
++    fireEvent.click(screen.getByRole('button', { name: 'com_efaiw_fu_letter' }));
++    expect(ask).toHaveBeenCalledWith({ text: 'حوّل هذا الرد إلى خطاب رسمي.' });
++  });
++
++  it('falls back to rules without the block, and offers Arabic for an English reply', () => {
++    const ask = jest.fn();
++    render(<EfFollowUps message={reply('Yes, two stations in Riyadh.')} ask={ask} />);
++    expect(screen.queryByRole('button', { name: /قارن/ })).toBeNull();
++    fireEvent.click(screen.getByRole('button', { name: 'com_efaiw_fu_translate_ar' }));
++    expect(ask).toHaveBeenCalledWith({ text: 'Translate the reply into Arabic.' });
++  });
++
++  it('shows nothing under a failed reply', () => {
++    const failed = {
++      messageId: 'm2',
++      isCreatedByUser: false,
++      content: [
++        { type: ContentTypes.TEXT, text: 'جزء' },
++        { type: ContentTypes.ERROR, error: 'x' },
++      ],
++    } as unknown as TMessage;
++    const { container } = render(<EfFollowUps message={failed} ask={jest.fn()} />);
++    expect(container).toBeEmptyDOMElement();
++  });
++});
++
++describe('EfDocBar (chat design #224)', () => {
++  it('offers Word and PDF under a letter, named after the chat', () => {
++    const letter = reply('**الموضوع:** ملخص التقرير\n\nسعادة المدير المحترم،\nنرفع لكم الملخص.');
++    render(<EfDocBar message={letter} title="ملخص جودة الهواء" />);
++    expect(screen.getByText(/\.docx$/)).toBeInTheDocument();
++    fireEvent.click(screen.getByRole('button', { name: 'com_efaiw_docbar_download:Word' }));
++    expect(mockDocx).toHaveBeenCalled();
++    fireEvent.click(screen.getByRole('button', { name: 'com_efaiw_docbar_download:PDF' }));
++    expect(mockPdf).toHaveBeenCalled();
++  });
++
++  it('stays away from an ordinary answer', () => {
++    const { container } = render(<EfDocBar message={reply('نعم، محطتان.')} title="t" />);
++    expect(container).toBeEmptyDOMElement();
++  });
++});
+diff --git a/client/src/components/Chat/Messages/__tests__/HoverButtons.spec.tsx b/client/src/components/Chat/Messages/__tests__/HoverButtons.spec.tsx
+index 55cd394..3fce841 100644
+--- a/client/src/components/Chat/Messages/__tests__/HoverButtons.spec.tsx
++++ b/client/src/components/Chat/Messages/__tests__/HoverButtons.spec.tsx
+@@ -1,7 +1,7 @@
+ import React from 'react';
+ import { MemoryRouter } from 'react-router-dom';
+ import { RecoilRoot, type MutableSnapshot } from 'recoil';
+-import { act, render, screen } from '@testing-library/react';
++import { act, fireEvent, render, screen } from '@testing-library/react';
+ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+ import {
+   Constants,
+@@ -68,20 +68,23 @@ function renderHoverButtons({
+         >
+           <MessagesSubmittingContext.Provider value={isSubmitting}>
+             <MemoryRouter>
+-              <HoverButtons
+-                index={0}
+-                isLast={isLast}
+-                isEditing={false}
+-                message={message}
+-                conversation={targetConversation}
+-                enterEdit={jest.fn()}
+-                regenerate={jest.fn()}
+-                handleContinue={jest.fn()}
+-                copyToClipboard={jest.fn()}
+-                getCanCopy={getCanCopy}
+-                latestMessageId={latestMessageId}
+-                handleFeedback={handleFeedback}
+-              />
++              {/* EF (#224): reply menus portal into the page's <main>. */}
++              <main>
++                <HoverButtons
++                  index={0}
++                  isLast={isLast}
++                  isEditing={false}
++                  message={message}
++                  conversation={targetConversation}
++                  enterEdit={jest.fn()}
++                  regenerate={jest.fn()}
++                  handleContinue={jest.fn()}
++                  copyToClipboard={jest.fn()}
++                  getCanCopy={getCanCopy}
++                  latestMessageId={latestMessageId}
++                  handleFeedback={handleFeedback}
++                />
++              </main>
+             </MemoryRouter>
+           </MessagesSubmittingContext.Provider>
+         </MessagesOperationsContext.Provider>
+@@ -92,6 +95,18 @@ function renderHoverButtons({
+   return container;
+ }
+ 
++/** EF (chat design #224): a reply's editor moved into «⋯». Opens that menu and says whether it offers editing. */
++function replyOffersEdit(): boolean {
++  const more = screen.queryByTestId('reply-more-button');
++  if (more == null) {
++    return false;
++  }
++  act(() => {
++    fireEvent.click(more);
++  });
++  return document.getElementById('reply-more-edit') != null;
++}
++
+ describe('HoverButtons edit affordance', () => {
+   it('keeps edit available on an earlier message while a generation is in flight', () => {
+     const container = renderHoverButtons({ isSubmitting: true });
+@@ -369,7 +384,7 @@ describe('HoverButtons edit affordance', () => {
+       ],
+     } as TMessage;
+ 
+-    const container = renderHoverButtons({
++    renderHoverButtons({
+       isSubmitting: false,
+       message: summarizedResponse,
+       isLast: true,
+@@ -377,7 +392,7 @@ describe('HoverButtons edit affordance', () => {
+       thread: [userMessage, summarizedResponse],
+     });
+ 
+-    expect(container.querySelector(`#edit-${summarizedResponse.messageId}`)).not.toBeNull();
++    expect(replyOffersEdit()).toBe(true);
+     expect(screen.getByTestId('regenerate-generation-button')).toBeEnabled();
+     expect(screen.getByTestId('continue-generation-button')).toBeEnabled();
+   });
+@@ -403,7 +418,7 @@ describe('HoverButtons edit affordance', () => {
+       finish_reason: 'length',
+     } as TMessage;
+ 
+-    const container = renderHoverButtons({
++    renderHoverButtons({
+       isSubmitting: false,
+       message: chainedReply,
+       isLast: true,
+@@ -411,7 +426,7 @@ describe('HoverButtons edit affordance', () => {
+       thread: [userMessage, firstReply, chainedReply],
+     });
+ 
+-    expect(container.querySelector(`#edit-${chainedReply.messageId}`)).not.toBeNull();
++    expect(replyOffersEdit()).toBe(true);
+     expect(screen.queryByTestId('regenerate-generation-button')).toBeNull();
+     expect(screen.queryByTestId('continue-generation-button')).toBeNull();
+   });
+@@ -429,7 +444,7 @@ describe('HoverButtons edit affordance', () => {
+       finish_reason: 'length',
+     } as TMessage;
+ 
+-    const container = renderHoverButtons({
++    renderHoverButtons({
+       isSubmitting: false,
+       message: rootReply,
+       isLast: true,
+@@ -438,7 +453,7 @@ describe('HoverButtons edit affordance', () => {
+     });
+ 
+     /** Its stored text is still saved directly, so the editor stays. */
+-    expect(container.querySelector(`#edit-${rootReply.messageId}`)).not.toBeNull();
++    expect(replyOffersEdit()).toBe(true);
+     expect(screen.queryByTestId('regenerate-generation-button')).toBeNull();
+     expect(screen.queryByTestId('continue-generation-button')).toBeNull();
+   });
+@@ -467,7 +482,7 @@ describe('HoverButtons edit affordance', () => {
+       ],
+     } as TMessage;
+ 
+-    const container = renderHoverButtons({
++    renderHoverButtons({
+       isSubmitting: false,
+       message: artifactReply,
+       isLast: true,
+@@ -476,7 +491,7 @@ describe('HoverButtons edit affordance', () => {
+     });
+ 
+     expect(screen.getByTestId('copy-response-button')).not.toBeNull();
+-    expect(container.querySelector(`#edit-${artifactReply.messageId}`)).toBeNull();
++    expect(replyOffersEdit()).toBe(false);
+     expect(screen.queryByTestId('regenerate-generation-button')).toBeNull();
+   });
+ 
+@@ -492,7 +507,7 @@ describe('HoverButtons edit affordance', () => {
+       content: [{ type: ContentTypes.ERROR, error: 'failed' }],
+     } as TMessage;
+ 
+-    const container = renderHoverButtons({
++    renderHoverButtons({
+       isSubmitting: false,
+       message: toolOnlyReply,
+       isLast: true,
+@@ -500,7 +515,7 @@ describe('HoverButtons edit affordance', () => {
+       thread: [userMessage, toolOnlyReply],
+     });
+ 
+-    expect(container.querySelector(`#edit-${toolOnlyReply.messageId}`)).not.toBeNull();
++    expect(replyOffersEdit()).toBe(true);
+     expect(screen.getByTestId('regenerate-generation-button')).toBeEnabled();
+   });
+ 
+@@ -523,14 +538,14 @@ describe('HoverButtons edit affordance', () => {
+       ],
+     } as TMessage;
+ 
+-    const container = renderHoverButtons({
++    renderHoverButtons({
+       isSubmitting: false,
+       message: compactionMessage,
+       isLast: true,
+       latestMessageId: compactionMessage.messageId,
+     });
+ 
+-    expect(container.querySelector(`#edit-${compactionMessage.messageId}`)).not.toBeNull();
++    expect(replyOffersEdit()).toBe(true);
+     expect(screen.getByTestId('regenerate-generation-button')).toBeEnabled();
+   });
+ });
+diff --git a/client/src/components/Chat/Messages/ui/MessageRender.tsx b/client/src/components/Chat/Messages/ui/MessageRender.tsx
+index 35f98a2..e56ebc1 100644
+--- a/client/src/components/Chat/Messages/ui/MessageRender.tsx
++++ b/client/src/components/Chat/Messages/ui/MessageRender.tsx
+@@ -17,6 +17,7 @@ import MessageContent from '~/components/Chat/Messages/Content/MessageContent';
+ import { useLocalize, useMessageActions, useContentMetadata } from '~/hooks';
+ import SiblingSwitch from '~/components/Chat/Messages/SiblingSwitch';
+ import HoverButtons from '~/components/Chat/Messages/HoverButtons';
++import { EfDocBar, EfFollowUps } from '~/components/Chat/Messages/EfReplyExtras';
+ import MessageRow from '~/components/Chat/Messages/ui/MessageRow';
+ import MessageIcon from '~/components/Chat/Messages/MessageIcon';
+ import Wakeup from '~/components/Chat/Messages/Content/Wakeup';
+@@ -179,49 +180,60 @@ const MessageRender = memo(function MessageRender({
+       isEditing={edit}
+       systemLabel={wakeupDisplay != null && !edit ? localize('com_ui_system_event') : undefined}
+       footer={
+-        <SubRow classes={cn(messageFooterClasses, msg.isCreatedByUser && 'justify-end')}>
+-          {/* The reading holds the column start: it takes over the slot the streaming
++        <>
++          {/* EF (chat design #224): a letter or minutes gets its Word/PDF bar above the actions. */}
++          {msg.isCreatedByUser !== true && !(isSubmitting && isLatestMessage) && (
++            <EfDocBar message={msg} title={conversation?.title} />
++          )}
++          <SubRow classes={cn(messageFooterClasses, msg.isCreatedByUser && 'justify-end')}>
++            {/* The reading holds the column start: it takes over the slot the streaming
+               dot vacates, so the retry navigation beside it — whose width the footer
+               reserves whether or not hover has revealed it — must never push the
+               timer inboard of that column. */}
+-          {shouldShowElapsed({
+-            isSubmitting,
+-            isLatestMessage,
+-            isCreatedByUser: msg.isCreatedByUser,
+-            siblingIdx,
+-            siblingCount,
+-          }) && <Elapsed index={index} />}
+-          {/* A user turn is right-aligned, so its retry navigation belongs at the
++            {shouldShowElapsed({
++              isSubmitting,
++              isLatestMessage,
++              isCreatedByUser: msg.isCreatedByUser,
++              siblingIdx,
++              siblingCount,
++            }) && <Elapsed index={index} />}
++            {/* A user turn is right-aligned, so its retry navigation belongs at the
+               outer edge under the bubble rather than inboard of the actions.
+ 
+               While the answer is generating every other action is withheld, which
+               would otherwise leave this counter sitting alone under a half-written
+               response. It reveals on hover there, like the actions it sits with. */}
+-          <SiblingSwitch
+-            siblingIdx={siblingIdx}
+-            siblingCount={siblingCount}
+-            setSiblingIdx={setSiblingIdx}
+-            className={cn(
+-              msg.isCreatedByUser === true && 'order-last',
+-              isSubmitting && isLatestMessage && revealOnRowHoverClasses,
+-            )}
+-          />
+-          <HoverButtons
+-            index={index}
+-            isEditing={edit}
+-            message={msg}
+-            enterEdit={enterEdit}
+-            conversation={conversation ?? null}
+-            regenerate={handleRegenerateMessage}
+-            copyToClipboard={copyToClipboard}
+-            getCanCopy={getCanCopy}
+-            handleContinue={handleContinue}
+-            latestMessageId={latestMessageId}
+-            getLatestMessageId={getLatestMessageId}
+-            handleFeedback={handleFeedback}
+-            isLast={isLast}
+-          />
+-        </SubRow>
++            <SiblingSwitch
++              siblingIdx={siblingIdx}
++              siblingCount={siblingCount}
++              setSiblingIdx={setSiblingIdx}
++              className={cn(
++                msg.isCreatedByUser === true && 'order-last',
++                isSubmitting && isLatestMessage && revealOnRowHoverClasses,
++              )}
++            />
++            <HoverButtons
++              index={index}
++              isEditing={edit}
++              message={msg}
++              enterEdit={enterEdit}
++              conversation={conversation ?? null}
++              regenerate={handleRegenerateMessage}
++              copyToClipboard={copyToClipboard}
++              getCanCopy={getCanCopy}
++              handleContinue={handleContinue}
++              latestMessageId={latestMessageId}
++              getLatestMessageId={getLatestMessageId}
++              handleFeedback={handleFeedback}
++              isLast={isLast}
++              modelLabel={messageLabel ?? undefined}
++            />
++          </SubRow>
++          {/* EF (chat design #224): suggestions under the latest finished reply only. */}
++          {isLast && msg.isCreatedByUser !== true && !isSubmitting && msg.error !== true && (
++            <EfFollowUps message={msg} ask={ask} />
++          )}
++        </>
+       }
+     >
+       <MessageContext.Provider value={messageContextValue}>
+diff --git a/client/src/components/Chat/Messages/ui/MessageRow.tsx b/client/src/components/Chat/Messages/ui/MessageRow.tsx
+index 616b79d..86113a7 100644
+--- a/client/src/components/Chat/Messages/ui/MessageRow.tsx
++++ b/client/src/components/Chat/Messages/ui/MessageRow.tsx
+@@ -61,9 +61,11 @@ export default function MessageRow({
+   const isSystem = systemLabel != null && systemLabel !== '';
+   const isUserSide = isCreatedByUser || isSystem;
+   /** EF (#115): on touch screens the user's message actions stay hidden until the bubble is tapped (brand.css);
+-   *  pointer screens keep the reveal on hover. */
++   *  pointer screens keep the reveal on hover. EF (chat design #224): an older reply's actions too; the latest
++   *  reply keeps them in view. */
+   const [actionsShown, setActionsShown] = useState(false);
+   const isUserBubble = isCreatedByUser && !isSystem && !isEditing;
++  const isReply = !isUserSide && !isEditing && !hasParallelContent;
+ 
+   return (
+     <div
+@@ -86,7 +88,7 @@ export default function MessageRow({
+           !hasParallelContent &&
+             isUserSide &&
+             cn('ml-auto items-end', !isEditing && 'w-fit max-w-[90%] sm:max-w-[85%]'),
+-          isUserBubble && actionsShown && 'efaiw-actions-shown',
++          (isUserBubble || isReply) && actionsShown && 'efaiw-actions-shown',
+           !hasParallelContent && !isUserSide && !isEditing && 'flex-1',
+         )}
+       >
+@@ -135,7 +137,21 @@ export default function MessageRow({
+                 : 'w-full',
+             )}
+             data-testid="message-body"
+-            onClick={isUserBubble ? () => setActionsShown((shown) => !shown) : undefined}
++            onClick={
++              isUserBubble || isReply
++                ? (e) => {
++                    /* A tap on a link, a button or selected text is not a tap on the message. */
++                    const target = e.target as HTMLElement;
++                    if (
++                      target.closest('a, button, input, textarea, summary, [role="button"]') ||
++                      (window.getSelection()?.toString() ?? '') !== ''
++                    ) {
++                      return;
++                    }
++                    setActionsShown((shown) => !shown);
++                  }
++                : undefined
++            }
+           >
+             {children}
+           </div>
+diff --git a/client/src/components/Chat/Messages/useDocumentDownloads.tsx b/client/src/components/Chat/Messages/useDocumentDownloads.tsx
+index 78e4c5f..4f7aef6 100644
+--- a/client/src/components/Chat/Messages/useDocumentDownloads.tsx
++++ b/client/src/components/Chat/Messages/useDocumentDownloads.tsx
+@@ -1,5 +1,4 @@
+ import { useEffect, useMemo } from 'react';
+-import { FileCode, FileSpreadsheet, FileText, Presentation, Printer } from 'lucide-react';
+ import { useToastContext } from '@librechat/client';
+ import { loadEfOfficeAssets } from '~/utils/efaiwBrandAssets';
+ import { markdownToDocx, saveBlob, stripArtifactDirectives } from '~/utils/efaiwDocx';
+@@ -9,10 +8,32 @@ import { openPrintView } from '~/utils/efaiwPrint';
+ import type { MenuItemProps } from '~/common';
+ import { useLocalize } from '~/hooks';
+ 
+-const iconClass = 'size-4 text-text-secondary';
++/** EF (chat design #224): each format as a badge, its name and what it is for. */
++const formatItem = (
++  id: string,
++  badge: string,
++  title: string,
++  hint: string,
++  onClick: MenuItemProps['onClick'],
++): MenuItemProps => ({
++  id,
++  onClick,
++  ariaLabel: title,
++  render: (props) => (
++    <div {...props} data-testid={id}>
++      <span className={`efaiw-fmt efaiw-fmt-${badge.toLowerCase()}`} aria-hidden="true">
++        {badge}
++      </span>
++      <span className="efaiw-fmt-text">
++        <span>{title}</span>
++        <small>{hint}</small>
++      </span>
++    </div>
++  ),
++});
+ 
+ /**
+- * EF (#149): the download choices for a text — a reply (DownloadReply.tsx) or a Markdown document in the side panel
++ * EF (#149, chat design #224): the download choices for a text — a reply (DownloadReply.tsx) or a Markdown document in the side panel
+  * (Artifacts/DownloadArtifact.tsx): Word, PowerPoint, Excel when the text has a table, PDF / print and Markdown. Each
+  * file is built in the browser in the Environment Fund identity (utils/efaiwDocx.ts, efaiwPptx.ts, efaiwXlsx.ts,
+  * efaiwPrint.ts) and named `name`. `onMarkdown` replaces the Markdown item's default save (the panel keeps its own:
+@@ -44,42 +65,22 @@ export default function useDocumentDownloads({
+ 
+   return useMemo(() => {
+     const items: MenuItemProps[] = [
+-      {
+-        label: localize('com_efaiw_download_word'),
+-        icon: <FileText className={iconClass} aria-hidden="true" />,
+-        onClick: async () => {
++      formatItem(
++        'download-docx',
++        'DOCX',
++        localize('com_efaiw_download_word'),
++        localize('com_efaiw_download_word_hint'),
++        async () => {
+           const text = markdown();
+           saveBlob(markdownToDocx(text, name, await loadEfOfficeAssets()), `${name}.docx`);
+         },
+-      },
+-      {
+-        label: localize('com_efaiw_download_pptx'),
+-        icon: <Presentation className={iconClass} aria-hidden="true" />,
+-        onClick: async () => {
+-          const text = markdown();
+-          saveBlob(markdownToPptx(text, name, await loadEfOfficeAssets()), `${name}.pptx`);
+-        },
+-      },
+-    ];
+-    if (hasTable) {
+-      items.push({
+-        label: localize('com_efaiw_download_excel'),
+-        icon: <FileSpreadsheet className={iconClass} aria-hidden="true" />,
+-        onClick: () => {
+-          const workbook = markdownToXlsx(markdown(), name);
+-          if (workbook == null) {
+-            showToast({ message: localize('com_efaiw_excel_no_table'), status: 'warning' });
+-            return;
+-          }
+-          saveBlob(workbook, `${name}.xlsx`);
+-        },
+-      });
+-    }
+-    items.push(
+-      {
+-        label: localize('com_efaiw_download_pdf'),
+-        icon: <Printer className={iconClass} aria-hidden="true" />,
+-        onClick: () => {
++      ),
++      formatItem(
++        'download-pdf',
++        'PDF',
++        localize('com_efaiw_download_pdf'),
++        localize('com_efaiw_download_pdf_hint'),
++        () => {
+           const root = document.documentElement;
+           const opened = openPrintView(markdown(), name, {
+             print: localize('com_efaiw_print_save'),
+@@ -90,17 +91,48 @@ export default function useDocumentDownloads({
+             showToast({ message: localize('com_efaiw_print_blocked'), status: 'warning' });
+           }
+         },
+-      },
+-      {
+-        label: localize('com_efaiw_download_markdown'),
+-        icon: <FileCode className={iconClass} aria-hidden="true" />,
+-        onClick:
+-          onMarkdown ??
++      ),
++      formatItem(
++        'download-pptx',
++        'PPTX',
++        localize('com_efaiw_download_pptx'),
++        localize('com_efaiw_download_pptx_hint'),
++        async () => {
++          const text = markdown();
++          saveBlob(markdownToPptx(text, name, await loadEfOfficeAssets()), `${name}.pptx`);
++        },
++      ),
++    ];
++    if (hasTable) {
++      items.push(
++        formatItem(
++          'download-xlsx',
++          'XLSX',
++          localize('com_efaiw_download_excel'),
++          localize('com_efaiw_download_excel_hint'),
++          () => {
++            const workbook = markdownToXlsx(markdown(), name);
++            if (workbook == null) {
++              showToast({ message: localize('com_efaiw_excel_no_table'), status: 'warning' });
++              return;
++            }
++            saveBlob(workbook, `${name}.xlsx`);
++          },
++        ),
++      );
++    }
++    items.push(
++      formatItem(
++        'download-md',
++        'MD',
++        localize('com_efaiw_download_markdown'),
++        localize('com_efaiw_download_markdown_hint'),
++        onMarkdown ??
+           (() => {
+             const text = stripArtifactDirectives(markdown());
+             saveBlob(new Blob([text], { type: 'text/markdown;charset=utf-8' }), `${name}.md`);
+           }),
+-      },
++      ),
+     );
+     return items;
+   }, [localize, showToast, markdown, name, hasTable, onMarkdown]);
+diff --git a/client/src/components/EfPages/EfFilesPage.tsx b/client/src/components/EfPages/EfFilesPage.tsx
+index 75a382d..5846e60 100644
+--- a/client/src/components/EfPages/EfFilesPage.tsx
++++ b/client/src/components/EfPages/EfFilesPage.tsx
+@@ -1,4 +1,4 @@
+-import { useCallback } from 'react';
++import { useCallback, useMemo } from 'react';
+ import { useRecoilValue } from 'recoil';
+ import { useNavigate } from 'react-router-dom';
+ import { Constants } from 'librechat-data-provider';
+@@ -12,6 +12,7 @@ import {
+   isFilesDraftOwnedByThisTab,
+   setFilesDraft,
+ } from '~/utils';
++import { isSkillFilename } from '~/utils/efaiwSkills';
+ import { useGetFiles } from '~/data-provider';
+ import { useChatContext } from '~/Providers';
+ import EfSectionPage from './EfSectionPage';
+@@ -34,7 +35,12 @@ export default function EfFilesPage() {
+ function FilesTable() {
+   const navigate = useNavigate();
+   const { conversation } = useChatContext();
+-  const { data: files = [] } = useGetFiles<TFile[]>();
++  const { data: allFiles } = useGetFiles<TFile[]>();
++  /* EF (chat design #224): a skill's text, attached when the employee picked it, is not one of their documents. */
++  const files = useMemo(
++    () => (allFiles ?? []).filter((file) => !isSkillFilename(file.filename)),
++    [allFiles],
++  );
+   const saveDrafts = useRecoilValue(store.saveDrafts);
+   const conversationId = conversation?.conversationId ?? Constants.NEW_CONVO;
+   const projectId = conversation?.chatProjectId;
+diff --git a/client/src/components/Messages/ContentRender.tsx b/client/src/components/Messages/ContentRender.tsx
+index e023124..3d474ab 100644
+--- a/client/src/components/Messages/ContentRender.tsx
++++ b/client/src/components/Messages/ContentRender.tsx
+@@ -21,6 +21,7 @@ import { getHeaderHoverLabel } from '~/components/Chat/Messages/ui/HeaderLabel';
+ import ContentParts from '~/components/Chat/Messages/Content/ContentParts';
+ import SiblingSwitch from '~/components/Chat/Messages/SiblingSwitch';
+ import HoverButtons from '~/components/Chat/Messages/HoverButtons';
++import { EfDocBar, EfFollowUps } from '~/components/Chat/Messages/EfReplyExtras';
+ import MessageRow from '~/components/Chat/Messages/ui/MessageRow';
+ import MessageIcon from '~/components/Chat/Messages/MessageIcon';
+ import { showThinkingAtom } from '~/store/showThinking';
+@@ -100,6 +101,7 @@ const ContentRender = memo(function ContentRender({
+     attachments: msg?.attachments,
+   });
+   const {
++    ask,
+     edit,
+     index,
+     agent,
+@@ -185,43 +187,54 @@ const ContentRender = memo(function ContentRender({
+       fullWidth={maximizeChatSpace}
+       isEditing={edit}
+       footer={
+-        <SubRow classes={cn(messageFooterClasses, msg.isCreatedByUser && 'justify-end')}>
+-          {/* The reading holds the column start: it takes over the slot the streaming
++        <>
++          {/* EF (chat design #224): a letter or minutes gets its Word/PDF bar above the actions. */}
++          {msg.isCreatedByUser !== true && !(isSubmitting && isLatestMessage) && (
++            <EfDocBar message={msg} title={conversation?.title} />
++          )}
++          <SubRow classes={cn(messageFooterClasses, msg.isCreatedByUser && 'justify-end')}>
++            {/* The reading holds the column start: it takes over the slot the streaming
+               dot vacates, so the retry navigation beside it — whose width the footer
+               reserves whether or not hover has revealed it — must never push the
+               timer inboard of that column. */}
+-          {shouldShowElapsed({
+-            isSubmitting,
+-            isLatestMessage,
+-            isCreatedByUser: msg.isCreatedByUser,
+-            siblingIdx,
+-            siblingCount,
+-          }) && <Elapsed index={index} />}
+-          {/* While the answer is generating every other action is withheld, which
++            {shouldShowElapsed({
++              isSubmitting,
++              isLatestMessage,
++              isCreatedByUser: msg.isCreatedByUser,
++              siblingIdx,
++              siblingCount,
++            }) && <Elapsed index={index} />}
++            {/* While the answer is generating every other action is withheld, which
+               would otherwise leave this counter sitting alone under a half-written
+               response. It reveals on hover there, like the actions it sits with. */}
+-          <SiblingSwitch
+-            siblingIdx={siblingIdx}
+-            siblingCount={siblingCount}
+-            setSiblingIdx={setSiblingIdx}
+-            className={cn(isSubmitting && isLatestMessage && revealOnRowHoverClasses)}
+-          />
+-          <HoverButtons
+-            index={index}
+-            message={msg}
+-            isEditing={edit}
+-            enterEdit={enterEdit}
+-            conversation={conversation ?? null}
+-            regenerate={handleRegenerateMessage}
+-            copyToClipboard={copyToClipboard}
+-            getCanCopy={getCanCopy}
+-            handleContinue={handleContinue}
+-            latestMessageId={latestMessageId}
+-            getLatestMessageId={getLatestMessageId}
+-            handleFeedback={handleFeedback}
+-            isLast={isLast}
+-          />
+-        </SubRow>
++            <SiblingSwitch
++              siblingIdx={siblingIdx}
++              siblingCount={siblingCount}
++              setSiblingIdx={setSiblingIdx}
++              className={cn(isSubmitting && isLatestMessage && revealOnRowHoverClasses)}
++            />
++            <HoverButtons
++              index={index}
++              message={msg}
++              isEditing={edit}
++              enterEdit={enterEdit}
++              conversation={conversation ?? null}
++              regenerate={handleRegenerateMessage}
++              copyToClipboard={copyToClipboard}
++              getCanCopy={getCanCopy}
++              handleContinue={handleContinue}
++              latestMessageId={latestMessageId}
++              getLatestMessageId={getLatestMessageId}
++              handleFeedback={handleFeedback}
++              isLast={isLast}
++              modelLabel={messageLabel ?? undefined}
++            />
++          </SubRow>
++          {/* EF (chat design #224): suggestions under the latest finished reply only. */}
++          {isLast && msg.isCreatedByUser !== true && !isSubmitting && msg.error !== true && (
++            <EfFollowUps message={msg} ask={ask} />
++          )}
++        </>
+       }
+     >
+       <AuthorContext.Provider value={author}>
+diff --git a/client/src/hooks/Chat/useChatFunctions.ts b/client/src/hooks/Chat/useChatFunctions.ts
+index 18bb4fa..e93397c 100644
+--- a/client/src/hooks/Chat/useChatFunctions.ts
++++ b/client/src/hooks/Chat/useChatFunctions.ts
+@@ -768,7 +768,10 @@ export default function useChatFunctions({
+       ...(compact && { compact: true }),
+       initialResponse,
+       isTemporary,
+-      ephemeralAgent,
++      /* EF (chat design #224): LibreChat's skill tools stop Qwen's built-in search (#213), so a chat never turns them
++         on: a skill the employee picks travels as text (SkillsCommand), and search keeps working. */
++      ephemeralAgent:
++        ephemeralAgent != null ? { ...ephemeralAgent, skills: false } : ephemeralAgent,
+       editedContent,
+       editPrefixLength,
+       addedConvo,
+diff --git a/client/src/hooks/Input/useTextarea.spec.tsx b/client/src/hooks/Input/useTextarea.spec.tsx
+index d5f2fee..04b9f02 100644
+--- a/client/src/hooks/Input/useTextarea.spec.tsx
++++ b/client/src/hooks/Input/useTextarea.spec.tsx
+@@ -112,6 +112,17 @@ jest.mock('~/data-provider', () => ({
+   useInteractionHealthCheck: jest.fn(() => jest.fn(async () => true)),
+ }));
+ 
++/* EF (chat design #224): the placeholder reads whether «$» opens skills. */
++jest.mock('~/hooks/Agents/useGetAgentsConfig', () => ({
++  __esModule: true,
++  default: jest.fn(() => ({ agentsConfig: undefined })),
++}));
++
++jest.mock('~/hooks/Agents/useAgentCapabilities', () => ({
++  __esModule: true,
++  default: jest.fn(() => ({ skillsEnabled: false })),
++}));
++
+ jest.mock('~/Providers/ChatContext', () => ({
+   useChatContext: jest.fn(() => ({
+     index: mockIndex,
+diff --git a/client/src/hooks/Input/useTextarea.ts b/client/src/hooks/Input/useTextarea.ts
+index ba1d9b2..a4c73aa 100644
+--- a/client/src/hooks/Input/useTextarea.ts
++++ b/client/src/hooks/Input/useTextarea.ts
+@@ -44,6 +44,9 @@ import { resolveComposerKeyDown } from '~/utils/shortcuts';
+ import { useChatContext } from '~/Providers/ChatContext';
+ import { globalAudioId } from '~/common';
+ import useHasAccess from '~/hooks/Roles/useHasAccess';
++import useAgentCapabilities from '~/hooks/Agents/useAgentCapabilities';
++import useGetAgentsConfig from '~/hooks/Agents/useGetAgentsConfig';
++import { isSkillFilename } from '~/utils/efaiwSkills';
+ import { useLocalize } from '~/hooks';
+ import store from '~/store';
+ 
+@@ -74,6 +77,14 @@ export default function useTextarea({
+ }) {
+   const localize = useLocalize();
+   const slashCommandEnabled = useRecoilValue(store.slashCommand);
++  const dollarCommandEnabled = useRecoilValue(store.dollarCommand);
++  const isTemporary = useRecoilValue(store.isTemporary);
++  const hasAccessToSkills = useHasAccess({
++    permissionType: PermissionTypes.SKILLS,
++    permission: Permissions.USE,
++  });
++  const { agentsConfig } = useGetAgentsConfig();
++  const { skillsEnabled } = useAgentCapabilities(agentsConfig?.capabilities);
+   const hasAccessToPrompts = useHasAccess({
+     permissionType: PermissionTypes.PROMPTS,
+     permission: Permissions.USE,
+@@ -203,6 +214,30 @@ export default function useTextarea({
+         return placeholder;
+       }
+ 
++      /* EF (chat design #224): the empty box says what to do next: write the request for a picked skill, ask about
++         the attached file, or, in a temporary chat, that it will not be kept; otherwise how to reach a ready
++         command («/») and a skill («$»). */
++      const attached = [...files.values()];
++      if (attached.some((file) => isSkillFilename(file.file?.name ?? file.filename))) {
++        return localize('com_efaiw_placeholder_skill');
++      }
++      if (attached.length > 0) {
++        return localize('com_efaiw_placeholder_files');
++      }
++      if (isTemporary) {
++        return localize('com_efaiw_placeholder_temporary');
++      }
++      if (!isAssistant && !isAgent) {
++        const commands = slashCommandEnabled && hasAccessToPrompts;
++        const skills = dollarCommandEnabled && hasAccessToSkills && skillsEnabled;
++        if (commands && skills) {
++          return localize('com_efaiw_placeholder_default');
++        }
++        if (commands) {
++          return localize('com_efaiw_placeholder_commands');
++        }
++      }
++
+       const sender =
+         isAssistant || isAgent
+           ? getEntityName({ name: entityName, isAgent, localize })
+@@ -252,6 +287,11 @@ export default function useTextarea({
+     placeholder,
+     slashCommandEnabled,
+     hasAccessToPrompts,
++    dollarCommandEnabled,
++    hasAccessToSkills,
++    skillsEnabled,
++    isTemporary,
++    files,
+   ]);
+ 
+   const handleKeyDown = useCallback(
+diff --git a/client/src/hooks/Messages/useCopyToClipboard.ts b/client/src/hooks/Messages/useCopyToClipboard.ts
+index ca68595..7cbadb4 100644
+--- a/client/src/hooks/Messages/useCopyToClipboard.ts
++++ b/client/src/hooks/Messages/useCopyToClipboard.ts
+@@ -11,6 +11,7 @@ import {
+   STANDALONE_PATTERN,
+   INVALID_CITATION_REGEX,
+ } from '~/utils/citations';
++import { stripFollowUps } from '~/utils/efaiwFollowUps';
+ import { markdownToHtml } from '~/utils/richtext';
+ import store from '~/store';
+ 
+@@ -51,15 +52,16 @@ function getPartText(part: TMessageContentParts): string {
+   return typeof part.text === 'string' ? part.text : (part.text?.value ?? '');
+ }
+ 
++/* EF (chat design #224): the suggestion block at the end of a reply is never copied. */
+ function getMessageParts({ text, content }: Partial<Pick<TMessage, 'text' | 'content'>>): string[] {
+   if (!Array.isArray(content) || content.length === 0) {
+-    const messageText = text ?? '';
++    const messageText = stripFollowUps(text ?? '');
+     return messageText.length > 0 ? [messageText] : [];
+   }
+ 
+   const parts: string[] = [];
+   for (const part of content) {
+-    const partText = getPartText(part);
++    const partText = stripFollowUps(getPartText(part));
+     if (partText.length > 0) {
+       parts.push(partText);
+     }
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index 88f2d47..b73bca2 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3105,13 +3105,12 @@
+   "com_efaiw_speed_deep": "Deep",
+   "com_efaiw_plus_menu": "Add and tools",
+   "com_efaiw_attach_file": "Attach a file",
+-  "com_efaiw_internet": "Web search",
+   "com_efaiw_download_reply": "Download",
+-  "com_efaiw_download_word": "Word document (.docx)",
+-  "com_efaiw_download_markdown": "Markdown (.md)",
+-  "com_efaiw_download_pdf": "PDF / Print",
+-  "com_efaiw_download_pptx": "PowerPoint (.pptx)",
+-  "com_efaiw_download_excel": "Excel workbook (.xlsx)",
++  "com_efaiw_download_word": "Word",
++  "com_efaiw_download_markdown": "Markdown",
++  "com_efaiw_download_pdf": "PDF",
++  "com_efaiw_download_pptx": "PowerPoint",
++  "com_efaiw_download_excel": "Excel",
+   "com_efaiw_excel_no_table": "There is no table to export to Excel.",
+   "com_efaiw_artifact_version_of": "Version {{0}} of {{1}}",
+   "com_efaiw_artifact_switch": "Outputs in this chat",
+@@ -3169,5 +3168,62 @@
+   "com_efaiw_new_agent": "New agent",
+   "com_efaiw_connectors": "Connectors",
+   "com_efaiw_back_to": "Back to {{0}}",
+-  "com_efaiw_breadcrumb": "Breadcrumb"
++  "com_efaiw_breadcrumb": "Breadcrumb",
++  "com_efaiw_attach_file_hint": "From your device",
++  "com_efaiw_from_documents": "From documents",
++  "com_efaiw_from_documents_hint": "Your files in Baseer",
++  "com_efaiw_ready_command": "Ready command",
++  "com_efaiw_ready_command_hint": "The fund's official templates",
++  "com_efaiw_skill": "Skill",
++  "com_efaiw_skill_hint": "Specific expertise for your message",
++  "com_efaiw_web_always": "Web search runs by itself whenever your question needs it.",
++  "com_efaiw_no_internet": "No internet",
++  "com_efaiw_no_internet_restore": "Turn web search back on for this chat",
++  "com_efaiw_placeholder_default": "Ask Baseer, or type / for a ready command and $ for a skill",
++  "com_efaiw_placeholder_commands": "Ask Baseer, or type / for a ready command",
++  "com_efaiw_placeholder_files": "Ask about the attached file…",
++  "com_efaiw_placeholder_skill": "Write your request, e.g. Turn my notes into minutes",
++  "com_efaiw_placeholder_temporary": "Ask Baseer. This chat won't be saved",
++  "com_efaiw_skills_howto_title": "How to use a skill",
++  "com_efaiw_skills_howto_1": "Pick it here, or type $ and its name.",
++  "com_efaiw_skills_howto_2": "Write your request as usual, e.g. “Turn my notes into minutes”.",
++  "com_efaiw_skills_howto_3": "Baseer applies it to this message, and it shows on it.",
++  "com_efaiw_skills_manage": "Manage skills",
++  "com_efaiw_skills_create": "Create a skill",
++  "com_efaiw_skill_auto": "Automatic",
++  "com_efaiw_skill_auto_hint": "Applied by itself to documents, slides and tables",
++  "com_efaiw_skill_attach_error": "Couldn't attach the skill. Try again.",
++  "com_efaiw_skill_chip": "Skill: {{0}}",
++  "com_efaiw_skill_remove": "Remove the skill {{0}}",
++  "com_efaiw_pasted_text": "Pasted text",
++  "com_efaiw_speed_deep_noweb": "Doesn't search the web for now",
++  "com_efaiw_reply_more": "More",
++  "com_efaiw_share_chat": "Share chat",
++  "com_efaiw_share_chat_hint": "Employees only",
++  "com_efaiw_read_aloud": "Read aloud",
++  "com_efaiw_edit_reply": "Edit reply",
++  "com_efaiw_fork_reply": "Fork to a new chat",
++  "com_efaiw_download_title": "Download reply",
++  "com_efaiw_download_subtitle": "{{0}} · in the fund's identity",
++  "com_efaiw_download_word_hint": "To edit and send officially",
++  "com_efaiw_download_pdf_hint": "To share and print",
++  "com_efaiw_download_pptx_hint": "As slides",
++  "com_efaiw_download_excel_hint": "The reply's tables only",
++  "com_efaiw_download_markdown_hint": "Formatted text for other tools",
++  "com_efaiw_docbar_hint": "Document ready to download",
++  "com_efaiw_docbar_download": "Download as {{0}}",
++  "com_efaiw_fu_title": "Suggestions",
++  "com_efaiw_fu_letter": "Formal letter",
++  "com_efaiw_fu_email": "Email",
++  "com_efaiw_fu_proofread": "Proofread",
++  "com_efaiw_fu_shorten": "Shorten",
++  "com_efaiw_fu_table": "Table",
++  "com_efaiw_fu_explain": "Explain more",
++  "com_efaiw_fu_translate_en": "In English",
++  "com_efaiw_fu_translate_ar": "In Arabic",
++  "com_efaiw_skills_tip_title": "New: skills",
++  "com_efaiw_skills_tip_body": "Type $ or tap + then “Skill”, pick an expertise such as “Writing minutes”, then write your request as usual.",
++  "com_efaiw_skills_tip_ok": "Got it",
++  "com_efaiw_skill_brand": "EF brand identity",
++  "com_efaiw_redo_with": "Retry with {{0}}"
+ }
+diff --git a/client/src/utils/__tests__/efaiwFollowUps.spec.ts b/client/src/utils/__tests__/efaiwFollowUps.spec.ts
+new file mode 100644
+index 0000000..43d58ad
+--- /dev/null
++++ b/client/src/utils/__tests__/efaiwFollowUps.spec.ts
+@@ -0,0 +1,67 @@
++import {
++  followUpsFor,
++  isDocumentReply,
++  parseFollowUpsBlock,
++  replyLanguage,
++  ruleActions,
++  stripFollowUps,
++} from '../efaiwFollowUps';
++
++const BLOCK =
++  '```efaiw-followups\n{"q":["ما أسباب ارتفاع الجسيمات؟","قارن بالعام الماضي"],"a":["letter","shorten"]}\n```';
++const SUMMARY =
++  '> **الخلاصة:** تحسّنت جودة الهواء 6٪.\n\n## التفاصيل\n- بند أول\n- بند ثانٍ\n- بند ثالث';
++
++describe('efaiwFollowUps (chat design #224)', () => {
++  it('reads the block Baseer writes at the end of a reply', () => {
++    expect(parseFollowUpsBlock(`${SUMMARY}\n\n${BLOCK}`)).toEqual({
++      questions: ['ما أسباب ارتفاع الجسيمات؟', 'قارن بالعام الماضي'],
++      actions: ['letter', 'shorten'],
++    });
++  });
++
++  it('removes the block from what is shown, copied, downloaded and shared, also while it streams', () => {
++    expect(stripFollowUps(`${SUMMARY}\n\n${BLOCK}`)).toBe(SUMMARY);
++    expect(stripFollowUps(`${SUMMARY}\n\n\`\`\`efaiw-followups\n{"q":["ما أسب`)).toBe(SUMMARY);
++    expect(stripFollowUps(SUMMARY)).toBe(SUMMARY);
++    expect(stripFollowUps(`${SUMMARY}\n\n\`\`\`efai`)).toBe(SUMMARY);
++    const code = 'مثال:\n```js\nconst a = 1;\n```';
++    expect(stripFollowUps(code)).toBe(code);
++    expect(stripFollowUps('نص\n```express')).toBe('نص\n```express');
++  });
++
++  it('keeps only actions from the fixed list, at most two, and short questions, at most three', () => {
++    const long = 'س'.repeat(120);
++    const text = `نص\n\`\`\`efaiw-followups\n{"q":["أ","ب","ج","د","${long}"],"a":["delete_all","letter","letter","email","table"]}\n\`\`\``;
++    expect(parseFollowUpsBlock(text)).toEqual({
++      questions: ['أ', 'ب', 'ج'],
++      actions: ['letter', 'email'],
++    });
++  });
++
++  it('ignores a malformed or empty block', () => {
++    expect(parseFollowUpsBlock('نص\n```efaiw-followups\n{q: [}\n```')).toBeNull();
++    expect(parseFollowUpsBlock('نص\n```efaiw-followups\n{"q":[],"a":[]}\n```')).toBeNull();
++    expect(parseFollowUpsBlock('نص بلا كتلة')).toBeNull();
++  });
++
++  it('falls back to rules: a summary with a table suggests a letter, a letter suggests email and proofreading', () => {
++    const table = '## ملخص\n| المؤشر | القيمة |\n|---|---|\n| PM2.5 | 35 |\n- أ\n- ب\n- ج';
++    expect(ruleActions(table)).toEqual(['letter', 'translate']);
++    const letter = '**الموضوع:** ملخص التقرير\n\nسعادة المدير المحترم،\nنرفع لكم الملخص.';
++    expect(isDocumentReply(letter)).toBe(true);
++    expect(ruleActions(letter)).toEqual(['email', 'proofread', 'translate']);
++    expect(ruleActions('نعم، يشمل التقرير محطتين في الرياض.')).toEqual(['explain', 'translate']);
++  });
++
++  it('uses the model block when valid and the rules otherwise', () => {
++    expect(followUpsFor(`${SUMMARY}\n${BLOCK}`).fromModel).toBe(true);
++    const ruled = followUpsFor('نعم، يشمل التقرير محطتين.');
++    expect(ruled).toEqual({ questions: [], actions: ['explain', 'translate'], fromModel: false });
++  });
++
++  it("detects the reply's language from its first strong letter", () => {
++    expect(replyLanguage('> **Summary:** Air quality improved.')).toBe('en');
++    expect(replyLanguage('> **الخلاصة:** تحسّنت جودة الهواء.')).toBe('ar');
++  });
++});
+diff --git a/client/src/utils/__tests__/efaiwSkills.spec.ts b/client/src/utils/__tests__/efaiwSkills.spec.ts
+new file mode 100644
+index 0000000..9fc0eab
+--- /dev/null
++++ b/client/src/utils/__tests__/efaiwSkills.spec.ts
+@@ -0,0 +1,34 @@
++import {
++  isSkillFilename,
++  skillContextText,
++  skillFilename,
++  skillTitleFromFilename,
++} from '../efaiwSkills';
++
++describe('efaiwSkills (chat design #224)', () => {
++  it('names the attachment after the skill and reads the title back, also after the server swaps spaces', () => {
++    const name = skillFilename('كتابة المحاضر: بأسلوب الإدارة');
++    expect(name).toBe('كتابة المحاضر بأسلوب الإدارة.efaiw-skill.txt');
++    expect(isSkillFilename(name)).toBe(true);
++    expect(skillTitleFromFilename(name)).toBe('كتابة المحاضر بأسلوب الإدارة');
++    expect(skillTitleFromFilename('كتابة_المحاضر.efaiw-skill.txt')).toBe('كتابة المحاضر');
++  });
++
++  it('tells a skill attachment from any other file', () => {
++    expect(isSkillFilename('pasted-text.txt')).toBe(false);
++    expect(isSkillFilename('report.efaiw-skill.txt.pdf')).toBe(false);
++    expect(isSkillFilename(undefined)).toBe(false);
++    expect(skillFilename('  ')).toBe('skill.efaiw-skill.txt');
++  });
++
++  it('gives Baseer who chose the instructions, then the skill text', () => {
++    const text = skillContextText({
++      title: 'مراجعة الخطابات',
++      description: 'راجع الخطاب قبل إرساله',
++      body: '## الخطوات\n- دقّق اللغة',
++    });
++    expect(text.startsWith('تعليمات مهارة «مراجعة الخطابات»')).toBe(true);
++    expect(text).toContain('راجع الخطاب قبل إرساله');
++    expect(text.trimEnd().endsWith('- دقّق اللغة')).toBe(true);
++  });
++});
+diff --git a/client/src/utils/efaiwFollowUps.ts b/client/src/utils/efaiwFollowUps.ts
+new file mode 100644
+index 0000000..b657ec4
+--- /dev/null
++++ b/client/src/utils/efaiwFollowUps.ts
+@@ -0,0 +1,160 @@
++/**
++ * EF (chat design #224): the suggestions under the latest reply.
++ *
++ * Baseer ends a reply with a hidden block (librechat.yaml asks for it), fenced with its own language so the Markdown
++ * renderer can drop it:
++ *
++ *   ```efaiw-followups
++ *   {"q": ["…", "…"], "a": ["letter", "shorten"]}
++ *   ```
++ *
++ * `q` are follow-up questions written from the reply itself; `a` are actions from the fund's fixed list, so a
++ * suggestion is always something the platform can do. When the block is missing or malformed, the actions come from
++ * simple rules on the reply's text and there are no questions.
++ */
++
++export const FOLLOW_UPS_LANG = 'efaiw-followups';
++
++export type EfFollowUpAction =
++  | 'letter'
++  | 'email'
++  | 'proofread'
++  | 'shorten'
++  | 'table'
++  | 'explain'
++  | 'translate';
++
++export const EF_FOLLOW_UP_ACTIONS: readonly EfFollowUpAction[] = [
++  'letter',
++  'email',
++  'proofread',
++  'shorten',
++  'table',
++  'explain',
++  'translate',
++];
++
++export interface EfFollowUps {
++  questions: string[];
++  actions: EfFollowUpAction[];
++  /** True when Baseer wrote the block; false when the actions come from the rules. */
++  fromModel: boolean;
++}
++
++const MAX_QUESTIONS = 3;
++const MAX_ACTIONS = 2;
++const MAX_QUESTION_CHARS = 90;
++
++/** Complete blocks, and a block still open at the end of the text (while the reply streams). */
++const BLOCK_RE = new RegExp(
++  '(?:^|\\n)[ \\t]*```+[ \\t]*' +
++    FOLLOW_UPS_LANG +
++    '[^\\n]*\\n([\\s\\S]*?)(?:\\n[ \\t]*```+[ \\t]*(?=\\n|$)|$)',
++  'g',
++);
++
++/** A fence at the very end whose language is still being written («```efa»), while the reply streams. */
++const PARTIAL_FENCE_RE = /\n[ \t]*```+[ \t]*(e[a-z-]*)$/;
++
++/** The reply without its suggestion blocks: for display, copy, download and sharing. */
++export function stripFollowUps(text: string): string {
++  if (!text) {
++    return text;
++  }
++  const partial = PARTIAL_FENCE_RE.exec(text);
++  if (partial != null && FOLLOW_UPS_LANG.startsWith(partial[1])) {
++    return text.slice(0, partial.index).replace(/\s+$/, '');
++  }
++  if (!text.includes(FOLLOW_UPS_LANG)) {
++    return text;
++  }
++  return text.replace(BLOCK_RE, '').replace(/\s+$/, '');
++}
++
++const isAction = (value: unknown): value is EfFollowUpAction =>
++  typeof value === 'string' && (EF_FOLLOW_UP_ACTIONS as readonly string[]).includes(value);
++
++/** The block Baseer wrote, validated: questions trimmed and short, actions only from the list. Null if absent. */
++export function parseFollowUpsBlock(text: string): Omit<EfFollowUps, 'fromModel'> | null {
++  if (!text || !text.includes(FOLLOW_UPS_LANG)) {
++    return null;
++  }
++  const matches = [...text.matchAll(BLOCK_RE)];
++  const body = matches.length > 0 ? matches[matches.length - 1][1] : '';
++  const start = body.indexOf('{');
++  const end = body.lastIndexOf('}');
++  if (start < 0 || end <= start) {
++    return null;
++  }
++  let data: unknown;
++  try {
++    data = JSON.parse(body.slice(start, end + 1));
++  } catch {
++    return null;
++  }
++  if (data == null || typeof data !== 'object') {
++    return null;
++  }
++  const { q, a } = data as { q?: unknown; a?: unknown };
++  const questions = (Array.isArray(q) ? q : [])
++    .filter((item): item is string => typeof item === 'string')
++    .map((item) => item.replace(/\s+/g, ' ').trim())
++    .filter((item) => item.length > 0 && item.length <= MAX_QUESTION_CHARS)
++    .slice(0, MAX_QUESTIONS);
++  const actions = [...new Set((Array.isArray(a) ? a : []).filter(isAction))].slice(0, MAX_ACTIONS);
++  if (questions.length === 0 && actions.length === 0) {
++    return null;
++  }
++  return { questions, actions };
++}
++
++/** The reply's language from its first strong letter: an Arabic reply gets Arabic labels and «translate to English». */
++export function replyLanguage(text: string): 'ar' | 'en' {
++  const match = /[A-Za-z؀-ۿ]/.exec(stripFollowUps(text ?? ''));
++  return match != null && /[A-Za-z]/.test(match[0]) ? 'en' : 'ar';
++}
++
++const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
++
++/** A letter, a memo or minutes: opens with a subject line, a formal greeting or a «محضر» title. */
++export function isDocumentReply(text: string): boolean {
++  const head = stripFollowUps(text ?? '')
++    .replace(/^[\s>#*_]+/gm, '')
++    .split('\n')
++    .map((line) => line.trim())
++    .filter(Boolean)
++    .slice(0, 4)
++    .join('\n');
++  return /(^|\n)(الموضوع\s*:|سعادة\s|معالي\s|السلام عليكم|محضر\s|Subject\s*:|Dear\s)/i.test(head);
++}
++
++/** The rules used when the block is missing: up to two actions by the reply's shape, then translation. */
++export function ruleActions(text: string): EfFollowUpAction[] {
++  const body = stripFollowUps(text ?? '');
++  const count = words(body);
++  const hasTable = /^\s*\|.+\|\s*$/m.test(body);
++  const listItems = (body.match(/^\s*(?:[-*•]|\d+[.)])\s+\S/gm) ?? []).length;
++  const document = isDocumentReply(body);
++  const picks: EfFollowUpAction[] = [];
++  const add = (action: EfFollowUpAction, when: boolean) => {
++    if (when && picks.length < MAX_ACTIONS && !picks.includes(action)) {
++      picks.push(action);
++    }
++  };
++  add('letter', !document && (hasTable || listItems >= 3));
++  add('email', document);
++  add('proofread', document);
++  add('shorten', count > 150);
++  add('table', listItems >= 3 && !hasTable);
++  add('explain', count > 0 && count < 60 && !hasTable && listItems < 3 && !document);
++  return [...picks.slice(0, MAX_ACTIONS), 'translate'];
++}
++
++/** What the suggestions under a finished reply are: the model's block when valid, else the rules. */
++export function followUpsFor(text: string): EfFollowUps {
++  const parsed = parseFollowUpsBlock(text);
++  if (parsed != null) {
++    return { ...parsed, fromModel: true };
++  }
++  return { questions: [], actions: ruleActions(text), fromModel: false };
++}
+diff --git a/client/src/utils/efaiwSkills.ts b/client/src/utils/efaiwSkills.ts
+new file mode 100644
+index 0000000..789ca0e
+--- /dev/null
++++ b/client/src/utils/efaiwSkills.ts
+@@ -0,0 +1,52 @@
++/**
++ * EF (chat design #224): a skill the employee picks with «$» travels as a text attachment, not as LibreChat's skill
++ * tools. Qwen stops its built-in web search whenever a request carries tools (#213), so the tool route would cost
++ * every skill chat its search. The attachment is a plain-text context file, the same route a long paste takes, named
++ * `<title>.efaiw-skill.txt` so the composer and the sent message can show it as a «$» skill chip.
++ */
++
++export const SKILL_FILE_SUFFIX = '.efaiw-skill.txt';
++
++/** Platform skills (ai/skills/, ADR-0017) have no display title in LibreChat: the names employees read. */
++export const PLATFORM_SKILL_TITLES: Record<string, 'com_efaiw_skill_brand'> = {
++  'ef-brand-guidelines': 'com_efaiw_skill_brand',
++};
++
++/** The upload keeps the name the browser sends, after the server swaps unsafe punctuation; the suffix survives it. */
++export const isSkillFilename = (filename?: string | null): boolean =>
++  typeof filename === 'string' && filename.toLowerCase().endsWith(SKILL_FILE_SUFFIX);
++
++export function skillFilename(title: string): string {
++  const safe = title
++    .replace(/[\\/:*?"<>|]+/g, ' ')
++    .replace(/\p{Cc}+/gu, ' ')
++    .replace(/\s+/g, ' ')
++    .trim()
++    .slice(0, 80);
++  return `${safe || 'skill'}${SKILL_FILE_SUFFIX}`;
++}
++
++/** The skill's title for the chip, from a name `skillFilename` produced (the server may have turned spaces into _). */
++export function skillTitleFromFilename(filename: string): string {
++  return filename
++    .slice(0, filename.length - SKILL_FILE_SUFFIX.length)
++    .replace(/_+/g, ' ')
++    .trim();
++}
++
++/** What Baseer reads: who the instructions are from, then the skill's own text. */
++export function skillContextText(skill: {
++  title: string;
++  description?: string;
++  body: string;
++}): string {
++  const lines = [
++    `تعليمات مهارة «${skill.title}» اختارها الموظف لهذه الرسالة. اتبعها في ردك، وابحث في الإنترنت كالمعتاد متى احتاج السؤال.`,
++    `Instructions of the skill "${skill.title}", chosen by the employee for this message. Follow them in your reply.`,
++  ];
++  if (skill.description) {
++    lines.push('', skill.description.trim());
++  }
++  lines.push('', skill.body.trim());
++  return `${lines.join('\n')}\n`;
++}

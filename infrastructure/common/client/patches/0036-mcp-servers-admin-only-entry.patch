@@ -1,0 +1,177 @@
+EF AI Workspace (#218): MCP servers for admins only, owner decision 2026-10-25 («فعلها للمسؤول بس»; ADR-0021).
+The role permissions are set before every start by infrastructure/common/roles-policy.js (ADMIN use and add, nobody
+shares); upstream already shows the MCP page only to a role that may add servers or that has a server to use.
+
+- «More» (UnifiedSidebar/efSidebar.ts, EfMoreMenu.tsx): the MCP page joins the admin tools under «Admins only» with
+  the «Admins» badge, named «MCP servers» (com_ui_mcp_servers), and opens in the panel beside the rail as the builder.
+- Links (hooks/Nav/useUnifiedSidebarLinks.ts): employees never get the admin panels (EF_ADMIN_PANELS), so a temporary
+  role-editor grant does not put the MCP page in the employees' sidebar.
+- Panel header (UnifiedSidebar/EfChatsPanel.tsx): the way back reads «‹ Chats» (accessible name «Back to chats»), so a
+  tool's name is no longer clipped in 300 px («MCP servers» read «MCP…», «Agent builder» too).
+- Tests: ExpandedPanel.spec (the MCP page in the admin group, with the badge, opened in the panel).
+
+diff --git a/client/src/components/UnifiedSidebar/EfChatsPanel.tsx b/client/src/components/UnifiedSidebar/EfChatsPanel.tsx
+index 09c903e..06602ff 100644
+--- a/client/src/components/UnifiedSidebar/EfChatsPanel.tsx
++++ b/client/src/components/UnifiedSidebar/EfChatsPanel.tsx
+@@ -31,8 +31,8 @@ const tabClass =
+  * EF (sidebar v4 #204, owner-approved Concept 2): the chats panel. On the desktop it stands beside the rail at full
+  * height; on a phone it is the drawer, which reads as the chats screen.
+  *   - Header: «Chats», upstream's sort and filter menu, and the control that closes the panel (on a phone also the
+- *     account). A chat-bound tool (the agent builder, the parameters; admins) takes the panel under its own name, with
+- *     the way back to the chats.
++ *     account). A chat-bound tool (the agent builder, the parameters, the MCP servers; admins) takes the panel under
++ *     its own name, with the way back to the chats.
+  *   - The chat search, the chips «All / Pinned / Project» (EfChatChips) and the history, pinned first.
+  *   - Phone only: a floating «New chat» and a tab bar (Chats, Projects, Skills, Documents, More); a tab closes the
+  *     drawer and opens its page, as the v3 rows did. The hidden shortcut targets live here on a phone and in the rail
+@@ -169,14 +169,16 @@ function EfChatsPanel({
+           </>
+         ) : (
+           <>
++            {/* #218: the short «Chats» leaves the tool's name room in 300 px («MCP servers», «Agent builder»). */}
+             <button
+               type="button"
+               data-testid="efaiw-back-to-chats"
++              aria-label={localize('com_efaiw_back_to_chats')}
+               className="flex h-9 flex-shrink-0 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary outline-none hover:bg-surface-hover"
+               onClick={() => setActive(DEFAULT_PANEL)}
+             >
+               <ChevronLeft className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
+-              {localize('com_efaiw_back_to_chats')}
++              {localize('com_efaiw_rail_chats')}
+             </button>
+             <h2 className="min-w-0 flex-1 truncate text-end text-sm font-semibold text-text-primary">
+               {labelOf(activeLink)}
+diff --git a/client/src/components/UnifiedSidebar/EfMoreMenu.tsx b/client/src/components/UnifiedSidebar/EfMoreMenu.tsx
+index ae7b09f..9902b6e 100644
+--- a/client/src/components/UnifiedSidebar/EfMoreMenu.tsx
++++ b/client/src/components/UnifiedSidebar/EfMoreMenu.tsx
+@@ -26,8 +26,9 @@ export function useEfMoreVisible(links: NavLink[]): boolean {
+ /**
+  * EF (sidebar v3 #198, v4 #204): «More» as a small menu, from the rail on the desktop and from the tab bar on a phone.
+  * Memory, bookmarks, ready commands and any other section the deployment enables; for admins the assistants
+- * marketplace, their builder and the parameters under «Admins only» (owner decision, #189). Sections open as pages
+- * (`onOpenPage` lets the phone close its drawer first); the chat-bound tools open as a panel (`onOpenPanel`).
++ * marketplace, their builder, the parameters and the MCP servers under «Admins only» (owner decisions #189, #218).
++ * Sections open as pages (`onOpenPage` lets the phone close its drawer first); the chat-bound tools open as a panel
++ * (`onOpenPanel`).
+  */
+ function EfMoreMenu({
+   links,
+diff --git a/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx b/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx
+index eb431f0..1119a5a 100644
+--- a/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx
++++ b/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx
+@@ -2,7 +2,16 @@ import React from 'react';
+ import { RecoilRoot } from 'recoil';
+ import '@testing-library/jest-dom/extend-expect';
+ import { MemoryRouter } from 'react-router-dom';
+-import { Bookmark, Brain, Folder, MessagesSquare, NotebookPen, Paperclip, Bot } from 'lucide-react';
++import {
++  Bookmark,
++  Brain,
++  Folder,
++  MessagesSquare,
++  NotebookPen,
++  Paperclip,
++  Bot,
++  Server,
++} from 'lucide-react';
+ import { render, fireEvent, screen } from '@testing-library/react';
+ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+ import type { MutableSnapshot } from 'recoil';
+@@ -127,6 +136,12 @@ const createLinks = ({ admin = false }: { admin?: boolean } = {}): NavLink[] =>
+             id: 'agents',
+             Component: Panel,
+           } as NavLink,
++          {
++            title: 'com_nav_setting_mcp',
++            icon: Server,
++            id: 'mcp-builder',
++            Component: Panel,
++          } as NavLink,
+         ]
+       : []),
+   ];
+@@ -277,6 +292,20 @@ describe('ExpandedPanel (EF rail, sidebar v4 #204)', () => {
+     expect(onExpand).toHaveBeenCalledTimes(1);
+   });
+ 
++  it('MCP servers are an admin tool (#218): under «Admins only» with the badge, opened in the column', async () => {
++    mockRole = 'ADMIN';
++    const { onExpand } = renderPanel({ links: createLinks({ admin: true }) });
++    fireEvent.click(screen.getByTestId('efaiw-rail-more'));
++    const group = (await screen.findByText('com_efaiw_admin_tools')).closest('[role="group"]');
++    const mcp = screen.getByTestId('efaiw-rail-more-mcp-builder');
++    expect(group).toContainElement(mcp);
++    expect(mcp).toHaveTextContent('com_ui_mcp_servers');
++    expect(mcp).toHaveTextContent('com_efaiw_admin_only');
++    fireEvent.click(mcp);
++    expect(localStorage.getItem('side:active-panel')).toBe('mcp-builder');
++    expect(onExpand).toHaveBeenCalledTimes(1);
++  });
++
+   it('keeps hidden shortcut targets, pressed for the open page', () => {
+     const { container } = renderPanel({ route: '/files' });
+     const target = container.querySelector('[data-testid="nav-panel-files"]');
+diff --git a/client/src/components/UnifiedSidebar/efSidebar.ts b/client/src/components/UnifiedSidebar/efSidebar.ts
+index d1976ae..56e8cc4 100644
+--- a/client/src/components/UnifiedSidebar/efSidebar.ts
++++ b/client/src/components/UnifiedSidebar/efSidebar.ts
+@@ -34,6 +34,7 @@ export const EF_LINK_LABELS: Record<string, TranslationKeys> = {
+   prompts: 'com_efaiw_rail_prompts',
+   agents: 'com_sidepanel_agent_builder',
+   parameters: 'com_efaiw_rail_parameters',
++  'mcp-builder': 'com_ui_mcp_servers',
+ };
+ 
+ /** The column's main rows, each with its tint from the palette (brand.css). */
+@@ -42,11 +43,12 @@ export const EF_MAIN_PANELS: ReadonlyArray<{ id: string; tone: string }> = [
+   { id: 'skills', tone: 'efaiw-tone-green' },
+   { id: 'files', tone: 'efaiw-tone-brown' },
+ ];
+-/** «More» lists these first, then any other section the deployment enables; the admin-only ones come last. */
++/** «More» lists these first, then any other section the deployment enables; the admin-only ones come last. MCP
++ *  servers are for admins only (owner decision #218, ADR-0021). */
+ export const EF_MORE_FIRST = ['memories', 'bookmarks', 'prompts'];
+-export const EF_ADMIN_PANELS = ['agents', 'parameters'];
++export const EF_ADMIN_PANELS = ['agents', 'parameters', 'mcp-builder'];
+ 
+-/** «More»'s entries for everyone, in order. The agent builder and the parameters only reach `links` for admins
++/** «More»'s entries for everyone, in order. The admin panels only reach `links` for admins
+  *  (useUnifiedSidebarLinks). */
+ export function efMoreLinks(links: NavLink[]): NavLink[] {
+   const mainIds = EF_MAIN_PANELS.map((panel) => panel.id);
+diff --git a/client/src/hooks/Nav/useUnifiedSidebarLinks.ts b/client/src/hooks/Nav/useUnifiedSidebarLinks.ts
+index 2439759..05adb02 100644
+--- a/client/src/hooks/Nav/useUnifiedSidebarLinks.ts
++++ b/client/src/hooks/Nav/useUnifiedSidebarLinks.ts
+@@ -8,7 +8,7 @@ import type { TEndpointsConfig } from 'librechat-data-provider';
+ import type { NavLink } from '~/common';
+ import { useGetEndpointsQuery, useGetStartupConfig, useInsightsAccessQuery } from '~/data-provider';
+ import ConversationsSection from '~/components/UnifiedSidebar/ConversationsSection';
+-import { EF_PAGES } from '~/components/UnifiedSidebar/efSidebar';
++import { EF_ADMIN_PANELS, EF_PAGES } from '~/components/UnifiedSidebar/efSidebar';
+ import useSideNavLinks from '~/hooks/Nav/useSideNavLinks';
+ import { useAuthContext } from '~/hooks';
+ import store from '~/store';
+@@ -65,7 +65,8 @@ export default function useUnifiedSidebarLinks() {
+   });
+ 
+   /** EF (#189, owner decision): the agent builder and the model parameters are for admins while the owner learns
+-   *  them; employees do not see them in the sidebar, its rail or its shortcuts. Permissions are unchanged. */
++   *  them; employees do not see them in the sidebar, its rail or its shortcuts. Permissions are unchanged. MCP servers
++   *  (#218) are for admins by role permission too; a role-editor grant to employees does not show them here. */
+   const isAdmin = user?.role === SystemRoles.ADMIN;
+   /** EF (sidebar v3 #198, owner decision): skills, documents, ready commands, memory and bookmarks open as a page in
+    *  the main area (EF_PAGES), so the sidebar keeps the chats; the rail, «More» and the panel shortcuts follow. */
+@@ -73,7 +74,7 @@ export default function useUnifiedSidebarLinks() {
+     () =>
+       (isAdmin
+         ? allSideNavLinks
+-        : allSideNavLinks.filter((link) => link.id !== 'agents' && link.id !== 'parameters')
++        : allSideNavLinks.filter((link) => !EF_ADMIN_PANELS.includes(link.id))
+       ).map((link): NavLink => {
+         const path = EF_PAGES[link.id];
+         return path ? { ...link, Component: undefined, onClick: () => navigate(path) } : link;

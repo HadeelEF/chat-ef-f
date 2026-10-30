@@ -1,0 +1,149 @@
+Phone chat UI (#115, ADR-0013), after ChatGPT's conventions. The user's message is a bubble on the end side (left in
+RTL, right in LTR: brand.css mirrors upstream's physical margin) with a hook class for its EF colour; on touch screens
+its actions appear when the bubble is tapped instead of under every message. The chat header gets a hook for its solid
+bar; the phone drawer leaves a strip of the chat to tap (upstream's own option, now on by default); the system bar is
+white like the top bar (theme colour and the iOS status bar). Accessibility: a code block's scroll area takes keyboard
+focus, because it scrolls sideways on phones, and the collapsed desktop side panel is inert like the phone drawer.
+index.html links the direction-aware reply styles (brand assets/ef-chat.css, served as is: PostCSS compiles logical
+properties to LTR and :dir() to an ancestor [dir] test).
+
+diff --git a/client/index.html b/client/index.html
+index afd2acc..17610cd 100644
+--- a/client/index.html
++++ b/client/index.html
+@@ -3,10 +3,10 @@
+   <head>
+     <meta charset="utf-8" />
+     <base href="/" />
+-    <meta name="theme-color" content="#2C3A82" />
++    <meta name="theme-color" content="#FFFFFF" />
+     <meta name="mobile-web-app-capable" content="yes" />
+     <meta name="apple-mobile-web-app-capable" content="yes" />
+-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
++    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+     <meta name="apple-mobile-web-app-title" content="بصير" />
+     <meta
+       name="description"
+@@ -16,6 +16,7 @@
+     <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png" />
+     <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png" />
+     <link rel="apple-touch-icon" href="assets/apple-touch-icon-180x180.png" />
++    <link rel="stylesheet" href="/assets/ef-chat.css" />
+     <meta
+       name="viewport"
+       content="width=device-width, initial-scale=1, interactive-widget=resizes-content"
+diff --git a/client/src/components/Chat/Header.tsx b/client/src/components/Chat/Header.tsx
+index 697712c..c578ad2 100644
+--- a/client/src/components/Chat/Header.tsx
++++ b/client/src/components/Chat/Header.tsx
+@@ -80,7 +80,10 @@ function Header({
+   return (
+     /* The composer review is in a z-10 stacking context. Keep header controls
+        above it when a tall review reaches the top of a short viewport. */
+-    <div className="absolute top-0 z-20 flex h-[52px] w-full items-center gap-2 bg-gradient-to-b from-presentation via-presentation/70 to-transparent p-2 font-semibold text-text-primary md:from-presentation/80 md:via-presentation/50 2xl:from-presentation/0 2xl:via-transparent">
++    <div
++      data-efaiw="chat-header"
++      className="absolute top-0 z-20 flex h-[52px] w-full items-center gap-2 bg-gradient-to-b from-presentation via-presentation/70 to-transparent p-2 font-semibold text-text-primary md:from-presentation/80 md:via-presentation/50 2xl:from-presentation/0 2xl:via-transparent"
++    >
+       <div className="flex flex-shrink-0 items-center md:hidden">
+         <OpenSidebar testId="header-open-sidebar-button" />
+       </div>
+diff --git a/client/src/components/Chat/Messages/ui/MessageRow.tsx b/client/src/components/Chat/Messages/ui/MessageRow.tsx
+index a6a1add..616b79d 100644
+--- a/client/src/components/Chat/Messages/ui/MessageRow.tsx
++++ b/client/src/components/Chat/Messages/ui/MessageRow.tsx
+@@ -1,3 +1,4 @@
++import { useState } from 'react';
+ import { Zap } from 'lucide-react';
+ import type { ReactNode } from 'react';
+ import MessageTimestamp from './MessageTimestamp';
+@@ -59,6 +60,10 @@ export default function MessageRow({
+   const widthClass = getMessageRowWidthClass({ fullWidth, hasParallelContent });
+   const isSystem = systemLabel != null && systemLabel !== '';
+   const isUserSide = isCreatedByUser || isSystem;
++  /** EF (#115): on touch screens the user's message actions stay hidden until the bubble is tapped (brand.css);
++   *  pointer screens keep the reveal on hover. */
++  const [actionsShown, setActionsShown] = useState(false);
++  const isUserBubble = isCreatedByUser && !isSystem && !isEditing;
+ 
+   return (
+     <div
+@@ -81,6 +86,7 @@ export default function MessageRow({
+           !hasParallelContent &&
+             isUserSide &&
+             cn('ml-auto items-end', !isEditing && 'w-fit max-w-[90%] sm:max-w-[85%]'),
++          isUserBubble && actionsShown && 'efaiw-actions-shown',
+           !hasParallelContent && !isUserSide && !isEditing && 'flex-1',
+         )}
+       >
+@@ -124,14 +130,18 @@ export default function MessageRow({
+                 ? cn(
+                     'w-fit rounded-theme-surface rounded-br-theme-control px-theme-normal',
+                     isSystem ? 'border border-border-medium py-1.5' : 'bg-surface-tertiary py-2.5',
++                    isUserBubble && 'efaiw-user-bubble',
+                   )
+                 : 'w-full',
+             )}
+             data-testid="message-body"
++            onClick={isUserBubble ? () => setActionsShown((shown) => !shown) : undefined}
+           >
+             {children}
+           </div>
+-          <div className={cn('w-full', isUserSide && 'flex justify-end')}>{footer}</div>
++          <div className={cn('w-full', isUserSide && 'flex justify-end', isUserBubble && 'efaiw-user-actions')}>
++            {footer}
++          </div>
+         </div>
+       </div>
+     </div>
+diff --git a/client/src/components/Messages/Content/CodeBlock.tsx b/client/src/components/Messages/Content/CodeBlock.tsx
+index 2ffce2d..d9d25a0 100644
+--- a/client/src/components/Messages/Content/CodeBlock.tsx
++++ b/client/src/components/Messages/Content/CodeBlock.tsx
+@@ -120,6 +120,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({
+       </div>
+       <div
+         className={cn(classProp, 'overflow-y-auto bg-surface-chat p-4 dark:bg-surface-primary-alt')}
++        tabIndex={0}
+       >
+         <code
+           ref={codeRef}
+diff --git a/client/src/components/UnifiedSidebar/Sidebar.tsx b/client/src/components/UnifiedSidebar/Sidebar.tsx
+index 05e9f5c..bba6843 100644
+--- a/client/src/components/UnifiedSidebar/Sidebar.tsx
++++ b/client/src/components/UnifiedSidebar/Sidebar.tsx
+@@ -51,6 +51,7 @@ function Sidebar({
+           )}
+           style={{ transition: expanded ? 'opacity 200ms ease 80ms' : 'opacity 150ms ease' }}
+           aria-hidden={!expanded}
++          inert={!expanded ? '' : undefined}
+         >
+           <SidePanelNav links={links} />
+         </nav>
+diff --git a/client/src/store/settings.ts b/client/src/store/settings.ts
+index 5c7d92b..4991ae2 100644
+--- a/client/src/store/settings.ts
++++ b/client/src/store/settings.ts
+@@ -114,7 +114,8 @@ const localStorageAtoms = {
+    * conversation visible that also closes it when tapped. Off by default: the
+    * drawer covers the screen and the swipe closes it.
+    */
+-  mobileDrawerStrip: atomWithLocalStorage('mobileDrawerStrip', false),
++  /** EF (#115): on by default, like ChatGPT's drawer. */
++  mobileDrawerStrip: atomWithLocalStorage('mobileDrawerStrip', true),
+   showFooter: atomWithLocalStorage('showFooter', true),
+ 
+   // Commands settings
+diff --git a/client/vite.config.ts b/client/vite.config.ts
+index b594cdb..a2c9ade 100644
+--- a/client/vite.config.ts
++++ b/client/vite.config.ts
+@@ -174,7 +174,7 @@ export default defineConfig(({ command }) => ({
+         dir: 'rtl',
+         display: 'standalone',
+         background_color: '#FFFFFF',
+-        theme_color: '#2C3A82',
++        theme_color: '#FFFFFF',
+         icons: [
+           {
+             src: 'assets/favicon-32x32.png',

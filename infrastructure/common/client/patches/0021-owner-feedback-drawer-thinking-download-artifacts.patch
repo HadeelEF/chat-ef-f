@@ -1,0 +1,1022 @@
+Owner feedback 2026-10-22 (#135): the phone menu, the thinking switch, downloads and artifacts in Arabic.
+- Phone side menu: the drawer always opened from the left (`left-0`, `-translate-x-full`, the chat pane pushed right,
+  the swipe measured left to right). It now opens from the start edge of the page, the right in Arabic: one CSS
+  variable (`--efaiw-drawer-dir`, from `dir` on <html>) signs every travel, and the swipe measures along the opening
+  direction (a leftward drag opens it in Arabic, a rightward one in English).
+- «تفكير» switch next to the model button (ThinkingToggle.tsx): the lineup sets thinking per spec, so the switch moves
+  the chat between «بصير لايت» and «بصير بلس» in place, like the model menu; «بصير برو» always thinks, so the switch
+  shows on and cannot be turned off. No switch for any other spec or configuration.
+- «تنزيل» under every reply (DownloadReply.tsx): the reply as a Word document or as Markdown, built in the browser
+  (utils/efaiwDocx.ts: the client's GFM parser to WordprocessingML in a stored ZIP, no new dependency). Arabic
+  paragraphs, lists and tables run right to left; code, links and English stay left to right. Artifact directive lines
+  are dropped, and a Markdown artifact's fence too, so a document reads as a document.
+- Markdown artifacts: the preview page had no direction, so an Arabic document sat on the left with its bullets on
+  the wrong side. It takes its direction from its text now (`dir="auto"`, then per paragraph), code stays LTR.
+- The artifacts split button (Artifacts.tsx) used physical sides: in Arabic its chevron was cut off. Logical now.
+- Side menu search box: the clear button's room was reserved even when empty, so in the phone drawer the placeholder
+  read «ث في الرسائل». The room is kept only while there is text (the Arabic placeholder is «بحث», ar.json).
+
+diff --git a/client/src/components/Chat/Input/Artifacts.tsx b/client/src/components/Chat/Input/Artifacts.tsx
+index 910d388..dd962bc 100644
+--- a/client/src/components/Chat/Input/Artifacts.tsx
++++ b/client/src/components/Chat/Input/Artifacts.tsx
+@@ -89,7 +89,8 @@ function Artifacts() {
+   return (
+     <div className="flex">
+       <CheckboxButton
+-        className={cn(isEnabled && 'rounded-r-none border-r-0')}
++        /* EF (#135): logical sides, so the split button joins at the chevron in Arabic too. */
++        className={cn(isEnabled && 'rounded-e-none border-e-0')}
+         checked={isEnabled}
+         setValue={handleToggle}
+         label={localize('com_ui_artifacts')}
+@@ -101,7 +102,7 @@ function Artifacts() {
+         <Ariakit.MenuProvider open={isPopoverOpen} setOpen={setIsPopoverOpen}>
+           <Ariakit.MenuButton
+             className={cn(
+-              'w-7 rounded-l-none rounded-r-full border-b border-l-0 border-r border-t border-border-light md:w-6',
++              'w-7 rounded-e-full rounded-s-none border-b border-e border-s-0 border-t border-border-light md:w-6',
+               badgeAccents.amber,
+               'transition-colors',
+             )}
+@@ -109,7 +110,7 @@ function Artifacts() {
+           >
+             <ChevronDown
+               className={cn(
+-                'ml-1 h-4 w-4 text-text-secondary transition-transform duration-300 md:ml-0.5',
++                'ms-1 h-4 w-4 text-text-secondary transition-transform duration-300 md:ms-0.5',
+                 isButtonExpanded && 'rotate-180',
+               )}
+               aria-hidden="true"
+diff --git a/client/src/components/Chat/Input/ChatForm.tsx b/client/src/components/Chat/Input/ChatForm.tsx
+index 4e38fac..d0ea209 100644
+--- a/client/src/components/Chat/Input/ChatForm.tsx
++++ b/client/src/components/Chat/Input/ChatForm.tsx
+@@ -71,6 +71,7 @@ import StopButton from './StopButton';
+ import SendButton from './SendButton';
+ import EditBadges from './EditBadges';
+ import BadgeRow from './BadgeRow';
++import ThinkingToggle from './ThinkingToggle';
+ import Mention from './Mention';
+ import store from '~/store';
+ 
+@@ -867,6 +868,15 @@ const ChatForm = memo(function ChatForm({
+                     <ModelSelector startupConfig={startupConfig} variant="composer" />
+                   </div>
+                 )}
++                {/* EF (#135): thinking on/off next to the model button. */}
++                {index === 0 && (
++                  <div className="shrink-0">
++                    <ThinkingToggle
++                      startupConfig={startupConfig}
++                      disabled={isSubmitting || disableInputs}
++                    />
++                  </div>
++                )}
+                 <BadgeRow
+                   showEphemeralBadges={
+                     !!endpoint &&
+diff --git a/client/src/components/Chat/Input/ThinkingToggle.tsx b/client/src/components/Chat/Input/ThinkingToggle.tsx
+new file mode 100644
+index 0000000..8fe7bc4
+--- /dev/null
++++ b/client/src/components/Chat/Input/ThinkingToggle.tsx
+@@ -0,0 +1,106 @@
++import { memo, useMemo } from 'react';
++import { useRecoilValue } from 'recoil';
++import { Lightbulb } from 'lucide-react';
++import { composerControlClasses } from '@librechat/client';
++import type { TStartupConfig } from 'librechat-data-provider';
++import { useGetConversation, useLocalize, useNewConvo } from '~/hooks';
++import useSelectMention from '~/hooks/Input/useSelectMention';
++import { useAssistantsMapContext } from '~/Providers';
++import { useGetEndpointsQuery } from '~/data-provider';
++import { badgeAccents } from './accents';
++import { cn } from '~/utils';
++import store from '~/store';
++
++/**
++ * EF (#135): the «تفكير» switch next to the model button. The approved lineup (librechat.yaml, #131) sets thinking
++ * per spec: Lite and Plus are the same model without and with thinking, so the switch moves the chat between them in
++ * place, like picking the other one in the model menu (the model button follows). Pro always thinks: the switch shows
++ * on and cannot be turned off. Any other spec, and an upstream configuration, shows no switch.
++ */
++const THINKING_PAIRS: ReadonlyArray<{ off: string; on: string }> = [
++  { off: 'baseer-lite', on: 'baseer-plus' },
++];
++const ALWAYS_THINKS = new Set(['baseer-pro']);
++/** A chat saved without a spec name still carries its spec's endpoint. */
++const SPEC_BY_ENDPOINT: Record<string, string> = {
++  Qwen: 'baseer-lite',
++  'Qwen Thinking': 'baseer-plus',
++  DeepSeek: 'baseer-pro',
++};
++
++function ThinkingToggle({
++  startupConfig,
++  disabled = false,
++}: {
++  startupConfig?: TStartupConfig;
++  disabled?: boolean;
++}) {
++  const localize = useLocalize();
++  const spec = useRecoilValue(store.conversationSpecByIndex(0));
++  const endpoint = useRecoilValue(store.conversationEndpointByIndex(0));
++  const getConversation = useGetConversation(0);
++  const { newConversation } = useNewConvo();
++  const assistantsMap = useAssistantsMapContext();
++  const { data: endpointsConfig } = useGetEndpointsQuery();
++  const modelSpecs = useMemo(() => startupConfig?.modelSpecs?.list ?? [], [startupConfig]);
++  const { onSelectSpec } = useSelectMention({
++    modelSpecs,
++    assistantsMap,
++    endpointsConfig,
++    getConversation,
++    newConversation,
++    returnHandlers: true,
++  });
++
++  const current = spec || (endpoint != null ? SPEC_BY_ENDPOINT[endpoint] : undefined);
++  const state = useMemo(() => {
++    if (current == null) {
++      return null;
++    }
++    if (ALWAYS_THINKS.has(current)) {
++      return { on: true, locked: true, target: undefined };
++    }
++    const pair = THINKING_PAIRS.find((p) => p.off === current || p.on === current);
++    if (pair == null) {
++      return null;
++    }
++    const on = pair.on === current;
++    const target = modelSpecs.find((s) => s.name === (on ? pair.off : pair.on));
++    return target == null ? null : { on, locked: false, target };
++  }, [current, modelSpecs]);
++
++  if (state == null) {
++    return null;
++  }
++
++  const hint = state.locked
++    ? localize('com_efaiw_thinking_always')
++    : localize(state.on ? 'com_efaiw_thinking_on' : 'com_efaiw_thinking_off');
++
++  return (
++    <button
++      type="button"
++      aria-pressed={state.on}
++      aria-disabled={state.locked || disabled || undefined}
++      title={hint}
++      onClick={() => {
++        if (state.locked || disabled || state.target == null) {
++          return;
++        }
++        onSelectSpec?.(state.target);
++      }}
++      className={cn(
++        composerControlClasses(),
++        'px-theme-normal',
++        state.on && badgeAccents.purple,
++        (state.locked || disabled) && 'cursor-default opacity-80 hover:shadow-sm',
++      )}
++    >
++      <Lightbulb className="icon-md" aria-hidden="true" />
++      <span>{localize('com_efaiw_thinking')}</span>
++      <span className="sr-only">{hint}</span>
++    </button>
++  );
++}
++
++export default memo(ThinkingToggle);
+diff --git a/client/src/components/Chat/Messages/DownloadReply.tsx b/client/src/components/Chat/Messages/DownloadReply.tsx
+new file mode 100644
+index 0000000..891758a
+--- /dev/null
++++ b/client/src/components/Chat/Messages/DownloadReply.tsx
+@@ -0,0 +1,100 @@
++import { memo, useId, useState } from 'react';
++import * as Ariakit from '@ariakit/react';
++import { Download, FileText, FileCode } from 'lucide-react';
++import { DropdownPopup, TooltipAnchor } from '@librechat/client';
++import { ContentTypes } from 'librechat-data-provider';
++import type { TMessage } from 'librechat-data-provider';
++import {
++  markdownToDocx,
++  safeFileName,
++  saveBlob,
++  stripArtifactDirectives,
++} from '~/utils/efaiwDocx';
++import { hoverButtonClasses } from './styles';
++import { useLocalize } from '~/hooks';
++
++/** The reply's own text, without its thinking or tool calls. */
++export const replyMarkdown = (message: TMessage): string => {
++  if (Array.isArray(message.content) && message.content.length > 0) {
++    return message.content
++      .map((part) => {
++        if (part == null || typeof part === 'string') {
++          return part ?? '';
++        }
++        if (part.type !== ContentTypes.TEXT) {
++          return '';
++        }
++        const text = (part as { text?: string | { value?: string } }).text;
++        return typeof text === 'string' ? text : (text?.value ?? '');
++      })
++      .filter((text) => text.trim() !== '')
++      .join('\n\n');
++  }
++  return message.text ?? '';
++};
++
++/**
++ * EF (#135): «تنزيل» on a reply: the reply as a Word document (.docx, right to left when written in Arabic) or as
++ * Markdown (.md). Built in the browser (utils/efaiwDocx.ts); the file is named after the chat.
++ */
++function DownloadReply({
++  message,
++  title,
++  isLast,
++}: {
++  message: TMessage;
++  title?: string | null;
++  isLast: boolean;
++}) {
++  const localize = useLocalize();
++  const menuId = useId();
++  const [isOpen, setIsOpen] = useState(false);
++  const label = localize('com_efaiw_download_reply');
++  const name = safeFileName(title, localize('com_efaiw_download_default_name'));
++
++  const items = [
++    {
++      label: localize('com_efaiw_download_word'),
++      icon: <FileText className="size-4 text-text-secondary" aria-hidden="true" />,
++      onClick: () => {
++        const markdown = replyMarkdown(message);
++        saveBlob(markdownToDocx(markdown, name), `${name}.docx`);
++      },
++    },
++    {
++      label: localize('com_efaiw_download_markdown'),
++      icon: <FileCode className="size-4 text-text-secondary" aria-hidden="true" />,
++      onClick: () => {
++        const markdown = stripArtifactDirectives(replyMarkdown(message));
++        saveBlob(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }), `${name}.md`);
++      },
++    },
++  ];
++
++  return (
++    <DropdownPopup
++      portal={true}
++      menuId={menuId}
++      focusLoop={true}
++      unmountOnHide={true}
++      isOpen={isOpen}
++      setIsOpen={setIsOpen}
++      trigger={
++        <TooltipAnchor
++          description={label}
++          render={
++            <Ariakit.MenuButton
++              aria-label={label}
++              className={hoverButtonClasses({ isActive: isOpen, isLast })}
++            >
++              <Download size={19} aria-hidden="true" />
++            </Ariakit.MenuButton>
++          }
++        />
++      }
++      items={items}
++    />
++  );
++}
++
++export default memo(DownloadReply);
+diff --git a/client/src/components/Chat/Messages/HoverButtons.tsx b/client/src/components/Chat/Messages/HoverButtons.tsx
+index 69f4064..ad8140c 100644
+--- a/client/src/components/Chat/Messages/HoverButtons.tsx
++++ b/client/src/components/Chat/Messages/HoverButtons.tsx
+@@ -20,6 +20,7 @@ import { Fork } from '~/components/Conversations';
+ import { hoverButtonClasses } from './styles';
+ import MessageAudio from './MessageAudio';
+ import Feedback from './Feedback';
++import DownloadReply from './DownloadReply';
+ import { cn } from '~/utils';
+ import store from '~/store';
+ 
+@@ -274,6 +275,11 @@ const HoverButtons = ({
+         />
+       )}
+ 
++      {/* EF (#135): download the reply as Word or Markdown */}
++      {!isCreatedByUser && !error && !isActiveStreamingMessage && (
++        <DownloadReply message={message} title={conversation.title} isLast={isLast} />
++      )}
++
+       {/* Edit Button */}
+       {!isSubagentThreadReadOnly && isEditableEndpoint && !hideEditButton && (
+         <HoverButton
+diff --git a/client/src/components/Nav/SearchBar.tsx b/client/src/components/Nav/SearchBar.tsx
+index 7f9e033..3a5f8b9 100644
+--- a/client/src/components/Nav/SearchBar.tsx
++++ b/client/src/components/Nav/SearchBar.tsx
+@@ -152,7 +152,12 @@ const SearchBar = forwardRef((props: SearchBarProps, ref: React.Ref<HTMLDivEleme
+         type="text"
+         data-testid="nav-search-input"
+         ref={inputRef}
+-        className="m-0 w-full border-none bg-transparent p-0 pl-7 pr-7 text-sm leading-tight placeholder-text-secondary placeholder-opacity-100 focus-visible:outline-none group-focus-within:placeholder-text-primary group-hover:placeholder-text-primary"
++        /* EF (#135): room for the clear button only while there is text to clear, so the placeholder is not cut
++           off in the narrow phone drawer (it read «ث في الرسائل»). */
++        className={cn(
++          'm-0 w-full border-none bg-transparent p-0 ps-7 text-sm leading-tight placeholder-text-secondary placeholder-opacity-100 focus-visible:outline-none group-focus-within:placeholder-text-primary group-hover:placeholder-text-primary',
++          showClearIcon ? 'pe-7' : 'pe-0',
++        )}
+         value={text}
+         onChange={onChange}
+         onKeyDown={(e) => {
+diff --git a/client/src/components/UnifiedSidebar/UnifiedSidebar.tsx b/client/src/components/UnifiedSidebar/UnifiedSidebar.tsx
+index 22b6f70..b194442 100644
+--- a/client/src/components/UnifiedSidebar/UnifiedSidebar.tsx
++++ b/client/src/components/UnifiedSidebar/UnifiedSidebar.tsx
+@@ -192,8 +192,9 @@ function UnifiedSidebar({ isSliding = false }: { isSliding?: boolean }) {
+           /** The close swipe reads horizontal touches here (the drawer holds no
+            * horizontal scrollers), while pinch-zoom stays with the browser —
+            * this full-viewport surface must not disable zooming entirely. */
+-          'fixed inset-y-0 left-0 flex touch-pan-y touch-pinch-zoom flex-col bg-surface-primary-alt',
+-          expanded ? 'translate-x-0' : '-translate-x-full',
++          /* EF (#135): at the start edge (`start-0`, right in Arabic) and hidden beyond it. */
++          'fixed inset-y-0 start-0 flex touch-pan-y touch-pinch-zoom flex-col bg-surface-primary-alt',
++          expanded ? 'translate-x-0' : '-translate-x-full rtl:translate-x-full',
+         )}
+         style={{
+           width: MOBILE_DRAWER_WIDTH,
+diff --git a/client/src/components/UnifiedSidebar/constants.ts b/client/src/components/UnifiedSidebar/constants.ts
+index c8cdf59..f826863 100644
+--- a/client/src/components/UnifiedSidebar/constants.ts
++++ b/client/src/components/UnifiedSidebar/constants.ts
+@@ -19,7 +19,16 @@ export const MOBILE_DRAWER_WIDTH_VAR = '--mobile-drawer-width';
+ export const MOBILE_DRAWER_FULL_WIDTH = '100%';
+ export const MOBILE_DRAWER_STRIP_WIDTH = '80%';
+ export const MOBILE_DRAWER_WIDTH = `var(${MOBILE_DRAWER_WIDTH_VAR}, ${MOBILE_DRAWER_FULL_WIDTH})`;
+-export const MOBILE_PANE_SHIFT = `translateX(${MOBILE_DRAWER_WIDTH})`;
++/**
++ * EF (#135): the drawer opens from the start edge of the page, the right in Arabic. `--efaiw-drawer-dir` is 1 on a
++ * left-to-right page and -1 on a right-to-left one (style.css, from `dir` on <html>), and every horizontal travel of
++ * the drawer and the pane is multiplied by it; `drawerDirection()` is the same sign for the swipe's pixel math.
++ */
++export const DRAWER_DIR = 'var(--efaiw-drawer-dir, 1)';
++export const drawerDirection = (): 1 | -1 => (document.documentElement.dir === 'rtl' ? -1 : 1);
++export const MOBILE_PANE_SHIFT = `translateX(calc(${DRAWER_DIR} * ${MOBILE_DRAWER_WIDTH}))`;
++/** The closed drawer: one drawer width beyond the start edge. */
++export const MOBILE_DRAWER_HIDDEN = `translate3d(calc(${DRAWER_DIR} * -100%), 0, 0)`;
+ export const TRANSITION_MS = 300;
+ /**
+  * Decelerating, but it settles rather than crawls. The previous
+diff --git a/client/src/hooks/Nav/useDrawerSwipe.ts b/client/src/hooks/Nav/useDrawerSwipe.ts
+index 48dfa4f..115cb0f 100644
+--- a/client/src/hooks/Nav/useDrawerSwipe.ts
++++ b/client/src/hooks/Nav/useDrawerSwipe.ts
+@@ -5,6 +5,8 @@ import {
+   MOBILE_DRAWER_WIDTH,
+   MOBILE_DRAWER_TRANSITION,
+   MOBILE_PANE_SHIFT,
++  MOBILE_DRAWER_HIDDEN,
++  drawerDirection,
+   MOBILE_SCRIM_ID,
+   SIDEBAR_TRANSITION,
+   DRAWER_UNPAINTED,
+@@ -211,6 +213,9 @@ type Gesture = {
+   touchId: number;
+   startX: number;
+   startY: number;
++  /** EF (#135): 1 when the drawer opens from the left, -1 from the right (RTL); `dx` and the transforms use it. */
++  dir: 1 | -1;
++  /** Travel along the drawer's opening direction (positive opens), whatever the page direction. */
+   dx: number;
+   width: number;
+   reducedMotion: boolean;
+@@ -269,8 +274,8 @@ const dragTransforms = (gesture: Gesture): { drawer: string; pane: string } => {
+     ? Math.min(Math.max(gesture.dx, 0), gesture.width)
+     : Math.min(Math.max(gesture.dx, -gesture.width), 0) + gesture.width;
+   return {
+-    drawer: `translate3d(${progress - gesture.width}px, 0, 0)`,
+-    pane: `translate3d(${progress}px, 0, 0)`,
++    drawer: `translate3d(${(progress - gesture.width) * gesture.dir}px, 0, 0)`,
++    pane: `translate3d(${progress * gesture.dir}px, 0, 0)`,
+   };
+ };
+ 
+@@ -387,7 +392,7 @@ export default function useDrawerSwipe({
+       const { drawer: drawerEl, pane: paneEl } = gesture;
+       drawerEl.style.transition = MOBILE_DRAWER_TRANSITION;
+       paneEl.style.transition = SIDEBAR_TRANSITION;
+-      drawerEl.style.transform = next ? 'translate3d(0, 0, 0)' : 'translate3d(-100%, 0, 0)';
++      drawerEl.style.transform = next ? 'translate3d(0, 0, 0)' : MOBILE_DRAWER_HIDDEN;
+       paneEl.style.transform = next ? MOBILE_PANE_SHIFT : 'translate3d(0, 0, 0)';
+       markDrawerAnimationStart();
+       notifyDrawerSlide(next);
+@@ -470,7 +475,7 @@ export default function useDrawerSwipe({
+         drawer.style.width = next
+           ? MOBILE_DRAWER_WIDTH
+           : `${drawer.getBoundingClientRect().width || window.innerWidth}px`;
+-        drawer.style.transform = next ? 'translate3d(0, 0, 0)' : 'translate3d(-100%, 0, 0)';
++        drawer.style.transform = next ? 'translate3d(0, 0, 0)' : MOBILE_DRAWER_HIDDEN;
+         markDrawerAnimationStart();
+         notifyDrawerSlide(next);
+         setScrimOpacity(next);
+@@ -518,6 +523,7 @@ export default function useDrawerSwipe({
+         touchId: touch.identifier,
+         startX: touch.clientX,
+         startY: touch.clientY,
++        dir: drawerDirection(),
+         dx: 0,
+         width: drawer.clientWidth || window.innerWidth,
+         reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+@@ -560,7 +566,8 @@ export default function useDrawerSwipe({
+         }
+         return;
+       }
+-      const dx = touch.clientX - gesture.startX;
++      /** EF (#135): measured along the opening direction, so a right-to-left page opens on a leftward drag. */
++      const dx = (touch.clientX - gesture.startX) * gesture.dir;
+       const dy = touch.clientY - gesture.startY;
+ 
+       if (gesture.phase === 'tracking') {
+@@ -571,7 +578,12 @@ export default function useDrawerSwipe({
+           const wrongWay = gesture.opening ? direction !== 1 : direction !== -1;
+           const blocker = wrongWay
+             ? null
+-            : findHorizontalScrollBlocker(event.target as Element | null, surface, direction);
++            : findHorizontalScrollBlocker(
++                event.target as Element | null,
++                surface,
++                /* The scroller check takes the finger's on-screen direction. */
++                (direction * gesture.dir) as 1 | -1,
++              );
+           if (wrongWay || blocker != null) {
+             gesture.phase = 'dead';
+             return;
+@@ -636,7 +648,9 @@ export default function useDrawerSwipe({
+        * velocity is only trusted when release follows the last move promptly. */
+       const held = event.timeStamp - gesture.lastSample.t > VELOCITY_HOLD_MS;
+       const velocity =
+-        !held && elapsed > 0 ? (gesture.lastSample.x - gesture.prevSample.x) / elapsed : 0;
++        !held && elapsed > 0
++          ? ((gesture.lastSample.x - gesture.prevSample.x) / elapsed) * gesture.dir
++          : 0;
+       const towardTarget = gesture.opening ? velocity : -velocity;
+       const committed =
+         progress >= gesture.width * COMMIT_DISTANCE_RATIO ||
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index a741cbd..557a919 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3099,5 +3099,13 @@
+   "com_efaiw_rail_parameters": "Parameters",
+   "com_efaiw_tools_options": "Tools Options",
+   "com_efaiw_notifications_region": "Notifications ({hotkey})",
+-  "com_efaiw_model_selector_label": "{{model}}, select a model"
++  "com_efaiw_model_selector_label": "{{model}}, select a model",
++  "com_efaiw_thinking": "Thinking",
++  "com_efaiw_thinking_off": "Turn on thinking: slower, more careful answers",
++  "com_efaiw_thinking_on": "Thinking is on: tap to answer faster without it",
++  "com_efaiw_thinking_always": "This model always thinks before answering",
++  "com_efaiw_download_reply": "Download",
++  "com_efaiw_download_word": "Word document (.docx)",
++  "com_efaiw_download_markdown": "Markdown (.md)",
++  "com_efaiw_download_default_name": "Baseer reply"
+ }
+diff --git a/client/src/style.css b/client/src/style.css
+index 1e76b97..6027297 100644
+--- a/client/src/style.css
++++ b/client/src/style.css
+@@ -146,6 +146,14 @@
+   }
+ }
+ 
++/* EF (#135): direction of the phone drawer's travel (UnifiedSidebar/constants.ts): it opens from the start edge. */
++html {
++  --efaiw-drawer-dir: 1;
++}
++html[dir='rtl'] {
++  --efaiw-drawer-dir: -1;
++}
++
+ html {
+   --brand-purple: 126 34 206;
+   --presentation: var(--white);
+diff --git a/client/src/utils/efaiwDocx.ts b/client/src/utils/efaiwDocx.ts
+new file mode 100644
+index 0000000..bbe0694
+--- /dev/null
++++ b/client/src/utils/efaiwDocx.ts
+@@ -0,0 +1,469 @@
++/**
++ * EF (#135): a reply saved as a Word document, built in the browser from its Markdown (no server round trip, no new
++ * dependency). Markdown is parsed with the client's own GFM parser; the document is plain WordprocessingML in a
++ * stored (uncompressed) ZIP. Paragraphs written in Arabic run right to left; code, URLs and English paragraphs left
++ * to right. Covered: headings, paragraphs, bold/italic/strike, inline code, links, ordered and bulleted lists (nested),
++ * tables, code blocks, quotes, rules. Images become their alt text.
++ */
++import { gfm } from 'micromark-extension-gfm';
++import { gfmFromMarkdown } from 'mdast-util-gfm';
++import { fromMarkdown } from 'mdast-util-from-markdown';
++
++type Node = {
++  type: string;
++  value?: string;
++  depth?: number;
++  ordered?: boolean | null;
++  start?: number | null;
++  url?: string;
++  alt?: string | null;
++  lang?: string | null;
++  align?: Array<string | null>;
++  children?: Node[];
++};
++
++type RunStyle = { bold?: boolean; italic?: boolean; strike?: boolean; code?: boolean; link?: boolean };
++
++const ARABIC = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
++const LATIN = /[A-Za-z]/;
++
++/** Direction of a text from its first strong character (Arabic: right to left). */
++export const isRtlText = (text: string): boolean => {
++  for (const ch of text) {
++    if (ARABIC.test(ch)) {
++      return true;
++    }
++    if (LATIN.test(ch)) {
++      return false;
++    }
++  }
++  return false;
++};
++
++const xmlEscape = (text: string): string =>
++  text
++    .replace(/&/g, '&amp;')
++    .replace(/</g, '&lt;')
++    .replace(/>/g, '&gt;')
++    .replace(/"/g, '&quot;')
++    // Characters XML 1.0 does not allow.
++    // eslint-disable-next-line no-control-regex
++    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
++
++const plainText = (node: Node): string =>
++  node.value ?? (node.children ?? []).map(plainText).join('') ?? '';
++
++const TEXT_ARTIFACT = /type="(?:text\/markdown|text\/md|text\/plain)"/;
++
++/**
++ * LibreChat's artifact directive lines are dropped; the artifact's content stays in the document. A text or Markdown
++ * artifact comes wrapped in a code fence (LibreChat's artifact instructions): that fence is dropped too, so the
++ * document reads as the document, not as code. Code, HTML and diagrams keep theirs.
++ */
++export const stripArtifactDirectives = (markdown: string): string => {
++  const out: string[] = [];
++  let unwrapNext = false;
++  let closingFence: string | null = null;
++  for (const line of markdown.split('\n')) {
++    const directive = line.match(/^\s*:::artifact\{.*\}\s*$/);
++    if (directive) {
++      unwrapNext = TEXT_ARTIFACT.test(line);
++      continue;
++    }
++    if (/^\s*:::\s*$/.test(line)) {
++      unwrapNext = false;
++      closingFence = null;
++      continue;
++    }
++    const fence = line.match(/^\s*(`{3,})[\w-]*\s*$/);
++    if (unwrapNext && fence && closingFence == null) {
++      closingFence = fence[1];
++      unwrapNext = false;
++      continue;
++    }
++    if (closingFence != null && line.trim() === closingFence) {
++      closingFence = null;
++      continue;
++    }
++    if (line.trim() !== '') {
++      unwrapNext = false;
++    }
++    out.push(line);
++  }
++  return out.join('\n');
++};
++
++class DocxWriter {
++  private links: string[] = [];
++  private numbering: Array<{ abstract: 0 | 1; start: number }> = [];
++
++  body(nodes: Node[]): string {
++    return nodes.map((node) => this.block(node, 0, null)).join('');
++  }
++
++  private linkId(url: string): string {
++    this.links.push(url);
++    return `rIdLink${this.links.length}`;
++  }
++
++  /** A new list instance (numbering restarts), `abstract` 0 = bullets, 1 = decimal. */
++  private listInstance(ordered: boolean, start: number): number {
++    this.numbering.push({ abstract: ordered ? 1 : 0, start });
++    return this.numbering.length;
++  }
++
++  private runs(nodes: Node[], style: RunStyle, rtl: boolean): string {
++    return nodes.map((node) => this.inline(node, style, rtl)).join('');
++  }
++
++  private run(text: string, style: RunStyle, rtl: boolean): string {
++    if (text === '') {
++      return '';
++    }
++    const props = [
++      style.code
++        ? '<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/>'
++        : '',
++      style.bold ? '<w:b/><w:bCs/>' : '',
++      style.italic ? '<w:i/><w:iCs/>' : '',
++      style.strike ? '<w:strike/>' : '',
++      style.link ? '<w:color w:val="1F5FAD"/><w:u w:val="single"/>' : '',
++      style.code ? '<w:shd w:val="clear" w:color="auto" w:fill="F2F2F2"/>' : '',
++      rtl && ARABIC.test(text) ? '<w:rtl/>' : '',
++    ].join('');
++    const parts = text.split('\n');
++    return parts
++      .map(
++        (part, i) =>
++          `<w:r>${props ? `<w:rPr>${props}</w:rPr>` : ''}${i > 0 ? '<w:br/>' : ''}<w:t xml:space="preserve">${xmlEscape(part)}</w:t></w:r>`,
++      )
++      .join('');
++  }
++
++  private inline(node: Node, style: RunStyle, rtl: boolean): string {
++    switch (node.type) {
++      case 'text':
++        return this.run(node.value ?? '', style, rtl);
++      case 'strong':
++        return this.runs(node.children ?? [], { ...style, bold: true }, rtl);
++      case 'emphasis':
++        return this.runs(node.children ?? [], { ...style, italic: true }, rtl);
++      case 'delete':
++        return this.runs(node.children ?? [], { ...style, strike: true }, rtl);
++      case 'inlineCode':
++        return this.run(node.value ?? '', { ...style, code: true }, rtl);
++      case 'break':
++        return '<w:r><w:br/></w:r>';
++      case 'link': {
++        const url = node.url ?? '';
++        if (!/^(https?:|mailto:)/i.test(url)) {
++          return this.runs(node.children ?? [], style, rtl);
++        }
++        return `<w:hyperlink r:id="${this.linkId(url)}">${this.runs(node.children ?? [], { ...style, link: true }, rtl)}</w:hyperlink>`;
++      }
++      case 'image':
++        return this.run(node.alt ?? '', { ...style, italic: true }, rtl);
++      case 'inlineMath':
++      case 'html':
++        return this.run(node.value ?? '', style, rtl);
++      default:
++        return node.children ? this.runs(node.children, style, rtl) : this.run(node.value ?? '', style, rtl);
++    }
++  }
++
++  private paragraph(
++    content: string,
++    rtl: boolean,
++    { style, numId, level, indent, extra }: { style?: string; numId?: number; level?: number; indent?: number; extra?: string } = {},
++  ): string {
++    const props = [
++      style ? `<w:pStyle w:val="${style}"/>` : '',
++      numId != null ? `<w:numPr><w:ilvl w:val="${level ?? 0}"/><w:numId w:val="${numId}"/></w:numPr>` : '',
++      extra ?? '',
++      rtl ? '<w:bidi/>' : '',
++      indent != null ? `<w:ind w:start="${indent}"/>` : '',
++    ].join('');
++    return `<w:p>${props ? `<w:pPr>${props}</w:pPr>` : ''}${content}</w:p>`;
++  }
++
++  private block(node: Node, level: number, list: { numId: number } | null): string {
++    switch (node.type) {
++      case 'heading': {
++        const rtl = isRtlText(plainText(node));
++        const depth = Math.min(Math.max(node.depth ?? 1, 1), 4);
++        return this.paragraph(this.runs(node.children ?? [], {}, rtl), rtl, { style: `Heading${depth}` });
++      }
++      case 'paragraph': {
++        const rtl = isRtlText(plainText(node));
++        return this.paragraph(this.runs(node.children ?? [], {}, rtl), rtl);
++      }
++      case 'list': {
++        const numId = this.listInstance(node.ordered === true, node.start ?? 1);
++        return (node.children ?? []).map((item) => this.block(item, level, { numId })).join('');
++      }
++      case 'listItem': {
++        const out: string[] = [];
++        let first = true;
++        for (const child of node.children ?? []) {
++          if (child.type === 'paragraph' && list != null) {
++            const rtl = isRtlText(plainText(child));
++            out.push(
++              this.paragraph(this.runs(child.children ?? [], {}, rtl), rtl, {
++                style: 'ListParagraph',
++                ...(first ? { numId: list.numId, level } : { indent: 720 * (level + 1) }),
++              }),
++            );
++            first = false;
++          } else if (child.type === 'list') {
++            out.push(this.block(child, Math.min(level + 1, 3), null));
++          } else {
++            out.push(this.block(child, level, null));
++          }
++        }
++        return out.join('');
++      }
++      case 'code': {
++        const lines = (node.value ?? '').split('\n');
++        return lines
++          .map((line) => this.paragraph(this.run(line || ' ', { code: true }, false), false, { style: 'Code' }))
++          .join('');
++      }
++      case 'blockquote':
++        return (node.children ?? [])
++          .map((child) => {
++            if (child.type !== 'paragraph') {
++              return this.block(child, level, null);
++            }
++            const rtl = isRtlText(plainText(child));
++            return this.paragraph(this.runs(child.children ?? [], { italic: true }, rtl), rtl, { style: 'Quote' });
++          })
++          .join('');
++      case 'thematicBreak':
++        return this.paragraph('', false, {
++          extra: '<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="BFBFBF"/></w:pBdr>',
++        });
++      case 'table':
++        return this.table(node);
++      case 'math':
++        return this.paragraph(this.run(node.value ?? '', { code: true }, false), false, { style: 'Code' });
++      case 'html':
++        return node.value ? this.paragraph(this.run(node.value, {}, false), isRtlText(node.value)) : '';
++      default:
++        return node.children ? node.children.map((child) => this.block(child, level, null)).join('') : '';
++    }
++  }
++
++  private table(node: Node): string {
++    const rows = node.children ?? [];
++    const rtl = isRtlText(plainText(node));
++    const columns = Math.max(1, ...rows.map((row) => row.children?.length ?? 0));
++    const width = Math.floor(9000 / columns);
++    const border = (side: string) => `<w:${side} w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/>`;
++    const tblPr = [
++      '<w:tblStyle w:val="TableGrid"/>',
++      rtl ? '<w:bidiVisual/>' : '',
++      '<w:tblW w:w="5000" w:type="pct"/>',
++      `<w:tblBorders>${['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(border).join('')}</w:tblBorders>`,
++      '<w:tblCellMar><w:top w:w="60" w:type="dxa"/><w:left w:w="100" w:type="dxa"/><w:bottom w:w="60" w:type="dxa"/><w:right w:w="100" w:type="dxa"/></w:tblCellMar>',
++    ].join('');
++    const grid = `<w:tblGrid>${Array.from({ length: columns }, () => `<w:gridCol w:w="${width}"/>`).join('')}</w:tblGrid>`;
++    const body = rows
++      .map((row, r) => {
++        const cells = Array.from({ length: columns }, (_, c) => {
++          const cell = row.children?.[c];
++          const text = cell ? plainText(cell) : '';
++          const cellRtl = text.trim() === '' ? rtl : isRtlText(text);
++          const align = node.align?.[c];
++          // A right-to-left paragraph starts at the right on its own; only centring is written.
++          const jc = align === 'center' ? '<w:jc w:val="center"/>' : '';
++          const runs = cell ? this.runs(cell.children ?? [], r === 0 ? { bold: true } : {}, cellRtl) : '';
++          const p = `<w:p><w:pPr>${cellRtl ? '<w:bidi/>' : ''}${jc}<w:spacing w:after="0"/></w:pPr>${runs}</w:p>`;
++          const shade = r === 0 ? '<w:shd w:val="clear" w:color="auto" w:fill="EDF1F7"/>' : '';
++          return `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${shade}</w:tcPr>${p}</w:tc>`;
++        }).join('');
++        const header = r === 0 ? '<w:trPr><w:tblHeader/></w:trPr>' : '';
++        return `<w:tr>${header}${cells}</w:tr>`;
++      })
++      .join('');
++    // An empty paragraph after the table keeps two adjacent tables apart.
++    return `<w:tbl><w:tblPr>${tblPr}</w:tblPr>${grid}${body}</w:tbl><w:p/>`;
++  }
++
++  relationships(): string {
++    const links = this.links
++      .map(
++        (url, i) =>
++          `<Relationship Id="rIdLink${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${xmlEscape(url)}" TargetMode="External"/>`,
++      )
++      .join('');
++    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdNumbering" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>${links}</Relationships>`;
++  }
++
++  numberingXml(): string {
++    const level = (ilvl: number, ordered: boolean) => {
++      const bullets = ['•', '◦', '▪', '•'];
++      const formats = ['decimal', 'lowerLetter', 'lowerRoman', 'decimal'];
++      const indent = 720 * (ilvl + 1);
++      return `<w:lvl w:ilvl="${ilvl}"><w:start w:val="1"/><w:numFmt w:val="${ordered ? formats[ilvl] : 'bullet'}"/><w:lvlText w:val="${ordered ? `%${ilvl + 1}.` : bullets[ilvl]}"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:start="${indent}" w:hanging="360"/></w:pPr></w:lvl>`;
++    };
++    const abstracts = [false, true]
++      .map(
++        (ordered, id) =>
++          `<w:abstractNum w:abstractNumId="${id}"><w:multiLevelType w:val="hybridMultilevel"/>${[0, 1, 2, 3].map((l) => level(l, ordered)).join('')}</w:abstractNum>`,
++      )
++      .join('');
++    const nums = this.numbering
++      .map(
++        ({ abstract, start }, i) =>
++          `<w:num w:numId="${i + 1}"><w:abstractNumId w:val="${abstract}"/>${abstract === 1 ? `<w:lvlOverride w:ilvl="0"><w:startOverride w:val="${start}"/></w:lvlOverride>` : ''}</w:num>`,
++      )
++      .join('');
++    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${abstracts}${nums}</w:numbering>`;
++  }
++}
++
++const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/><w:sz w:val="22"/><w:szCs w:val="24"/><w:lang w:val="en-US" w:bidi="ar-SA"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="300" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:spacing w:after="240"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="1F3864"/><w:sz w:val="36"/><w:szCs w:val="40"/></w:rPr></w:style>${[1, 2, 3, 4]
++  .map(
++    (d) =>
++      `<w:style w:type="paragraph" w:styleId="Heading${d}"><w:name w:val="heading ${d}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="${d === 1 ? 360 : 240}" w:after="120"/><w:outlineLvl w:val="${d - 1}"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="1F3864"/><w:sz w:val="${[32, 28, 24, 22][d - 1]}"/><w:szCs w:val="${[36, 30, 26, 24][d - 1]}"/></w:rPr></w:style>`,
++  )
++  .join(
++    '',
++  )}<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="60"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="F2F2F2"/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="19"/><w:szCs w:val="19"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:pPr><w:pBdr><w:start w:val="single" w:sz="18" w:space="8" w:color="BFBFBF"/></w:pBdr><w:ind w:start="360"/></w:pPr><w:rPr><w:color w:val="595959"/></w:rPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/></w:style></w:styles>`;
++
++/** The `document.xml` body and its parts for a Markdown text. */
++export function buildDocxParts(markdown: string, title: string): Record<string, string> {
++  const tree = fromMarkdown(stripArtifactDirectives(markdown), {
++    extensions: [gfm()],
++    mdastExtensions: [gfmFromMarkdown()],
++  }) as unknown as Node;
++  const writer = new DocxWriter();
++  const body = writer.body(tree.children ?? []);
++  const rtl = isRtlText(markdown);
++  const titleXml = xmlEscape(title);
++  const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
++  return {
++    '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`,
++    '_rels/.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>`,
++    'docProps/core.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${titleXml}</dc:title><dc:creator>بصير</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created></cp:coreProperties>`,
++    'word/document.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${body}<w:sectPr>${rtl ? '<w:bidi/>' : ''}<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`,
++    'word/styles.xml': STYLES,
++    'word/numbering.xml': writer.numberingXml(),
++    'word/_rels/document.xml.rels': writer.relationships(),
++  };
++}
++
++const CRC_TABLE = (() => {
++  const table = new Uint32Array(256);
++  for (let n = 0; n < 256; n++) {
++    let c = n;
++    for (let k = 0; k < 8; k++) {
++      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
++    }
++    table[n] = c >>> 0;
++  }
++  return table;
++})();
++
++const crc32 = (data: Uint8Array): number => {
++  let crc = 0xffffffff;
++  for (let i = 0; i < data.length; i++) {
++    crc = CRC_TABLE[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
++  }
++  return (crc ^ 0xffffffff) >>> 0;
++};
++
++/** A ZIP archive with every entry stored (method 0): what a .docx needs, without a compression library. */
++export function storedZip(files: Record<string, string>): Uint8Array {
++  const encoder = new TextEncoder();
++  const chunks: Uint8Array[] = [];
++  const central: Uint8Array[] = [];
++  let offset = 0;
++  const d = new Date();
++  const time = (d.getHours() << 11) | (d.getMinutes() << 5) | Math.floor(d.getSeconds() / 2);
++  const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
++  for (const [name, text] of Object.entries(files)) {
++    const nameBytes = encoder.encode(name);
++    const data = encoder.encode(text);
++    const crc = crc32(data);
++    const local = new DataView(new ArrayBuffer(30));
++    local.setUint32(0, 0x04034b50, true);
++    local.setUint16(4, 20, true);
++    local.setUint16(6, 0x0800, true);
++    local.setUint16(8, 0, true);
++    local.setUint16(10, time, true);
++    local.setUint16(12, date, true);
++    local.setUint32(14, crc, true);
++    local.setUint32(18, data.length, true);
++    local.setUint32(22, data.length, true);
++    local.setUint16(26, nameBytes.length, true);
++    local.setUint16(28, 0, true);
++    chunks.push(new Uint8Array(local.buffer), nameBytes, data);
++    const entry = new DataView(new ArrayBuffer(46));
++    entry.setUint32(0, 0x02014b50, true);
++    entry.setUint16(4, 20, true);
++    entry.setUint16(6, 20, true);
++    entry.setUint16(8, 0x0800, true);
++    entry.setUint16(10, 0, true);
++    entry.setUint16(12, time, true);
++    entry.setUint16(14, date, true);
++    entry.setUint32(16, crc, true);
++    entry.setUint32(20, data.length, true);
++    entry.setUint32(24, data.length, true);
++    entry.setUint16(28, nameBytes.length, true);
++    entry.setUint32(42, offset, true);
++    central.push(new Uint8Array(entry.buffer), nameBytes);
++    offset += 30 + nameBytes.length + data.length;
++  }
++  const centralSize = central.reduce((sum, c) => sum + c.length, 0);
++  const end = new DataView(new ArrayBuffer(22));
++  end.setUint32(0, 0x06054b50, true);
++  end.setUint16(8, Object.keys(files).length, true);
++  end.setUint16(10, Object.keys(files).length, true);
++  end.setUint32(12, centralSize, true);
++  end.setUint32(16, offset, true);
++  const all = [...chunks, ...central, new Uint8Array(end.buffer)];
++  const out = new Uint8Array(all.reduce((sum, c) => sum + c.length, 0));
++  let at = 0;
++  for (const c of all) {
++    out.set(c, at);
++    at += c.length;
++  }
++  return out;
++}
++
++export function markdownToDocx(markdown: string, title: string): Blob {
++  // `storedZip` allocates its own ArrayBuffer, so its whole buffer is the archive.
++  return new Blob([storedZip(buildDocxParts(markdown, title)).buffer as ArrayBuffer], {
++    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
++  });
++}
++
++/** A file name from a chat title: no path, reserved or Markdown characters, at most 80 characters. */
++export const safeFileName = (title: string | null | undefined, fallback: string): string => {
++  const cleaned = (title ?? '')
++    // eslint-disable-next-line no-control-regex
++    .replace(/[\\/:*?"<>|#`\u0000-\u001F]/g, ' ')
++    .replace(/\s+/g, ' ')
++    .trim()
++    .slice(0, 80);
++  return cleaned || fallback;
++};
++
++export function saveBlob(blob: Blob, filename: string): void {
++  const url = URL.createObjectURL(blob);
++  const a = document.createElement('a');
++  a.href = url;
++  a.download = filename;
++  document.body.appendChild(a);
++  a.click();
++  a.remove();
++  setTimeout(() => URL.revokeObjectURL(url), 10_000);
++}
+diff --git a/client/src/utils/markdown.ts b/client/src/utils/markdown.ts
+index 9427d50..366ba6f 100644
+--- a/client/src/utils/markdown.ts
++++ b/client/src/utils/markdown.ts
+@@ -311,6 +311,20 @@ body { background-color: ${canvas}; }
+ `;
+ }
+ 
++/**
++ * EF (#135): Arabic documents read right to left. The page takes its direction from its first strong character
++ * (`dir="auto"` on the content element); each paragraph, heading, list item and cell then takes its own, so an English line inside an
++ * Arabic document (or the reverse) still starts at its own edge. Code stays left to right. Arabic system fonts first.
++ */
++const EFAIW_BIDI_CSS = `
++.markdown-body { font-family: "Segoe UI", "Noto Naskh Arabic", "Geeza Pro", Tahoma, -apple-system, BlinkMacSystemFont, "Noto Sans", Helvetica, Arial, sans-serif; line-height: 1.7; }
++.markdown-body p, .markdown-body li, .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4,
++.markdown-body h5, .markdown-body h6, .markdown-body td, .markdown-body th, .markdown-body blockquote {
++  unicode-bidi: plaintext; text-align: start;
++}
++.markdown-body pre, .markdown-body code { direction: ltr; unicode-bidi: isolate; text-align: left; }
++`;
++
+ function generateMarkdownHtml(content: string, contrastCSS = ''): string {
+   const normalizedContent = content.replace(/^( {2})(-|\d+\.)/gm, '    $2');
+   const escapedContent = escapeForTemplateLiteral(normalizedContent);
+@@ -321,10 +335,10 @@ function generateMarkdownHtml(content: string, contrastCSS = ''): string {
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ <title>Markdown Preview</title>
+-<style>${markdownCSS}${contrastCSS}</style>
++<style>${markdownCSS}${EFAIW_BIDI_CSS}${contrastCSS}</style>
+ </head>
+ <body>
+-<div class="markdown-body" id="content" style="padding:2rem;margin:1rem;min-height:100vh"></div>
++<div class="markdown-body" id="content" dir="auto" style="padding:2rem;margin:1rem;min-height:100vh"></div>
+ <script src="${MARKED_CDN}" integrity="${MARKED_SRI}" crossorigin="anonymous"></script>
+ <script>
+ if (typeof marked === 'undefined') {

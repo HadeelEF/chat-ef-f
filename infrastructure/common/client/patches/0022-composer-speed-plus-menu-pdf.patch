@@ -1,0 +1,1344 @@
+Composer like ChatGPT, Claude and Qwen Chat (#138, research on #135): one + menu, a speed selector, PDF, documents.
+- «سريع / متأنٍّ / عميق» (SpeedSelector.tsx) in place of the model button and the «تفكير» switch: one choice named by
+  its outcome, each option one of the three lineup specs («بصير لايت / بلس / برو» under it, with its description).
+  The chat switches in place. Any other spec (an agent, an upstream configuration) keeps the upstream model button.
+  ThinkingToggle.tsx is gone.
+- «+» (ToolsDropdown.tsx) holds the composer's tools: «إرفاق ملف» (opens the upstream upload control, kept in the DOM
+  but out of view), then on/off items with a check mark: «مستندات» (artifacts), «الإنترنت», skills, memory. The pin
+  buttons, the artifacts sub-menu and its shadcn/ui and custom prompt modes are gone; a chat left in one of those
+  modes returns to the default mode. A tool that is on shows as a chip, and tapping the chip turns it off.
+- «الإنترنت» (composerModes.ts, InternetBadge.tsx): every speed has a hidden twin spec on an endpoint without the
+  provider's search (librechat.yaml, `showInMenu: false`). The server keeps hidden specs out of the browser's config
+  and resolves them by name, so the client builds the twin from the visible spec and switches to it in place.
+- «PDF / طباعة» under «تنزيل» (DownloadReply.tsx, utils/efaiwPrint.ts): the reply in a print view in a new tab, right
+  to left when written in Arabic, A4, then the browser's print dialog (save as PDF on a phone too). Built with the
+  same Markdown parser as the Word file; the page has no script of its own.
+- A document the reply is writing opens in the side panel by itself (Artifact.tsx), only while that reply streams.
+
+diff --git a/client/src/components/Artifacts/Artifact.tsx b/client/src/components/Artifacts/Artifact.tsx
+index d2e98be..856e5c6 100644
+--- a/client/src/components/Artifacts/Artifact.tsx
++++ b/client/src/components/Artifacts/Artifact.tsx
+@@ -7,7 +7,7 @@ import type { Pluggable } from 'unified';
+ import type { Artifact } from '~/common';
+ import { useMessageContext, useArtifactContext } from '~/Providers';
+ import { logger, extractContent, isArtifactRoute } from '~/utils';
+-import { artifactsState } from '~/store/artifacts';
++import { artifactsState, artifactsVisibility, currentArtifactId } from '~/store/artifacts';
+ import ArtifactButton from './ArtifactButton';
+ 
+ export const artifactPlugin: Pluggable = () => {
+@@ -47,7 +47,11 @@ export function Artifact({
+   node: unknown;
+ }) {
+   const location = useLocation();
+-  const { messageId } = useMessageContext();
++  const { messageId, isSubmitting } = useMessageContext();
++  const setCurrentArtifactId = useSetRecoilState(currentArtifactId);
++  const setArtifactsVisible = useSetRecoilState(artifactsVisibility);
++  /** EF (#138): the artifact this component already opened by itself, so it does so once. */
++  const autoOpenedRef = useRef<string | null>(null);
+   const { getNextIndex, resetCounter } = useArtifactContext();
+   const artifactIndex = useRef(getNextIndex(false)).current;
+ 
+@@ -124,5 +128,21 @@ export function Artifact({
+     updateArtifact();
+   }, [updateArtifact, resetCounter]);
+ 
++  /* EF (#138): a document the reply is writing opens in the side panel by itself, as in Claude and ChatGPT, instead
++     of waiting behind its card. Only while that reply streams: opening an old chat leaves the panel closed, as
++     upstream does for tool artifacts (Presentation.tsx). Closing the panel mid-reply is respected. */
++  const artifactId = artifact?.id ?? null;
++  useEffect(() => {
++    if (isSubmitting !== true || artifactId == null || autoOpenedRef.current === artifactId) {
++      return;
++    }
++    if (!isArtifactRoute(location.pathname)) {
++      return;
++    }
++    autoOpenedRef.current = artifactId;
++    setCurrentArtifactId(artifactId);
++    setArtifactsVisible(true);
++  }, [isSubmitting, artifactId, location.pathname, setCurrentArtifactId, setArtifactsVisible]);
++
+   return <ArtifactButton artifact={artifact} />;
+ }
+diff --git a/client/src/components/Chat/Input/Artifacts.tsx b/client/src/components/Chat/Input/Artifacts.tsx
+index dd962bc..7f77e51 100644
+--- a/client/src/components/Chat/Input/Artifacts.tsx
++++ b/client/src/components/Chat/Input/Artifacts.tsx
+@@ -1,182 +1,49 @@
+-import React, { memo, useState, useCallback, useMemo, useEffect } from 'react';
+-import * as Ariakit from '@ariakit/react';
++import React, { memo, useCallback, useEffect } from 'react';
++import { FileText } from 'lucide-react';
+ import { CheckboxButton } from '@librechat/client';
+-import { WandSparkles, ChevronDown } from 'lucide-react';
+ import { ArtifactModes, defaultAgentCapabilities } from 'librechat-data-provider';
+ import { useLocalize, useAgentCapabilities } from '~/hooks';
+ import { useBadgeRowContext } from '~/Providers';
+ import { badgeAccents } from './accents';
+-import { cn } from '~/utils';
+-
+-interface ArtifactsToggleState {
+-  enabled: boolean;
+-  mode: string;
+-}
+ 
++/**
++ * EF (#138): one chip, «مستندات». Upstream's split button opened a menu with shadcn/ui component instructions and a
++ * custom prompt mode: developer options no consumer assistant shows. A chat is now either in the default artifacts
++ * mode or off, and a chat left in one of those modes returns to the default.
++ */
+ function Artifacts() {
+   const localize = useLocalize();
+   const context = useBadgeRowContext();
+   const { toggleState, debouncedChange, isPinned } = context?.artifacts ?? {};
+-
+   const { artifactsEnabled } = useAgentCapabilities(
+     context?.agentsConfig?.capabilities ?? defaultAgentCapabilities,
+   );
+ 
+-  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
+-  const [isButtonExpanded, setIsButtonExpanded] = useState(false);
++  const mode = typeof toggleState === 'string' ? toggleState : '';
++  const isEnabled = mode !== '';
+ 
+-  const currentState = useMemo<ArtifactsToggleState>(() => {
+-    if (typeof toggleState === 'string' && toggleState) {
+-      return { enabled: true, mode: toggleState };
++  useEffect(() => {
++    if (mode === ArtifactModes.SHADCNUI || mode === ArtifactModes.CUSTOM) {
++      debouncedChange?.({ value: ArtifactModes.DEFAULT });
+     }
+-    return { enabled: false, mode: '' };
+-  }, [toggleState]);
+-
+-  const isEnabled = currentState.enabled;
+-  const isShadcnEnabled = currentState.mode === ArtifactModes.SHADCNUI;
+-  const isCustomEnabled = currentState.mode === ArtifactModes.CUSTOM;
++  }, [mode, debouncedChange]);
+ 
+   const handleToggle = useCallback(() => {
+-    if (!debouncedChange) return;
+-    if (isEnabled) {
+-      debouncedChange({ value: '' });
+-      setIsButtonExpanded(false);
+-    } else {
+-      debouncedChange({ value: ArtifactModes.DEFAULT });
+-    }
++    debouncedChange?.({ value: isEnabled ? '' : ArtifactModes.DEFAULT });
+   }, [isEnabled, debouncedChange]);
+ 
+-  const handleMenuButtonClick = useCallback(
+-    (e: React.MouseEvent) => {
+-      e.stopPropagation();
+-      setIsButtonExpanded(!isButtonExpanded);
+-    },
+-    [isButtonExpanded],
+-  );
+-
+-  useEffect(() => {
+-    if (!isPopoverOpen) {
+-      setIsButtonExpanded(false);
+-    }
+-  }, [isPopoverOpen]);
+-
+-  const handleShadcnToggle = useCallback(() => {
+-    if (!debouncedChange) return;
+-    if (isShadcnEnabled) {
+-      debouncedChange({ value: ArtifactModes.DEFAULT });
+-    } else {
+-      debouncedChange({ value: ArtifactModes.SHADCNUI });
+-    }
+-  }, [isShadcnEnabled, debouncedChange]);
+-
+-  const handleCustomToggle = useCallback(() => {
+-    if (!debouncedChange) return;
+-    if (isCustomEnabled) {
+-      debouncedChange({ value: ArtifactModes.DEFAULT });
+-    } else {
+-      debouncedChange({ value: ArtifactModes.CUSTOM });
+-    }
+-  }, [isCustomEnabled, debouncedChange]);
+-
+-  if (!artifactsEnabled) {
+-    return null;
+-  }
+-
+-  if (!isEnabled && !isPinned) {
++  if (!artifactsEnabled || (!isEnabled && !isPinned)) {
+     return null;
+   }
+ 
+   return (
+-    <div className="flex">
+-      <CheckboxButton
+-        /* EF (#135): logical sides, so the split button joins at the chevron in Arabic too. */
+-        className={cn(isEnabled && 'rounded-e-none border-e-0')}
+-        checked={isEnabled}
+-        setValue={handleToggle}
+-        label={localize('com_ui_artifacts')}
+-        isCheckedClassName={badgeAccents.amber}
+-        icon={<WandSparkles className="icon-md" aria-hidden="true" />}
+-      />
+-
+-      {isEnabled && (
+-        <Ariakit.MenuProvider open={isPopoverOpen} setOpen={setIsPopoverOpen}>
+-          <Ariakit.MenuButton
+-            className={cn(
+-              'w-7 rounded-e-full rounded-s-none border-b border-e border-s-0 border-t border-border-light md:w-6',
+-              badgeAccents.amber,
+-              'transition-colors',
+-            )}
+-            onClick={handleMenuButtonClick}
+-          >
+-            <ChevronDown
+-              className={cn(
+-                'ms-1 h-4 w-4 text-text-secondary transition-transform duration-300 md:ms-0.5',
+-                isButtonExpanded && 'rotate-180',
+-              )}
+-              aria-hidden="true"
+-            />
+-          </Ariakit.MenuButton>
+-
+-          <Ariakit.Menu
+-            gutter={4}
+-            className={cn(
+-              'animate-popover-top-left z-40 flex min-w-[250px] flex-col rounded-xl',
+-              'border border-border-light bg-surface-secondary shadow-lg',
+-            )}
+-            portal={true}
+-            unmountOnHide={true}
+-          >
+-            <div className="px-2 py-1.5">
+-              <div className="mb-2 text-xs font-medium text-text-secondary">
+-                {localize('com_ui_artifacts_options')}
+-              </div>
+-
+-              {/* Include shadcn/ui Option */}
+-              <Ariakit.MenuItem
+-                hideOnClick={false}
+-                onClick={(event) => {
+-                  event.preventDefault();
+-                  event.stopPropagation();
+-                  handleShadcnToggle();
+-                }}
+-                className={cn(
+-                  'mb-1 flex items-center justify-between gap-2 rounded-lg px-2 py-2',
+-                  'cursor-pointer bg-surface-secondary text-text-primary outline-none transition-colors',
+-                  'hover:bg-surface-hover data-[active-item]:bg-surface-hover',
+-                  isShadcnEnabled && 'bg-surface-active',
+-                )}
+-              >
+-                <span className="text-sm">{localize('com_ui_include_shadcnui' as any)}</span>
+-                <div className="ml-auto flex items-center">
+-                  <Ariakit.MenuItemCheck checked={isShadcnEnabled} />
+-                </div>
+-              </Ariakit.MenuItem>
+-
+-              {/* Custom Prompt Mode Option */}
+-              <Ariakit.MenuItem
+-                hideOnClick={false}
+-                onClick={(event) => {
+-                  event.preventDefault();
+-                  event.stopPropagation();
+-                  handleCustomToggle();
+-                }}
+-                className={cn(
+-                  'mb-1 flex items-center justify-between gap-2 rounded-lg px-2 py-2',
+-                  'cursor-pointer bg-surface-secondary text-text-primary outline-none transition-colors',
+-                  'hover:bg-surface-hover data-[active-item]:bg-surface-hover',
+-                  isCustomEnabled && 'bg-surface-active',
+-                )}
+-              >
+-                <span className="text-sm">{localize('com_ui_custom_prompt_mode' as any)}</span>
+-                <div className="ml-auto flex items-center">
+-                  <Ariakit.MenuItemCheck checked={isCustomEnabled} />
+-                </div>
+-              </Ariakit.MenuItem>
+-            </div>
+-          </Ariakit.Menu>
+-        </Ariakit.MenuProvider>
+-      )}
+-    </div>
++    <CheckboxButton
++      checked={isEnabled}
++      setValue={handleToggle}
++      label={localize('com_efaiw_documents')}
++      isCheckedClassName={badgeAccents.amber}
++      icon={<FileText className="icon-md" aria-hidden="true" />}
++    />
+   );
+ }
+ 
+diff --git a/client/src/components/Chat/Input/BadgeRow.tsx b/client/src/components/Chat/Input/BadgeRow.tsx
+index 2a0e010..65c6536 100644
+--- a/client/src/components/Chat/Input/BadgeRow.tsx
++++ b/client/src/components/Chat/Input/BadgeRow.tsx
+@@ -19,6 +19,7 @@ import { useChatBadges } from '~/hooks';
+ import ToolDialogs from './ToolDialogs';
+ import FileSearch from './FileSearch';
+ import Artifacts from './Artifacts';
++import InternetBadge from './InternetBadge';
+ import MCPSelect from './MCPSelect';
+ import WebSearch from './WebSearch';
+ import Memory from './Memory';
+@@ -27,6 +28,8 @@ import store from '~/store';
+ 
+ interface BadgeRowProps {
+   showEphemeralBadges?: boolean;
++  /** EF (#138): the speed selector (or the model button), shown right after the + menu. */
++  modelControl?: React.ReactNode;
+   onChange: (badges: Pick<BadgeItem, 'id'>[]) => void;
+   onToggle?: (badgeId: string, currentActive: boolean) => void;
+   conversationId?: string | null;
+@@ -144,6 +147,7 @@ const dragReducer = (state: DragState, action: DragAction): DragState => {
+ 
+ function BadgeRow({
+   showEphemeralBadges,
++  modelControl,
+   conversationId,
+   specName,
+   isSubmitting,
+@@ -332,6 +336,7 @@ function BadgeRow({
+     >
+       <div ref={containerRef} className="relative flex flex-wrap items-center gap-2">
+         {showEphemeralBadges === true && <ToolsDropdown />}
++        {modelControl}
+         {tempBadges.map((badge, index) => (
+           <React.Fragment key={badge.id}>
+             {dragState.draggedBadge && dragState.insertIndex === index && ghostBadge && (
+@@ -378,6 +383,7 @@ function BadgeRow({
+             <FileSearch />
+             <Skills />
+             <Memory />
++            <InternetBadge />
+             <Artifacts />
+             <MCPSelect />
+           </>
+diff --git a/client/src/components/Chat/Input/ChatForm.tsx b/client/src/components/Chat/Input/ChatForm.tsx
+index d0ea209..2dadd17 100644
+--- a/client/src/components/Chat/Input/ChatForm.tsx
++++ b/client/src/components/Chat/Input/ChatForm.tsx
+@@ -71,7 +71,8 @@ import StopButton from './StopButton';
+ import SendButton from './SendButton';
+ import EditBadges from './EditBadges';
+ import BadgeRow from './BadgeRow';
+-import ThinkingToggle from './ThinkingToggle';
++import SpeedSelector from './SpeedSelector';
++import useComposerModes from './composerModes';
+ import Mention from './Mention';
+ import store from '~/store';
+ 
+@@ -200,6 +201,10 @@ const ChatForm = memo(function ChatForm({
+     [conversation?.spec, startupConfig],
+   );
+   const hideBadgeRow = modelSpec?.hideBadgeRow === true;
++  /** EF (#138): the composer of a chat with ephemeral tools gets the + menu and, on the lineup, the speed selector. */
++  const plusMenu =
++    !!endpoint && !hideBadgeRow && !isAgentsEndpoint(endpoint) && !isAssistantsEndpoint(endpoint);
++  const modes = useComposerModes();
+   const filesLoading = useMemo(() => hasIncompleteFiles(files), [files]);
+   const conversationId = useMemo(
+     () => conversation?.conversationId ?? Constants.NEW_CONVO,
+@@ -854,7 +859,9 @@ const ChatForm = memo(function ChatForm({
+                   isRTL ? 'flex-row-reverse' : 'flex-row',
+                 )}
+               >
+-                <div className="shrink-0">
++                {/* EF (#138): with the + menu (it opens this control's file picker), the upload control stays in
++                    the DOM but out of view; chats without it (agents, assistants) keep the paperclip. */}
++                <div className={plusMenu ? 'hidden' : 'shrink-0'}>
+                   <AttachFileChat
+                     conversation={conversation}
+                     disableInputs={disableInputs}
+@@ -863,27 +870,26 @@ const ChatForm = memo(function ChatForm({
+                     setFilesLoading={setFilesLoading}
+                   />
+                 </div>
+-                {index === 0 && (
++                {index === 0 && !plusMenu && (
+                   <div className="min-w-0 shrink">
+                     <ModelSelector startupConfig={startupConfig} variant="composer" />
+                   </div>
+                 )}
+-                {/* EF (#135): thinking on/off next to the model button. */}
+-                {index === 0 && (
+-                  <div className="shrink-0">
+-                    <ThinkingToggle
+-                      startupConfig={startupConfig}
+-                      disabled={isSubmitting || disableInputs}
+-                    />
+-                  </div>
+-                )}
+                 <BadgeRow
+-                  showEphemeralBadges={
+-                    !!endpoint &&
+-                    !hideBadgeRow &&
+-                    !isAgentsEndpoint(endpoint) &&
+-                    !isAssistantsEndpoint(endpoint)
++                  /* EF (#138): the speed selector sits right after the +, in place of the model button and the
++                     thinking switch; any other chat (an agent, an upstream spec) keeps the model button. */
++                  modelControl={
++                    index === 0 &&
++                    plusMenu &&
++                    (modes.available ? (
++                      <SpeedSelector disabled={isSubmitting || disableInputs} />
++                    ) : (
++                      <div className="min-w-0 shrink">
++                        <ModelSelector startupConfig={startupConfig} variant="composer" />
++                      </div>
++                    ))
+                   }
++                  showEphemeralBadges={plusMenu}
+                   isSubmitting={isSubmitting}
+                   conversationId={conversationId}
+                   specName={conversation?.spec}
+diff --git a/client/src/components/Chat/Input/InternetBadge.tsx b/client/src/components/Chat/Input/InternetBadge.tsx
+new file mode 100644
+index 0000000..9baa790
+--- /dev/null
++++ b/client/src/components/Chat/Input/InternetBadge.tsx
+@@ -0,0 +1,29 @@
++import { memo } from 'react';
++import { Globe } from 'lucide-react';
++import { CheckboxButton } from '@librechat/client';
++import useComposerModes from './composerModes';
++import { badgeAccents } from './accents';
++import { useLocalize } from '~/hooks';
++
++/**
++ * EF (#138): the chip of the provider's built-in web search (ADR-0015), shown while it is on for this chat. Tapping
++ * it moves the chat to the spec's no-search twin; the + menu turns it back on.
++ */
++function InternetBadge() {
++  const localize = useLocalize();
++  const { available, web, setWeb } = useComposerModes();
++  if (!available || !web) {
++    return null;
++  }
++  return (
++    <CheckboxButton
++      checked={true}
++      setValue={() => setWeb(false)}
++      label={localize('com_efaiw_internet')}
++      isCheckedClassName={badgeAccents.blue}
++      icon={<Globe className="icon-md" aria-hidden="true" />}
++    />
++  );
++}
++
++export default memo(InternetBadge);
+diff --git a/client/src/components/Chat/Input/SpeedSelector.tsx b/client/src/components/Chat/Input/SpeedSelector.tsx
+new file mode 100644
+index 0000000..e6b2496
+--- /dev/null
++++ b/client/src/components/Chat/Input/SpeedSelector.tsx
+@@ -0,0 +1,94 @@
++import { memo } from 'react';
++import * as Ariakit from '@ariakit/react';
++import { Check, ChevronDown, Lightbulb, Telescope, Zap } from 'lucide-react';
++import { composerControlClasses } from '@librechat/client';
++import type { LucideIcon } from 'lucide-react';
++import type { TranslationKeys } from '~/hooks';
++import { useShortcutAriaKey } from '~/hooks/useKeyboardShortcuts';
++import useComposerModes from './composerModes';
++import type { SpeedId } from './composerModes';
++import { useLocalize } from '~/hooks';
++import { cn } from '~/utils';
++
++const OPTIONS: ReadonlyArray<{ id: SpeedId; icon: LucideIcon; label: TranslationKeys }> = [
++  { id: 'fast', icon: Zap, label: 'com_efaiw_speed_fast' },
++  { id: 'careful', icon: Lightbulb, label: 'com_efaiw_speed_careful' },
++  { id: 'deep', icon: Telescope, label: 'com_efaiw_speed_deep' },
++];
++
++/**
++ * EF (#138): «سريع / متأنٍّ / عميق» in place of the model button and the thinking switch, like Qwen Chat's mode
++ * menu: one choice named by its outcome. Each option is one of the three specs and names it under the outcome
++ * («بصير لايت · …», its description from librechat.yaml), so the reply's label still matches. The chat switches in
++ * place and keeps its internet setting.
++ */
++function SpeedSelector({ disabled = false }: { disabled?: boolean }) {
++  const localize = useLocalize();
++  const { speed, setSpeed, specOf } = useComposerModes();
++  const active = OPTIONS.find((o) => o.id === speed) ?? OPTIONS[0];
++  const ActiveIcon = active.icon;
++  const name = `${localize('com_efaiw_speed')}: ${localize(active.label)}`;
++  /* The model selector's shortcut (Ctrl/⌘ + Shift + M) opens this menu: it finds the button by its test id. */
++  const shortcut = useShortcutAriaKey('openModelSelector');
++
++  return (
++    <Ariakit.MenuProvider placement="top-start">
++      <Ariakit.MenuButton
++        disabled={disabled}
++        data-testid="model-selector-button"
++        aria-keyshortcuts={shortcut}
++        aria-label={name}
++        title={name}
++        className={cn(
++          composerControlClasses(),
++          'gap-1.5 px-theme-normal',
++          disabled && 'opacity-70',
++        )}
++      >
++        <ActiveIcon className="icon-md" aria-hidden="true" />
++        <span>{localize(active.label)}</span>
++        <ChevronDown className="size-4 text-text-secondary" aria-hidden="true" />
++      </Ariakit.MenuButton>
++      <Ariakit.Menu
++        portal={true}
++        gutter={6}
++        unmountOnHide={true}
++        aria-label={localize('com_efaiw_speed')}
++        className="popover-ui z-50 flex w-72 max-w-[calc(100vw-32px)] flex-col gap-0.5 rounded-xl border border-border-light bg-surface-secondary p-1.5 shadow-lg"
++      >
++        {OPTIONS.map((option) => {
++          const spec = specOf(option.id);
++          if (spec == null) {
++            return null;
++          }
++          const Icon = option.icon;
++          const checked = option.id === active.id;
++          return (
++            <Ariakit.MenuItem
++              key={option.id}
++              role="menuitemradio"
++              aria-checked={checked}
++              onClick={() => setSpeed(option.id)}
++              className="flex w-full cursor-pointer items-start gap-3 rounded-lg px-3 py-2.5 text-start text-text-primary outline-none hover:bg-surface-hover focus:bg-surface-hover data-[active-item]:bg-surface-hover"
++            >
++              <Icon className="icon-md mt-0.5 shrink-0" aria-hidden="true" />
++              <span className="flex min-w-0 flex-1 flex-col">
++                <span className="text-sm font-medium">{localize(option.label)}</span>
++                <span className="text-xs text-text-secondary">
++                  {spec.label}
++                  {spec.description ? ` · ${spec.description}` : ''}
++                </span>
++              </span>
++              <Check
++                className={cn('icon-sm mt-1 shrink-0', checked ? 'opacity-100' : 'opacity-0')}
++                aria-hidden="true"
++              />
++            </Ariakit.MenuItem>
++          );
++        })}
++      </Ariakit.Menu>
++    </Ariakit.MenuProvider>
++  );
++}
++
++export default memo(SpeedSelector);
+diff --git a/client/src/components/Chat/Input/ThinkingToggle.tsx b/client/src/components/Chat/Input/ThinkingToggle.tsx
+deleted file mode 100644
+index 8fe7bc4..0000000
+--- a/client/src/components/Chat/Input/ThinkingToggle.tsx
++++ /dev/null
+@@ -1,106 +0,0 @@
+-import { memo, useMemo } from 'react';
+-import { useRecoilValue } from 'recoil';
+-import { Lightbulb } from 'lucide-react';
+-import { composerControlClasses } from '@librechat/client';
+-import type { TStartupConfig } from 'librechat-data-provider';
+-import { useGetConversation, useLocalize, useNewConvo } from '~/hooks';
+-import useSelectMention from '~/hooks/Input/useSelectMention';
+-import { useAssistantsMapContext } from '~/Providers';
+-import { useGetEndpointsQuery } from '~/data-provider';
+-import { badgeAccents } from './accents';
+-import { cn } from '~/utils';
+-import store from '~/store';
+-
+-/**
+- * EF (#135): the «تفكير» switch next to the model button. The approved lineup (librechat.yaml, #131) sets thinking
+- * per spec: Lite and Plus are the same model without and with thinking, so the switch moves the chat between them in
+- * place, like picking the other one in the model menu (the model button follows). Pro always thinks: the switch shows
+- * on and cannot be turned off. Any other spec, and an upstream configuration, shows no switch.
+- */
+-const THINKING_PAIRS: ReadonlyArray<{ off: string; on: string }> = [
+-  { off: 'baseer-lite', on: 'baseer-plus' },
+-];
+-const ALWAYS_THINKS = new Set(['baseer-pro']);
+-/** A chat saved without a spec name still carries its spec's endpoint. */
+-const SPEC_BY_ENDPOINT: Record<string, string> = {
+-  Qwen: 'baseer-lite',
+-  'Qwen Thinking': 'baseer-plus',
+-  DeepSeek: 'baseer-pro',
+-};
+-
+-function ThinkingToggle({
+-  startupConfig,
+-  disabled = false,
+-}: {
+-  startupConfig?: TStartupConfig;
+-  disabled?: boolean;
+-}) {
+-  const localize = useLocalize();
+-  const spec = useRecoilValue(store.conversationSpecByIndex(0));
+-  const endpoint = useRecoilValue(store.conversationEndpointByIndex(0));
+-  const getConversation = useGetConversation(0);
+-  const { newConversation } = useNewConvo();
+-  const assistantsMap = useAssistantsMapContext();
+-  const { data: endpointsConfig } = useGetEndpointsQuery();
+-  const modelSpecs = useMemo(() => startupConfig?.modelSpecs?.list ?? [], [startupConfig]);
+-  const { onSelectSpec } = useSelectMention({
+-    modelSpecs,
+-    assistantsMap,
+-    endpointsConfig,
+-    getConversation,
+-    newConversation,
+-    returnHandlers: true,
+-  });
+-
+-  const current = spec || (endpoint != null ? SPEC_BY_ENDPOINT[endpoint] : undefined);
+-  const state = useMemo(() => {
+-    if (current == null) {
+-      return null;
+-    }
+-    if (ALWAYS_THINKS.has(current)) {
+-      return { on: true, locked: true, target: undefined };
+-    }
+-    const pair = THINKING_PAIRS.find((p) => p.off === current || p.on === current);
+-    if (pair == null) {
+-      return null;
+-    }
+-    const on = pair.on === current;
+-    const target = modelSpecs.find((s) => s.name === (on ? pair.off : pair.on));
+-    return target == null ? null : { on, locked: false, target };
+-  }, [current, modelSpecs]);
+-
+-  if (state == null) {
+-    return null;
+-  }
+-
+-  const hint = state.locked
+-    ? localize('com_efaiw_thinking_always')
+-    : localize(state.on ? 'com_efaiw_thinking_on' : 'com_efaiw_thinking_off');
+-
+-  return (
+-    <button
+-      type="button"
+-      aria-pressed={state.on}
+-      aria-disabled={state.locked || disabled || undefined}
+-      title={hint}
+-      onClick={() => {
+-        if (state.locked || disabled || state.target == null) {
+-          return;
+-        }
+-        onSelectSpec?.(state.target);
+-      }}
+-      className={cn(
+-        composerControlClasses(),
+-        'px-theme-normal',
+-        state.on && badgeAccents.purple,
+-        (state.locked || disabled) && 'cursor-default opacity-80 hover:shadow-sm',
+-      )}
+-    >
+-      <Lightbulb className="icon-md" aria-hidden="true" />
+-      <span>{localize('com_efaiw_thinking')}</span>
+-      <span className="sr-only">{hint}</span>
+-    </button>
+-  );
+-}
+-
+-export default memo(ThinkingToggle);
+diff --git a/client/src/components/Chat/Input/ToolsDropdown.tsx b/client/src/components/Chat/Input/ToolsDropdown.tsx
+index 2dd19b8..e8a6150 100644
+--- a/client/src/components/Chat/Input/ToolsDropdown.tsx
++++ b/client/src/components/Chat/Input/ToolsDropdown.tsx
+@@ -1,7 +1,18 @@
+ import React, { useState, useMemo, useCallback } from 'react';
+ import * as Ariakit from '@ariakit/react';
+ import { TooltipAnchor, DropdownPopup, PinIcon, VectorIcon } from '@librechat/client';
+-import { Brain, Globe, ScrollText, Settings, Settings2, TerminalSquareIcon } from 'lucide-react';
++import {
++  Brain,
++  Check,
++  Globe,
++  Plus,
++  FileText,
++  Paperclip,
++  ScrollText,
++  Settings,
++  TerminalSquareIcon,
++} from 'lucide-react';
++import type { LucideIcon } from 'lucide-react';
+ import {
+   AuthType,
+   Permissions,
+@@ -17,8 +28,8 @@ import {
+   useHasMemoryAccess,
+   useAgentCapabilities,
+ } from '~/hooks';
+-import ArtifactsSubMenu from '~/components/Chat/Input/ArtifactsSubMenu';
+ import MCPSubMenu from '~/components/Chat/Input/MCPSubMenu';
++import useComposerModes from '~/components/Chat/Input/composerModes';
+ import { useGetStartupConfig } from '~/data-provider';
+ import { useBadgeRowContext } from '~/Providers';
+ import { cn } from '~/utils';
+@@ -31,8 +42,23 @@ interface ToolsDropdownProps {
+  *  Returning null falls back to that default. */
+ const getMainLandmark = () => document.querySelector<HTMLElement>('main');
+ 
++/** EF (#138): opens the composer's file picker (the upstream upload control, kept in the DOM but out of view). */
++const openFilePicker = () => {
++  const control =
++    document.getElementById('attach-file-button') ??
++    document.getElementById('attach-file-menu-button');
++  control?.click();
++};
++
++/**
++ * EF (#138): the composer's «+» (ChatGPT, Claude and Qwen Chat put their tools behind one +): attach a file, then
++ * on/off items with a check mark — documents (artifacts), internet (the provider's search, through the spec's
++ * no-search twin), skills and memory. A tool that is on also shows as a chip in the composer. The pin buttons and the
++ * artifacts sub-menu (shadcn/ui, custom prompt mode) are gone.
++ */
+ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+   const localize = useLocalize();
++  const modes = useComposerModes();
+   const { user } = useAuthContext();
+   const context = useBadgeRowContext();
+   const { data: startupConfig } = useGetStartupConfig();
+@@ -96,9 +122,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+   } = webSearch ?? {};
+   const { isPinned: isCodePinned, setIsPinned: setIsCodePinned } = codeInterpreter ?? {};
+   const { isPinned: isFileSearchPinned, setIsPinned: setIsFileSearchPinned } = fileSearch ?? {};
+-  const { isPinned: isArtifactsPinned, setIsPinned: setIsArtifactsPinned } = artifacts ?? {};
+-  const { isPinned: isSkillsPinned, setIsPinned: setIsSkillsPinned } = skills ?? {};
+-  const { isPinned: isMemoryPinned, setIsPinned: setIsMemoryPinned } = memory ?? {};
+ 
+   const showWebSearchSettings = useMemo(() => {
+     const authTypes = webSearchAuthData?.authTypes ?? [];
+@@ -130,24 +153,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+     }
+   }, [artifacts]);
+ 
+-  const handleShadcnToggle = useCallback(() => {
+-    const currentState = artifacts?.toggleState;
+-    if (currentState === ArtifactModes.SHADCNUI) {
+-      artifacts?.debouncedChange({ value: ArtifactModes.DEFAULT });
+-    } else {
+-      artifacts?.debouncedChange({ value: ArtifactModes.SHADCNUI });
+-    }
+-  }, [artifacts]);
+-
+-  const handleCustomToggle = useCallback(() => {
+-    const currentState = artifacts?.toggleState;
+-    if (currentState === ArtifactModes.CUSTOM) {
+-      artifacts?.debouncedChange({ value: ArtifactModes.DEFAULT });
+-    } else {
+-      artifacts?.debouncedChange({ value: ArtifactModes.CUSTOM });
+-    }
+-  }, [artifacts]);
+-
+   const handleSkillsToggle = useCallback(() => {
+     const newValue = !skills?.toggleState;
+     skills?.debouncedChange({ value: newValue });
+@@ -162,6 +167,59 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+ 
+   const dropdownItems: MenuItemProps[] = [];
+ 
++  const toggleItem = (
++    id: string,
++    label: string,
++    Icon: LucideIcon,
++    checked: boolean,
++    onToggle: () => void,
++  ): MenuItemProps => ({
++    id,
++    ariaChecked: checked,
++    onClick: onToggle,
++    render: (props) => (
++      <div {...props} data-testid={id}>
++        <div className="flex items-center gap-2">
++          <Icon className="icon-md" aria-hidden="true" />
++          <span>{label}</span>
++        </div>
++        <Check
++          className={cn('icon-sm', checked ? 'opacity-100' : 'opacity-0')}
++          aria-hidden="true"
++        />
++      </div>
++    ),
++  });
++
++  dropdownItems.push({
++    id: 'tools-menu-attach',
++    label: localize('com_efaiw_attach_file'),
++    icon: <Paperclip className="icon-md" aria-hidden="true" />,
++    onClick: openFilePicker,
++  });
++  dropdownItems.push({ separate: true });
++
++  if (artifactsEnabled) {
++    const on = typeof artifacts?.toggleState === 'string' && artifacts.toggleState !== '';
++    dropdownItems.push(
++      toggleItem(
++        'tools-menu-documents',
++        localize('com_efaiw_documents'),
++        FileText,
++        on,
++        handleArtifactsToggle,
++      ),
++    );
++  }
++
++  if (modes.available) {
++    dropdownItems.push(
++      toggleItem('tools-menu-internet', localize('com_efaiw_internet'), Globe, modes.web, () =>
++        modes.setWeb(!modes.web),
++      ),
++    );
++  }
++
+   if (fileSearchEnabled && canUseFileSearch) {
+     dropdownItems.push({
+       onClick: handleFileSearchToggle,
+@@ -249,67 +307,27 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+   }
+ 
+   if (canUseSkills && skillsEnabled) {
+-    dropdownItems.push({
+-      onClick: handleSkillsToggle,
+-      hideOnClick: false,
+-      render: (props) => (
+-        <div {...props} data-testid="tools-menu-skills">
+-          <div className="flex items-center gap-2">
+-            <ScrollText className="icon-md" aria-hidden="true" />
+-            <span>{localize('com_ui_skills')}</span>
+-          </div>
+-          <button
+-            type="button"
+-            onClick={(e) => {
+-              e.stopPropagation();
+-              setIsSkillsPinned?.(!isSkillsPinned);
+-            }}
+-            className={cn(
+-              'rounded p-1 transition-all duration-200',
+-              'hover:bg-surface-secondary hover:shadow-sm',
+-              !isSkillsPinned && 'text-text-secondary hover:text-text-primary',
+-            )}
+-            aria-label={isSkillsPinned ? localize('com_ui_unpin') : localize('com_ui_pin')}
+-          >
+-            <div className="h-4 w-4">
+-              <PinIcon unpin={isSkillsPinned} />
+-            </div>
+-          </button>
+-        </div>
++    dropdownItems.push(
++      toggleItem(
++        'tools-menu-skills',
++        localize('com_ui_skills'),
++        ScrollText,
++        skills?.toggleState === true,
++        handleSkillsToggle,
+       ),
+-    });
++    );
+   }
+ 
+   if (showMemory) {
+-    dropdownItems.push({
+-      onClick: handleMemoryToggle,
+-      hideOnClick: false,
+-      render: (props) => (
+-        <div {...props} data-testid="tools-menu-memory">
+-          <div className="flex items-center gap-2">
+-            <Brain className="icon-md" aria-hidden="true" />
+-            <span>{localize('com_ui_memory')}</span>
+-          </div>
+-          <button
+-            type="button"
+-            onClick={(e) => {
+-              e.stopPropagation();
+-              setIsMemoryPinned?.(!isMemoryPinned);
+-            }}
+-            className={cn(
+-              'rounded p-1 transition-all duration-200',
+-              'hover:bg-surface-secondary hover:shadow-sm',
+-              !isMemoryPinned && 'text-text-secondary hover:text-text-primary',
+-            )}
+-            aria-label={isMemoryPinned ? localize('com_ui_unpin') : localize('com_ui_pin')}
+-          >
+-            <div className="h-4 w-4">
+-              <PinIcon unpin={isMemoryPinned} />
+-            </div>
+-          </button>
+-        </div>
++    dropdownItems.push(
++      toggleItem(
++        'tools-menu-memory',
++        localize('com_ui_memory'),
++        Brain,
++        memory?.toggleState === true,
++        handleMemoryToggle,
+       ),
+-    });
++    );
+   }
+ 
+   if (canRunCode && codeEnabled) {
+@@ -346,23 +364,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+     });
+   }
+ 
+-  if (artifactsEnabled && setIsArtifactsPinned != null) {
+-    dropdownItems.push({
+-      hideOnClick: false,
+-      render: (props) => (
+-        <ArtifactsSubMenu
+-          {...props}
+-          isArtifactsPinned={isArtifactsPinned ?? false}
+-          setIsArtifactsPinned={setIsArtifactsPinned}
+-          artifactsMode={artifacts?.toggleState as string}
+-          handleArtifactsToggle={handleArtifactsToggle}
+-          handleShadcnToggle={handleShadcnToggle}
+-          handleCustomToggle={handleCustomToggle}
+-        />
+-      ),
+-    });
+-  }
+-
+   const { availableMCPServers } = mcpServerManager ?? {};
+   if (canUseMcp && availableMCPServers && availableMCPServers.length > 0) {
+     dropdownItems.push({
+@@ -381,19 +382,19 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
+         <Ariakit.MenuButton
+           disabled={isDisabled}
+           id="tools-dropdown-button"
+-          aria-label={localize('com_efaiw_tools_options')}
++          aria-label={localize('com_efaiw_plus_menu')}
+           className={cn(
+             'flex size-theme-control items-center justify-center rounded-theme-control-round p-1 transition-colors duration-theme-fast hover:bg-surface-composer-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-primary focus-visible:ring-opacity-50',
+             isPopoverActive && 'bg-surface-composer-hover',
+           )}
+         >
+           <div className="flex w-full items-center justify-center gap-2">
+-            <Settings2 className="size-5" aria-hidden="true" />
++            <Plus className="size-5" aria-hidden="true" />
+           </div>
+         </Ariakit.MenuButton>
+       }
+       id="tools-dropdown-button"
+-      description={localize('com_ui_tools')}
++      description={localize('com_efaiw_plus_menu')}
+       disabled={isDisabled}
+     />
+   );
+diff --git a/client/src/components/Chat/Input/composerModes.ts b/client/src/components/Chat/Input/composerModes.ts
+new file mode 100644
+index 0000000..8159f66
+--- /dev/null
++++ b/client/src/components/Chat/Input/composerModes.ts
+@@ -0,0 +1,123 @@
++import { useCallback, useMemo } from 'react';
++import { useRecoilValue } from 'recoil';
++import type { TModelSpec } from 'librechat-data-provider';
++import { useGetEndpointsQuery, useGetStartupConfig } from '~/data-provider';
++import useSelectMention from '~/hooks/Input/useSelectMention';
++import { useGetConversation, useNewConvo } from '~/hooks';
++import { useAssistantsMapContext } from '~/Providers';
++import store from '~/store';
++
++/**
++ * EF (#138): the composer's speed and internet controls over the approved lineup (librechat.yaml, #131, #135).
++ * A speed is a visible spec; its no-search twin is a hidden spec (`showInMenu: false`) on a no-search endpoint. The
++ * server keeps hidden specs out of the browser's config but resolves them by name, so the twin is built here from
++ * the visible spec with the twin's name and endpoint. Any other spec (an agent, an upstream configuration) has no
++ * speed: the composer then shows the upstream model button.
++ */
++export type SpeedId = 'fast' | 'careful' | 'deep';
++
++export const SPEEDS: ReadonlyArray<{
++  id: SpeedId;
++  spec: string;
++  noWebSpec: string;
++  noWebEndpoint: string;
++}> = [
++  { id: 'fast', spec: 'baseer-lite', noWebSpec: 'baseer-lite-noweb', noWebEndpoint: 'Qwen NoWeb' },
++  {
++    id: 'careful',
++    spec: 'baseer-plus',
++    noWebSpec: 'baseer-plus-noweb',
++    noWebEndpoint: 'Qwen Thinking NoWeb',
++  },
++  {
++    id: 'deep',
++    spec: 'baseer-pro',
++    noWebSpec: 'baseer-pro-noweb',
++    noWebEndpoint: 'DeepSeek NoWeb',
++  },
++];
++
++/** A chat saved without a spec name still carries its spec's endpoint. */
++const SPEC_BY_ENDPOINT: Record<string, string> = {
++  Qwen: 'baseer-lite',
++  'Qwen Thinking': 'baseer-plus',
++  DeepSeek: 'baseer-pro',
++  'Qwen NoWeb': 'baseer-lite-noweb',
++  'Qwen Thinking NoWeb': 'baseer-plus-noweb',
++  'DeepSeek NoWeb': 'baseer-pro-noweb',
++};
++
++export default function useComposerModes() {
++  const { data: startupConfig } = useGetStartupConfig();
++  const spec = useRecoilValue(store.conversationSpecByIndex(0));
++  const endpoint = useRecoilValue(store.conversationEndpointByIndex(0));
++  const getConversation = useGetConversation(0);
++  const { newConversation } = useNewConvo();
++  const assistantsMap = useAssistantsMapContext();
++  const { data: endpointsConfig } = useGetEndpointsQuery();
++  const modelSpecs = useMemo(() => startupConfig?.modelSpecs?.list ?? [], [startupConfig]);
++  const { onSelectSpec } = useSelectMention({
++    modelSpecs,
++    assistantsMap,
++    endpointsConfig,
++    getConversation,
++    newConversation,
++    returnHandlers: true,
++  });
++
++  const current = spec || (endpoint != null ? SPEC_BY_ENDPOINT[endpoint] : undefined);
++  const speed = SPEEDS.find((s) => s.spec === current || s.noWebSpec === current);
++
++  const specFor = useCallback(
++    (target: (typeof SPEEDS)[number], web: boolean): TModelSpec | undefined => {
++      const visible = modelSpecs.find((s) => s.name === target.spec);
++      if (visible == null || web) {
++        return visible;
++      }
++      return {
++        ...visible,
++        name: target.noWebSpec,
++        preset: { ...visible.preset, endpoint: target.noWebEndpoint },
++      } as TModelSpec;
++    },
++    [modelSpecs],
++  );
++
++  const available = speed != null && specFor(speed, true) != null;
++  const web = speed != null && current === speed.spec;
++
++  const select = useCallback(
++    (target: TModelSpec | undefined) => {
++      if (target != null && target.name !== current) {
++        onSelectSpec?.(target);
++      }
++    },
++    [current, onSelectSpec],
++  );
++
++  const setSpeed = useCallback(
++    (id: SpeedId) => {
++      const target = SPEEDS.find((s) => s.id === id);
++      if (target != null) {
++        select(specFor(target, web));
++      }
++    },
++    [select, specFor, web],
++  );
++
++  const setWeb = useCallback(
++    (on: boolean) => {
++      if (speed != null) {
++        select(specFor(speed, on));
++      }
++    },
++    [select, specFor, speed],
++  );
++
++  const specOf = useCallback(
++    (id: SpeedId) => modelSpecs.find((s) => s.name === SPEEDS.find((x) => x.id === id)?.spec),
++    [modelSpecs],
++  );
++
++  return { available, speed: speed?.id, web, setSpeed, setWeb, specOf };
++}
+diff --git a/client/src/components/Chat/Messages/DownloadReply.tsx b/client/src/components/Chat/Messages/DownloadReply.tsx
+index 891758a..e691aa0 100644
+--- a/client/src/components/Chat/Messages/DownloadReply.tsx
++++ b/client/src/components/Chat/Messages/DownloadReply.tsx
+@@ -1,15 +1,11 @@
+ import { memo, useId, useState } from 'react';
+ import * as Ariakit from '@ariakit/react';
+-import { Download, FileText, FileCode } from 'lucide-react';
+-import { DropdownPopup, TooltipAnchor } from '@librechat/client';
++import { Download, FileText, FileCode, Printer } from 'lucide-react';
++import { DropdownPopup, TooltipAnchor, useToastContext } from '@librechat/client';
+ import { ContentTypes } from 'librechat-data-provider';
+ import type { TMessage } from 'librechat-data-provider';
+-import {
+-  markdownToDocx,
+-  safeFileName,
+-  saveBlob,
+-  stripArtifactDirectives,
+-} from '~/utils/efaiwDocx';
++import { markdownToDocx, safeFileName, saveBlob, stripArtifactDirectives } from '~/utils/efaiwDocx';
++import { openPrintView } from '~/utils/efaiwPrint';
+ import { hoverButtonClasses } from './styles';
+ import { useLocalize } from '~/hooks';
+ 
+@@ -35,7 +31,8 @@ export const replyMarkdown = (message: TMessage): string => {
+ 
+ /**
+  * EF (#135): «تنزيل» on a reply: the reply as a Word document (.docx, right to left when written in Arabic) or as
+- * Markdown (.md). Built in the browser (utils/efaiwDocx.ts); the file is named after the chat.
++ * Markdown (.md). Built in the browser (utils/efaiwDocx.ts); the file is named after the chat. EF (#138): or as a print
++ * view that the browser saves as PDF (utils/efaiwPrint.ts).
+  */
+ function DownloadReply({
+   message,
+@@ -47,6 +44,7 @@ function DownloadReply({
+   isLast: boolean;
+ }) {
+   const localize = useLocalize();
++  const { showToast } = useToastContext();
+   const menuId = useId();
+   const [isOpen, setIsOpen] = useState(false);
+   const label = localize('com_efaiw_download_reply');
+@@ -69,6 +67,21 @@ function DownloadReply({
+         saveBlob(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }), `${name}.md`);
+       },
+     },
++    {
++      label: localize('com_efaiw_download_pdf'),
++      icon: <Printer className="size-4 text-text-secondary" aria-hidden="true" />,
++      onClick: () => {
++        const root = document.documentElement;
++        const opened = openPrintView(replyMarkdown(message), name, {
++          print: localize('com_efaiw_print_save'),
++          dir: root.dir === 'rtl' ? 'rtl' : 'ltr',
++          lang: root.lang || 'ar',
++        });
++        if (!opened) {
++          showToast({ message: localize('com_efaiw_print_blocked'), status: 'warning' });
++        }
++      },
++    },
+   ];
+ 
+   return (
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index 557a919..7188a64 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3097,15 +3097,21 @@
+   "com_efaiw_rail_bookmarks": "Bookmarks",
+   "com_efaiw_rail_files": "Files",
+   "com_efaiw_rail_parameters": "Parameters",
+-  "com_efaiw_tools_options": "Tools Options",
+   "com_efaiw_notifications_region": "Notifications ({hotkey})",
+   "com_efaiw_model_selector_label": "{{model}}, select a model",
+-  "com_efaiw_thinking": "Thinking",
+-  "com_efaiw_thinking_off": "Turn on thinking: slower, more careful answers",
+-  "com_efaiw_thinking_on": "Thinking is on: tap to answer faster without it",
+-  "com_efaiw_thinking_always": "This model always thinks before answering",
++  "com_efaiw_speed": "Speed",
++  "com_efaiw_speed_fast": "Fast",
++  "com_efaiw_speed_careful": "Careful",
++  "com_efaiw_speed_deep": "Deep",
++  "com_efaiw_plus_menu": "Add and tools",
++  "com_efaiw_attach_file": "Attach a file",
++  "com_efaiw_documents": "Documents",
++  "com_efaiw_internet": "Internet",
+   "com_efaiw_download_reply": "Download",
+   "com_efaiw_download_word": "Word document (.docx)",
+   "com_efaiw_download_markdown": "Markdown (.md)",
++  "com_efaiw_download_pdf": "PDF / Print",
++  "com_efaiw_print_save": "Print or save as PDF",
++  "com_efaiw_print_blocked": "The browser blocked the print page. Allow pop-ups for this site, then try again.",
+   "com_efaiw_download_default_name": "Baseer reply"
+ }
+diff --git a/client/src/utils/efaiwPrint.ts b/client/src/utils/efaiwPrint.ts
+new file mode 100644
+index 0000000..d718134
+--- /dev/null
++++ b/client/src/utils/efaiwPrint.ts
+@@ -0,0 +1,186 @@
++/**
++ * EF (#138): a reply as a print view — the browser's print dialog saves it as PDF, on a phone too (ChatGPT and
++ * Claude offer PDF next to Word). Built from the reply's Markdown with the same parser as the Word file
++ * (utils/efaiwDocx.ts), in a new tab: right to left when written in Arabic, code left to right, no app chrome. The
++ * page carries no script of its own: the opener wires its button, so a strict CSP on the app does not stop it.
++ */
++import { gfm } from 'micromark-extension-gfm';
++import { gfmFromMarkdown } from 'mdast-util-gfm';
++import { fromMarkdown } from 'mdast-util-from-markdown';
++import { isRtlText, stripArtifactDirectives } from './efaiwDocx';
++
++type Node = {
++  type: string;
++  value?: string;
++  depth?: number;
++  ordered?: boolean | null;
++  start?: number | null;
++  url?: string;
++  alt?: string | null;
++  lang?: string | null;
++  align?: Array<string | null>;
++  children?: Node[];
++};
++
++const esc = (text: string): string =>
++  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
++
++const plain = (node: Node): string => node.value ?? (node.children ?? []).map(plain).join('');
++
++/** ` dir="rtl"` or ` dir="ltr"` from the first Arabic or Latin letter; none (the parent's) for numbers alone. */
++const dirOf = (node: Node): string => {
++  const text = plain(node);
++  if (!/[A-Za-z\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text)) {
++    return '';
++  }
++  return isRtlText(text) ? ' dir="rtl"' : ' dir="ltr"';
++};
++
++const inline = (nodes: Node[] = []): string =>
++  nodes
++    .map((node) => {
++      switch (node.type) {
++        case 'text':
++          return esc(node.value ?? '');
++        case 'strong':
++          return `<strong>${inline(node.children)}</strong>`;
++        case 'emphasis':
++          return `<em>${inline(node.children)}</em>`;
++        case 'delete':
++          return `<del>${inline(node.children)}</del>`;
++        case 'inlineCode':
++          return `<code>${esc(node.value ?? '')}</code>`;
++        case 'break':
++          return '<br>';
++        case 'link': {
++          const url = node.url ?? '';
++          return /^(https?:|mailto:)/i.test(url)
++            ? `<a href="${esc(url)}">${inline(node.children)}</a>`
++            : inline(node.children);
++        }
++        case 'image':
++          return `<em>${esc(node.alt ?? '')}</em>`;
++        default:
++          return node.children ? inline(node.children) : esc(node.value ?? '');
++      }
++    })
++    .join('');
++
++const block = (node: Node): string => {
++  switch (node.type) {
++    case 'heading': {
++      const level = Math.min(Math.max(node.depth ?? 1, 1), 4);
++      return `<h${level}${dirOf(node)}>${inline(node.children)}</h${level}>`;
++    }
++    case 'paragraph':
++      return `<p${dirOf(node)}>${inline(node.children)}</p>`;
++    case 'list': {
++      const tag = node.ordered ? 'ol' : 'ul';
++      const start =
++        node.ordered && node.start != null && node.start !== 1 ? ` start="${node.start}"` : '';
++      const items = (node.children ?? [])
++        .map((item) => `<li${dirOf(item)}>${(item.children ?? []).map(listChild).join('')}</li>`)
++        .join('');
++      return `<${tag}${dirOf(node)}${start}>${items}</${tag}>`;
++    }
++    case 'code':
++      return `<pre dir="ltr"><code>${esc(node.value ?? '')}</code></pre>`;
++    case 'math':
++      return `<pre dir="ltr">${esc(node.value ?? '')}</pre>`;
++    case 'blockquote':
++      return `<blockquote${dirOf(node)}>${(node.children ?? []).map(block).join('')}</blockquote>`;
++    case 'thematicBreak':
++      return '<hr>';
++    case 'table': {
++      const rows = node.children ?? [];
++      const body = rows
++        .map((row, r) => {
++          const tag = r === 0 ? 'th' : 'td';
++          const cells = (row.children ?? [])
++            .map((cell, c) => {
++              const align = node.align?.[c];
++              const style = align === 'center' ? ' style="text-align:center"' : '';
++              return `<${tag}${dirOf(cell)}${style}>${inline(cell.children)}</${tag}>`;
++            })
++            .join('');
++          return `<tr>${cells}</tr>`;
++        })
++        .join('');
++      return `<table${dirOf(node)}>${body}</table>`;
++    }
++    case 'html':
++      return node.value ? `<p>${esc(node.value)}</p>` : '';
++    default:
++      return node.children ? node.children.map(block).join('') : '';
++  }
++};
++
++/** A list item's paragraphs render inline, so a tight list prints tight. */
++const listChild = (node: Node): string =>
++  node.type === 'paragraph' ? `<span>${inline(node.children)}</span>` : block(node);
++
++export function markdownToPrintHtml(markdown: string): string {
++  const tree = fromMarkdown(stripArtifactDirectives(markdown), {
++    extensions: [gfm()],
++    mdastExtensions: [gfmFromMarkdown()],
++  }) as unknown as Node;
++  return (tree.children ?? []).map(block).join('\n');
++}
++
++const STYLE = `
++@page { size: A4; margin: 18mm 16mm; }
++* { box-sizing: border-box; }
++body { margin: 0; color: #17211e; background: #fff; font: 16px/1.75 "Segoe UI", "Geeza Pro", "Noto Naskh Arabic", Tahoma, Arial, sans-serif; }
++main { max-width: 760px; margin: 0 auto; padding: 24px 20px 48px; }
++h1, h2, h3, h4 { line-height: 1.4; margin: 1.2em 0 0.5em; color: #1f3864; }
++h1 { font-size: 1.6em; } h2 { font-size: 1.35em; } h3 { font-size: 1.15em; } h4 { font-size: 1em; }
++p, li, td, th, blockquote { text-align: start; }
++p { margin: 0 0 0.8em; }
++ul, ol { margin: 0 0 0.8em; padding-inline-start: 1.6em; }
++li { margin: 0.2em 0; }
++table { border-collapse: collapse; width: 100%; margin: 0.8em 0 1.2em; font-size: 0.95em; break-inside: auto; }
++th, td { border: 1px solid #bfbfbf; padding: 6px 10px; vertical-align: top; }
++th { background: #edf1f7; font-weight: 600; }
++tr { break-inside: avoid; }
++pre { background: #f2f2f2; border-radius: 6px; padding: 10px 12px; overflow-x: auto; white-space: pre-wrap; font: 13px/1.5 Consolas, "Courier New", monospace; text-align: left; break-inside: avoid; }
++code { font-family: Consolas, "Courier New", monospace; font-size: 0.92em; background: #f2f2f2; padding: 0 4px; border-radius: 4px; direction: ltr; unicode-bidi: isolate; }
++pre code { background: none; padding: 0; }
++blockquote { margin: 0 0 0.8em; padding-inline-start: 12px; border-inline-start: 3px solid #bfbfbf; color: #595959; }
++hr { border: 0; border-top: 1px solid #bfbfbf; margin: 1.2em 0; }
++a { color: #1f5fad; }
++.bar { position: sticky; top: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 10px 20px; background: #f6f8f7; border-bottom: 1px solid #d9e1de; }
++.bar button { font: inherit; font-size: 15px; padding: 8px 18px; border-radius: 999px; border: 0; background: #2b3a8f; color: #fff; cursor: pointer; }
++@media print { .bar { display: none; } main { padding: 0; } }
++`;
++
++/**
++ * Opens the reply in a new tab and its print dialog. Returns false when the browser blocked the tab, so the caller
++ * can say so. Phones show the dialog from the page's own button when they ignore the automatic call.
++ */
++export function openPrintView(
++  markdown: string,
++  title: string,
++  labels: { print: string; dir: 'rtl' | 'ltr'; lang: string },
++): boolean {
++  const view = window.open('', '_blank');
++  if (view == null) {
++    return false;
++  }
++  const doc = view.document;
++  doc.open();
++  doc.write(`<!doctype html><html lang="${labels.lang}" dir="${labels.dir}"><head><meta charset="utf-8">
++<meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title>
++<style>${STYLE}</style></head><body><div class="bar"><button type="button" id="efaiw-print">${esc(labels.print)}</button></div>
++<main dir="${isRtlText(markdown) ? 'rtl' : 'ltr'}">${markdownToPrintHtml(markdown)}</main></body></html>`);
++  doc.close();
++  doc.getElementById('efaiw-print')?.addEventListener('click', () => view.print());
++  view.focus();
++  setTimeout(() => {
++    try {
++      view.print();
++    } catch {
++      /* the page's button remains */
++    }
++  }, 400);
++  return true;
++}

@@ -1,0 +1,132 @@
+B-10, B-12, B-17 (#89, ADR-0013): fixed English accessible names (login form, chat history list, sidebar
+resize handle; one new key com_ui_resize_sidebar) are translated; Settings shows the chat direction and the
+selected language by name instead of the raw codes 'ltr' and 'ar', and its tabs follow the page direction.
+
+diff --git a/client/src/components/Appearance/Selectors.tsx b/client/src/components/Appearance/Selectors.tsx
+index beea8cd..2a7257e 100644
+--- a/client/src/components/Appearance/Selectors.tsx
++++ b/client/src/components/Appearance/Selectors.tsx
+@@ -1,6 +1,7 @@
+ import { useRecoilValue } from 'recoil';
+ import { Dropdown, Spinner } from '@librechat/client';
+ import { useLocalize } from '~/hooks';
++import { normalizeLocale } from '~/locales/i18n';
+ import { cn } from '~/utils';
+ import store from '~/store';
+ 
+@@ -110,6 +111,12 @@ export const LangSelector = ({
+     { value: 'uk-UA', label: localize('com_nav_lang_ukrainian') },
+   ];
+ 
++  /** A stored code such as 'ar' or 'ar-SA' selects its option ('ar-EG') instead of showing the raw code. */
++  const selected =
++    languageOptions.find((option) => option.value === langcode) ??
++    languageOptions.find(
++      (option) => option.value !== 'auto' && normalizeLocale(option.value) === normalizeLocale(langcode),
++    );
+   const labelId = 'language-selector-label';
+ 
+   return (
+@@ -127,7 +134,7 @@ export const LangSelector = ({
+           </span>
+         )}
+         <Dropdown
+-          value={langcode}
++          value={selected?.value ?? langcode}
+           onChange={onChange}
+           sizeClasses={cn('z-50 w-[220px]', popoverClassName)}
+           options={languageOptions}
+diff --git a/client/src/components/Auth/LoginForm.tsx b/client/src/components/Auth/LoginForm.tsx
+index 0c42724..bf2d031 100644
+--- a/client/src/components/Auth/LoginForm.tsx
++++ b/client/src/components/Auth/LoginForm.tsx
+@@ -90,7 +90,7 @@ const LoginForm: React.FC<TLoginFormProps> = ({ onSubmit, startupConfig, error,
+       )}
+       <form
+         className="mt-6"
+-        aria-label="Login form"
++        aria-label={localize('com_auth_login')}
+         method="POST"
+         onSubmit={handleSubmit((data) => onSubmit(data))}
+       >
+diff --git a/client/src/components/Conversations/Conversations.tsx b/client/src/components/Conversations/Conversations.tsx
+index 259a55b..7c5f6fa 100644
+--- a/client/src/components/Conversations/Conversations.tsx
++++ b/client/src/components/Conversations/Conversations.tsx
+@@ -550,7 +550,7 @@ const Conversations: FC<ConversationsProps> = ({
+         overscanRowCount={10}
+         aria-readonly={false}
+         className="outline-none"
+-        aria-label="Conversations"
++        aria-label={localize('com_ui_chat_history')}
+         onRowsRendered={handleRowsRendered}
+         tabIndex={-1}
+         style={{ outline: 'none' }}
+diff --git a/client/src/components/Nav/Settings/Dialog.tsx b/client/src/components/Nav/Settings/Dialog.tsx
+index af1bd27..65f2a63 100644
+--- a/client/src/components/Nav/Settings/Dialog.tsx
++++ b/client/src/components/Nav/Settings/Dialog.tsx
+@@ -105,6 +105,7 @@ export default function SettingsDialog({ open, onOpenChange }: TDialogProps) {
+                 value={effectiveTab}
+                 onValueChange={(v) => setActiveTab(v as SettingsTab)}
+                 orientation="vertical"
++                dir={document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr'}
+                 className="flex flex-1 flex-col gap-4 overflow-hidden p-5 md:flex-row md:gap-6"
+               >
+                 {showSidebar && (
+diff --git a/client/src/components/Nav/SettingsTabs/Chat/ChatDirection.tsx b/client/src/components/Nav/SettingsTabs/Chat/ChatDirection.tsx
+index 2ae54d2..7e93122 100644
+--- a/client/src/components/Nav/SettingsTabs/Chat/ChatDirection.tsx
++++ b/client/src/components/Nav/SettingsTabs/Chat/ChatDirection.tsx
+@@ -28,7 +28,9 @@ const ChatDirection = () => {
+         onClick={toggleChatDirection}
+         data-testid="chatDirection"
+       >
+-        {direction.toLowerCase()}
++        {direction === 'LTR'
++          ? localize('chat_direction_left_to_right')
++          : localize('chat_direction_right_to_left')}
+       </Button>
+     </div>
+   );
+diff --git a/client/src/components/UnifiedSidebar/Sidebar.tsx b/client/src/components/UnifiedSidebar/Sidebar.tsx
+index 778d584..05e9f5c 100644
+--- a/client/src/components/UnifiedSidebar/Sidebar.tsx
++++ b/client/src/components/UnifiedSidebar/Sidebar.tsx
+@@ -2,6 +2,7 @@ import { memo } from 'react';
+ import type { NavLink } from '~/common';
+ import SidePanelNav from '~/components/SidePanel/Nav';
+ import ExpandedPanel from './ExpandedPanel';
++import { useLocalize } from '~/hooks';
+ import { cn } from '~/utils';
+ 
+ function Sidebar({
+@@ -27,6 +28,7 @@ function Sidebar({
+   onResizeStart: (e: React.MouseEvent) => void;
+   onResizeKeyboard: (direction: 'shrink' | 'grow') => void;
+ }) {
++  const localize = useLocalize();
+   return (
+     <>
+       <div className="flex h-full w-full overflow-hidden">
+@@ -56,7 +58,7 @@ function Sidebar({
+       <div
+         role="separator"
+         aria-orientation="vertical"
+-        aria-label="Resize sidebar"
++        aria-label={localize('com_ui_resize_sidebar')}
+         aria-valuenow={Math.round(width)}
+         aria-valuemin={Math.round(minWidth)}
+         aria-valuemax={Math.round(maxWidth)}
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index 2d81936..d51a905 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -2142,6 +2142,7 @@
+   "com_ui_reset_var": "Reset {{0}}",
+   "com_ui_reset_zoom": "Reset Zoom",
+   "com_ui_resize_artifact_panel": "Resize artifact panel",
++  "com_ui_resize_sidebar": "Resize sidebar",
+   "com_ui_resource": "resource",
+   "com_ui_respond": "Respond",
+   "com_ui_response": "Response",

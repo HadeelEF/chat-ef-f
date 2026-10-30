@@ -1,0 +1,121 @@
+QA round (#105, ADR-0013). First load: upstream's chunk groups let Rolldown pull modules every chunk needs (Vite's
+preload helper, the Buffer polyfill, DOMPurify, uuid, dayjs, marked, es-toolkit) into the mermaid chunk, so all pages
+imported 3 MB of diagram code statically; a higher-priority `shared-libs` group keeps them apart and mermaid loads only
+for a diagram. The service worker no longer precaches the large on-demand chunks (mermaid, HEIC, sandpack); they are
+cached on first use. A failed navigation shows the EF offline page (assets/ef-offline.html, handler in
+assets/ef-offline-sw.js). The manifest gets a description, an id, a 512 px icon and a new-chat shortcut; iOS gets the
+app title. The starter cards carry a hook so short phone screens keep the composer in view (brand.css).
+
+diff --git a/client/index.html b/client/index.html
+index 5ef57bf..41e14a5 100644
+--- a/client/index.html
++++ b/client/index.html
+@@ -7,6 +7,7 @@
+     <meta name="mobile-web-app-capable" content="yes" />
+     <meta name="apple-mobile-web-app-capable" content="yes" />
+     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
++    <meta name="apple-mobile-web-app-title" content="بصير" />
+     <meta
+       name="description"
+       content="بصير — مساحة عمل الذكاء الاصطناعي لصندوق البيئة"
+diff --git a/client/src/components/Chat/Input/ConversationStarters.tsx b/client/src/components/Chat/Input/ConversationStarters.tsx
+index a770838..ff3aa35 100644
+--- a/client/src/components/Chat/Input/ConversationStarters.tsx
++++ b/client/src/components/Chat/Input/ConversationStarters.tsx
+@@ -72,7 +72,10 @@ const ConversationStarters = () => {
+   }
+ 
+   return (
+-    <div className="mb-8 mt-2 flex w-full flex-wrap items-stretch justify-center gap-2 px-4">
++    <div
++      data-efaiw="starters"
++      className="mb-8 mt-2 flex w-full flex-wrap items-stretch justify-center gap-2 px-4"
++    >
+       {conversation_starters
+         .slice(0, Constants.MAX_CONVO_STARTERS)
+         .map((text: string, index: number) => (
+diff --git a/client/vite.config.ts b/client/vite.config.ts
+index e0de242..b594cdb 100644
+--- a/client/vite.config.ts
++++ b/client/vite.config.ts
+@@ -116,6 +116,11 @@ export default defineConfig(({ command }) => ({
+           'assets/rum.*.js',
+           'assets/locale-*.js',
+           'assets/query-devtools*.js',
++          /** EF (#105): large chunks most sessions never use; cached on first use (runtimeCaching). */
++          'assets/mermaid.*.js',
++          'assets/heic-converter.*.js',
++          'assets/sandpack.*.js',
++          'assets/ef-offline-sw.js',
+         ],
+         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+         /**
+@@ -131,8 +136,18 @@ export default defineConfig(({ command }) => ({
+         /** Reloads window clients that cannot answer a ping after activation —
+          * pages stuck on a previous build's purged precache (stale index.html)
+          * have no working code of their own to recover with. */
+-        importScripts: ['sw-heal.js'],
++        importScripts: ['sw-heal.js', 'assets/ef-offline-sw.js'],
+         runtimeCaching: [
++          {
++            urlPattern: ({ url }) =>
++              /\/assets\/(?:mermaid|heic-converter|sandpack)\.[\w-]{8}\.js$/.test(url.pathname),
++            handler: 'CacheFirst',
++            options: {
++              cacheName: 'ef-on-demand-chunks',
++              cacheableResponse: { statuses: [200] },
++              expiration: { maxEntries: 12, maxAgeSeconds: 30 * 24 * 60 * 60 },
++            },
++          },
+           {
+             urlPattern: ({ url }) => /\/assets\/locale-[^/]+\.js$/.test(url.pathname),
+             handler: 'StaleWhileRevalidate',
+@@ -153,6 +168,8 @@ export default defineConfig(({ command }) => ({
+       manifest: {
+         name: 'بصير | صندوق البيئة',
+         short_name: 'بصير',
++        id: './',
++        description: 'مساحة العمل الذكية لصندوق البيئة',
+         lang: 'ar',
+         dir: 'rtl',
+         display: 'standalone',
+@@ -179,6 +196,11 @@ export default defineConfig(({ command }) => ({
+             sizes: '192x192',
+             type: 'image/png',
+           },
++          {
++            src: 'assets/icon-512x512.png',
++            sizes: '512x512',
++            type: 'image/png',
++          },
+           {
+             src: 'assets/maskable-icon.png',
+             sizes: '512x512',
+@@ -186,6 +208,13 @@ export default defineConfig(({ command }) => ({
+             purpose: 'maskable',
+           },
+         ],
++        shortcuts: [
++          {
++            name: 'محادثة جديدة',
++            url: './c/new',
++            icons: [{ src: 'assets/icon-192x192.png', sizes: '192x192', type: 'image/png' }],
++          },
++        ],
+       },
+     }),
+     ...(buildSourceMap ? [sourcemapExclude({ excludeNodeModules: true })] : []),
+@@ -224,6 +253,13 @@ export default defineConfig(({ command }) => ({
+       output: {
+         codeSplitting: {
+           groups: [
++            {
++              /** EF (#105): modules that every chunk needs, kept out of the mermaid group, which otherwise
++               * captures them as mermaid dependencies and makes every page import the diagram code. */
++              name: 'shared-libs',
++              test: /[\\/]node_modules[\\/](dompurify|uuid|dayjs|marked|es-toolkit|vite-plugin-node-polyfills)[\\/]|vite\/preload-helper/,
++              priority: 20,
++            },
+             {
+               name(id: string) {
+                 const normalizedId = id.replace(/\\/g, '/');

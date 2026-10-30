@@ -1,0 +1,1834 @@
+EF AI Workspace (#221): sidebar v5, owner-approved 2026-10-25 («موافق ابدأ التنفيذ»): «Customize» gathers every tool,
+«More» is gone, and the phone drawer shows its sections on top. The owner's phone feedback: the bottom tab bar inside the
+drawer went unnoticed and the floating «New chat» covered the history; the owner also wants a sidebar that takes future
+sections without a redesign. Upstream has no customize page or sidebar configuration, so the page is EF's own and is
+built from upstream's side-nav links: a section an upgrade adds appears there by itself.
+
+- Rail (UnifiedSidebar/ExpandedPanel.tsx): «New chat», «Chats», a line, Projects and Documents, «Customize» (marked on
+  its page, its tools' pages, the admins' marketplace, and while one of its panel tools holds the sidebar), the account.
+  Skills and «More» (EfMoreMenu.tsx, deleted) move into «Customize».
+- «Customize» (EfPages/EfCustomizePage.tsx, route /customize): a card per tool with one line on what it is for, the whole
+  card its link. «For you»: ready commands, skills, memory, bookmarks, then any other section the deployment enables,
+  marked «New» until described. «Admins only» (#189, #218): the marketplace with «New assistant» (a new chat with the
+  builder open), the builder when the marketplace is off, the parameters, and the MCP servers named «Connectors». Panel
+  tools open in the sidebar's panel through its hidden shortcut targets, as the keyboard shortcuts do, opening the
+  sidebar or the phone drawer first. A tip on «/» and «$» in the message box.
+- Tool pages (EfPages/EfSectionPage.tsx; skills, ready commands, memory, bookmarks): a breadcrumb back to «Customize»
+  above the title, a back button on phones.
+- Phone drawer (UnifiedSidebar/EfChatsPanel.tsx): «Baseer» and the X, the search, three tiles (Projects, Documents,
+  Customize), «Chats» with the sort and filter menu, the chips and the history, and «New chat» docked at the bottom
+  beside the account (keeping upstream's test id, which focus falls back to). No tab bar, no floating button.
+- Sections (UnifiedSidebar/efSidebar.ts): EF_PAGES.customize, EF_CUSTOMIZE_FIRST, efCustomizeLinks (was efMoreLinks),
+  efCustomizeIsCurrent; «mcp-builder» reads «Connectors».
+- Strings (en/translation.json; ar.json): «Customize», its hint, headings, tip and descriptions, «New», «New assistant»,
+  «Connectors», «Back to {{0}}», «Breadcrumb»; «More» removed.
+- Tests: ExpandedPanel.spec (rail order and «Customize» marking), EfCustomizePage.spec (employee and admin cards, a new
+  section, panel tools, «New assistant»), EfSectionPage.spec (the way back).
+
+diff --git a/client/src/components/EfPages/EfCustomizePage.tsx b/client/src/components/EfPages/EfCustomizePage.tsx
+new file mode 100644
+index 0000000..d23aeb9
+--- /dev/null
++++ b/client/src/components/EfPages/EfCustomizePage.tsx
+@@ -0,0 +1,269 @@
++import { useCallback, useId } from 'react';
++import { Link } from 'react-router-dom';
++import { ChevronLeft, LayoutGrid, Plus, Slash } from 'lucide-react';
++import { SystemRoles } from 'librechat-data-provider';
++import type { ReactNode } from 'react';
++import type { NavLink } from '~/common';
++import type { TranslationKeys } from '~/hooks';
++import {
++  EF_PAGES,
++  EF_LINK_LABELS,
++  efAdminLinks,
++  efCustomizeLinks,
++} from '~/components/UnifiedSidebar/efSidebar';
++import useUnifiedSidebarLinks from '~/hooks/Nav/useUnifiedSidebarLinks';
++import useSidebarToggle from '~/hooks/Nav/useSidebarToggle';
++import useSidebarState from '~/hooks/Nav/useSidebarState';
++import { useAuthContext, useLocalize, useShowMarketplace } from '~/hooks';
++import useNewChat from '~/hooks/Chat/useNewChat';
++import EfSectionPage from './EfSectionPage';
++import { cn } from '~/utils';
++
++/** A card's title where it differs from the sidebar's short name. */
++const CARD_LABELS: Record<string, TranslationKeys> = {
++  prompts: 'com_ui_prompts',
++};
++
++/** One line on what each known tool is for. A section without one is new to the workspace (a LibreChat upgrade or a
++ *  newly enabled feature added it): it still gets its card, marked «New», until it is described here. */
++const CARD_DESCRIPTIONS: Record<string, TranslationKeys> = {
++  prompts: 'com_efaiw_desc_prompts',
++  skills: 'com_efaiw_desc_skills',
++  memories: 'com_efaiw_desc_memories',
++  bookmarks: 'com_efaiw_desc_bookmarks',
++  agents: 'com_efaiw_desc_builder',
++  parameters: 'com_efaiw_desc_parameters',
++  'mcp-builder': 'com_efaiw_desc_connectors',
++};
++
++const CARD_TONES: Record<string, string> = {
++  prompts: 'efaiw-tone-blue',
++  skills: 'efaiw-tone-green',
++  memories: 'efaiw-tone-brown',
++  bookmarks: 'efaiw-tone-sec',
++  'mcp-builder': 'efaiw-tone-sec',
++  parameters: 'efaiw-tone-neutral',
++};
++
++/** Opens a tool that works in the sidebar's panel (the builder, the parameters, the MCP servers, or a panel section
++ *  the deployment adds): the page lives outside the sidebar's panel state, so it presses the panel's hidden shortcut
++ *  target, as the keyboard shortcuts do, opening the sidebar (the phone's drawer) first when it is closed. */
++function useOpenSidebarPanel() {
++  const { expanded } = useSidebarState();
++  const { setSidebarOpen } = useSidebarToggle();
++  return useCallback(
++    (id: string) => {
++      const activate = () => {
++        const target = document.querySelector<HTMLButtonElement>(`[data-testid="nav-panel-${id}"]`);
++        if (target != null && !target.disabled && target.getAttribute('aria-pressed') !== 'true') {
++          target.click();
++        }
++      };
++      if (!expanded) {
++        setSidebarOpen(true, () => setTimeout(activate, 0));
++        return;
++      }
++      activate();
++    },
++    [expanded, setSidebarOpen],
++  );
++}
++
++function CustomizeCard({
++  testId,
++  icon: Icon,
++  tone,
++  title,
++  description,
++  to,
++  onOpen,
++  badge,
++  action,
++}: {
++  testId: string;
++  icon: NavLink['icon'];
++  tone?: string;
++  title: string;
++  description: string;
++  /** A page opens by its link; a panel tool by `onOpen`. The whole card is the target (`efaiw-cz-link::after`); the
++   *  badge sits beside the name and an action under the line, so a narrow card keeps its text readable. */
++  to?: string;
++  onOpen?: () => void;
++  badge?: ReactNode;
++  action?: ReactNode;
++}) {
++  const descriptionId = useId();
++  return (
++    <li className="efaiw-cz-card" data-testid={testId}>
++      <span
++        className={cn('efaiw-side-tile efaiw-cz-tile', tone ?? 'efaiw-tone-neutral')}
++        aria-hidden="true"
++      >
++        <Icon className="h-5 w-5" />
++      </span>
++      <div className="efaiw-cz-text">
++        <div className="efaiw-cz-head">
++          <h3 className="efaiw-cz-title">
++            {to != null ? (
++              <Link to={to} className="efaiw-cz-link" aria-describedby={descriptionId}>
++                {title}
++              </Link>
++            ) : (
++              <button
++                type="button"
++                className="efaiw-cz-link"
++                aria-describedby={descriptionId}
++                onClick={onOpen}
++              >
++                {title}
++              </button>
++            )}
++          </h3>
++          {badge}
++        </div>
++        <p id={descriptionId} className="efaiw-cz-desc">
++          {description}
++        </p>
++        {action != null && <div className="efaiw-cz-actions">{action}</div>}
++      </div>
++      {action == null && (
++        <ChevronLeft
++          className="efaiw-cz-chevron h-4 w-4 flex-shrink-0 ltr:rotate-180"
++          aria-hidden="true"
++        />
++      )}
++    </li>
++  );
++}
++
++/**
++ * EF (sidebar v5 #221, owner-approved): «Customize», the page of every tool, opened from the rail and the phone
++ * drawer. It is built from LibreChat's own sidebar links (useUnifiedSidebarLinks), so whatever the deployment enables
++ * appears here without a change to the sidebar:
++ *   - «For you»: ready commands, skills, memory, bookmarks, then any other section (marked «New» until described);
++ *   - «Admins only» (#189, #218): the assistants marketplace with «New assistant» (a new chat with the builder open),
++ *     the builder when the marketplace is off, the parameters, and the MCP connectors.
++ * Pages open in the main area; the chat-bound tools open in the sidebar's panel, as they always did.
++ */
++export default function EfCustomizePage() {
++  const localize = useLocalize();
++  const links = useUnifiedSidebarLinks();
++  const { user } = useAuthContext();
++  const isAdmin = user?.role === SystemRoles.ADMIN;
++  const showMarketplace = useShowMarketplace();
++  const openPanel = useOpenSidebarPanel();
++  const { startNewChat } = useNewChat();
++  const forYouId = useId();
++  const adminId = useId();
++
++  const userLinks = efCustomizeLinks(links);
++  const adminLinks = efAdminLinks(links);
++  const builder = adminLinks.find((link) => link.id === 'agents');
++  const marketplace = isAdmin && showMarketplace;
++  /** With the marketplace, the builder is its «New assistant» action; without it, the builder has its own card. */
++  const adminPanels = marketplace ? adminLinks.filter((link) => link.id !== 'agents') : adminLinks;
++  const hasCommands = userLinks.some((link) => link.id === 'prompts' || link.id === 'skills');
++
++  const newAssistant = useCallback(() => {
++    startNewChat();
++    openPanel('agents');
++  }, [openPanel, startNewChat]);
++
++  /** Admin tools carry «Admins»; a section without a description is new to the workspace. */
++  const badgeOf = (admin: boolean, unknown: boolean) => {
++    if (admin) {
++      return <span className="efaiw-admin-badge">{localize('com_efaiw_admin_only')}</span>;
++    }
++    if (unknown) {
++      return <span className="efaiw-cz-new">{localize('com_efaiw_new')}</span>;
++    }
++    return undefined;
++  };
++
++  const card = (link: NavLink, admin: boolean) => {
++    const known = CARD_DESCRIPTIONS[link.id];
++    const path = EF_PAGES[link.id];
++    const title = localize(CARD_LABELS[link.id] ?? EF_LINK_LABELS[link.id] ?? link.title);
++    return (
++      <CustomizeCard
++        key={link.id}
++        testId={`efaiw-cz-${link.id}`}
++        icon={link.icon}
++        tone={CARD_TONES[link.id]}
++        title={title}
++        description={localize(known ?? 'com_efaiw_desc_new')}
++        to={path}
++        onOpen={
++          path != null
++            ? undefined
++            : () => {
++                if (link.onClick) {
++                  link.onClick();
++                  return;
++                }
++                openPanel(link.id);
++              }
++        }
++        badge={badgeOf(admin, known == null)}
++      />
++    );
++  };
++
++  return (
++    <EfSectionPage
++      title={localize('com_efaiw_customize')}
++      hint={localize('com_efaiw_customize_hint')}
++    >
++      <div className="efaiw-cz mx-auto flex w-full max-w-4xl flex-col gap-7 px-4 py-5 md:px-6 md:py-6">
++        {userLinks.length > 0 && (
++          <section aria-labelledby={forYouId} className="flex flex-col gap-3">
++            <h2 id={forYouId} className="efaiw-cz-heading">
++              {localize('com_efaiw_customize_for_you')}
++            </h2>
++            <ul className="efaiw-cz-grid">{userLinks.map((link) => card(link, false))}</ul>
++          </section>
++        )}
++        {(marketplace || adminPanels.length > 0) && (
++          <section aria-labelledby={adminId} className="flex flex-col gap-3">
++            <h2 id={adminId} className="efaiw-cz-heading">
++              {localize('com_efaiw_admin_tools')}
++            </h2>
++            <ul className="efaiw-cz-grid">
++              {marketplace && (
++                <CustomizeCard
++                  testId="efaiw-cz-marketplace"
++                  icon={LayoutGrid}
++                  tone="efaiw-tone-sec"
++                  title={localize('com_efaiw_rail_agents')}
++                  description={localize('com_efaiw_desc_agents')}
++                  to="/agents"
++                  badge={badgeOf(true, false)}
++                  action={
++                    builder != null ? (
++                      <button
++                        type="button"
++                        data-testid="efaiw-cz-new-agent"
++                        className="efaiw-cz-action"
++                        onClick={newAssistant}
++                      >
++                        <Plus className="h-4 w-4" aria-hidden="true" />
++                        {localize('com_efaiw_new_agent')}
++                      </button>
++                    ) : undefined
++                  }
++                />
++              )}
++              {adminPanels.map((link) => card(link, true))}
++            </ul>
++          </section>
++        )}
++        {hasCommands && (
++          <p className="efaiw-cz-tip">
++            <Slash className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
++            <span>{localize('com_efaiw_customize_tip')}</span>
++          </p>
++        )}
++      </div>
++    </EfSectionPage>
++  );
++}
+diff --git a/client/src/components/EfPages/EfPanelPages.tsx b/client/src/components/EfPages/EfPanelPages.tsx
+index 5d79d6a..2a13c8f 100644
+--- a/client/src/components/EfPages/EfPanelPages.tsx
++++ b/client/src/components/EfPages/EfPanelPages.tsx
+@@ -1,6 +1,7 @@
+ import { PermissionTypes } from 'librechat-data-provider';
+ import BookmarkPanel from '~/components/SidePanel/Bookmarks/BookmarkPanel';
+ import { MemoryPanel } from '~/components/SidePanel/Memories';
++import { EF_PAGES } from '~/components/UnifiedSidebar/efSidebar';
+ import EfSectionPage from './EfSectionPage';
+ import { useLocalize } from '~/hooks';
+ 
+@@ -19,6 +20,7 @@ export function EfMemoriesPage() {
+     <EfSectionPage
+       title={localize('com_efaiw_rail_memories')}
+       permissionType={PermissionTypes.MEMORIES}
++      parent={{ to: EF_PAGES.customize, label: localize('com_efaiw_customize') }}
+     >
+       <PanelColumn>
+         <MemoryPanel />
+@@ -33,6 +35,7 @@ export function EfBookmarksPage() {
+     <EfSectionPage
+       title={localize('com_efaiw_rail_bookmarks')}
+       permissionType={PermissionTypes.BOOKMARKS}
++      parent={{ to: EF_PAGES.customize, label: localize('com_efaiw_customize') }}
+     >
+       <PanelColumn>
+         <BookmarkPanel />
+diff --git a/client/src/components/EfPages/EfPromptsPage.tsx b/client/src/components/EfPages/EfPromptsPage.tsx
+index fa294e7..d3c7fc8 100644
+--- a/client/src/components/EfPages/EfPromptsPage.tsx
++++ b/client/src/components/EfPages/EfPromptsPage.tsx
+@@ -5,6 +5,7 @@ import { PermissionTypes } from 'librechat-data-provider';
+ import InlinePromptsView from '~/components/Prompts/layouts/InlinePromptsView';
+ import { SidebarChatProvider } from '~/components/UnifiedSidebar/UnifiedSidebar';
+ import { PromptsAccordion } from '~/components/Prompts';
++import { EF_PAGES } from '~/components/UnifiedSidebar/efSidebar';
+ import EfSectionPage from './EfSectionPage';
+ import { useLocalize } from '~/hooks';
+ 
+@@ -26,6 +27,7 @@ export default function EfPromptsPage() {
+       }
+       detailOpen={promptId != null}
+       backTo="/prompts"
++      parent={{ to: EF_PAGES.customize, label: localize('com_efaiw_customize') }}
+     >
+       {promptId != null ? (
+         <InlinePromptsView />
+diff --git a/client/src/components/EfPages/EfSectionPage.tsx b/client/src/components/EfPages/EfSectionPage.tsx
+index fb56dc9..6aa5a3c 100644
+--- a/client/src/components/EfPages/EfSectionPage.tsx
++++ b/client/src/components/EfPages/EfSectionPage.tsx
+@@ -13,7 +13,8 @@ import { cn } from '~/utils';
+  * EF (sidebar v3 #198, owner-approved): the frame of a section opened from the sidebar as a page in the main area, on
+  * the pattern of upstream's Projects page: a header with the title (and the menu button on phones), an optional line
+  * of help, then the section. A section with a list and a detail (skills, ready commands) shows both side by side from
+- * tablet width and one at a time on phones, where the header leads back to the list.
++ * tablet width and one at a time on phones, where the header leads back to the list. A tool opened from «Customize»
++ * (#221) leads back to it: a breadcrumb above the title on wider screens, a back button on phones.
+  */
+ export default function EfSectionPage({
+   title,
+@@ -22,6 +23,7 @@ export default function EfSectionPage({
+   list,
+   detailOpen = false,
+   backTo,
++  parent,
+   children,
+ }: {
+   title: string;
+@@ -32,6 +34,8 @@ export default function EfSectionPage({
+   /** Phones show the detail instead of the list while it is open. */
+   detailOpen?: boolean;
+   backTo?: string;
++  /** The page this one belongs to («Customize»). */
++  parent?: { to: string; label: string };
+   children?: ReactNode;
+ }) {
+   const localize = useLocalize();
+@@ -56,6 +60,8 @@ export default function EfSectionPage({
+   }
+ 
+   const split = list != null;
++  /** Phones show the detail alone, led back to the list. */
++  const detailBack = isSmallScreen && split && detailOpen ? backTo : undefined;
+   return (
+     <main
+       aria-labelledby={titleId}
+@@ -64,21 +70,41 @@ export default function EfSectionPage({
+       <header className="efaiw-page-head shrink-0 border-b border-border-light bg-presentation">
+         <div className="flex h-14 w-full items-center gap-2.5 px-4 md:h-16 md:px-6">
+           {isSmallScreen ? <OpenSidebar className="size-9 shrink-0" /> : null}
+-          {isSmallScreen && split && detailOpen && backTo ? (
++          {detailBack != null ? (
+             <Link
+-              to={backTo}
++              to={detailBack}
+               aria-label={localize('com_ui_back')}
+               className="flex size-9 shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-surface-hover"
+             >
+               <ChevronLeft className="h-5 w-5 rtl:rotate-180" aria-hidden="true" />
+             </Link>
+           ) : null}
+-          <h1
+-            id={titleId}
+-            className="min-w-0 truncate text-lg font-semibold tracking-tight text-text-primary md:text-xl"
+-          >
+-            {title}
+-          </h1>
++          {isSmallScreen && parent != null && detailBack == null ? (
++            <Link
++              to={parent.to}
++              data-testid="efaiw-page-parent"
++              aria-label={localize('com_efaiw_back_to', { 0: parent.label })}
++              className="flex size-9 shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-surface-hover"
++            >
++              <ChevronLeft className="h-5 w-5 rtl:rotate-180" aria-hidden="true" />
++            </Link>
++          ) : null}
++          <div className="flex min-w-0 flex-col">
++            {!isSmallScreen && parent != null ? (
++              <nav aria-label={localize('com_efaiw_breadcrumb')} className="efaiw-crumb">
++                <Link to={parent.to} data-testid="efaiw-page-parent">
++                  {parent.label}
++                </Link>
++                <ChevronLeft className="h-3.5 w-3.5 ltr:rotate-180" aria-hidden="true" />
++              </nav>
++            ) : null}
++            <h1
++              id={titleId}
++              className="min-w-0 truncate text-lg font-semibold tracking-tight text-text-primary md:text-xl"
++            >
++              {title}
++            </h1>
++          </div>
+         </div>
+         {hint ? (
+           <p className="efaiw-page-hint -mt-1 px-4 pb-3 text-sm text-text-secondary md:-mt-2 md:px-6">
+diff --git a/client/src/components/EfPages/EfSkillsPage.tsx b/client/src/components/EfPages/EfSkillsPage.tsx
+index db660f4..b462fed 100644
+--- a/client/src/components/EfPages/EfSkillsPage.tsx
++++ b/client/src/components/EfPages/EfSkillsPage.tsx
+@@ -2,6 +2,7 @@ import { useLocation, useParams } from 'react-router-dom';
+ import { PermissionTypes } from 'librechat-data-provider';
+ import SkillsView from '~/components/Skills/layouts/SkillsView';
+ import { SkillsAccordion } from '~/components/Skills';
++import { EF_PAGES } from '~/components/UnifiedSidebar/efSidebar';
+ import EfSectionPage from './EfSectionPage';
+ import { useLocalize } from '~/hooks';
+ 
+@@ -18,6 +19,7 @@ export default function EfSkillsPage() {
+       list={<SkillsAccordion />}
+       detailOpen={skillId != null || location.pathname.endsWith('/new')}
+       backTo="/skills"
++      parent={{ to: EF_PAGES.customize, label: localize('com_efaiw_customize') }}
+     >
+       <SkillsView />
+     </EfSectionPage>
+diff --git a/client/src/components/EfPages/__tests__/EfCustomizePage.spec.tsx b/client/src/components/EfPages/__tests__/EfCustomizePage.spec.tsx
+new file mode 100644
+index 0000000..8f41ae6
+--- /dev/null
++++ b/client/src/components/EfPages/__tests__/EfCustomizePage.spec.tsx
+@@ -0,0 +1,275 @@
++import React from 'react';
++import '@testing-library/jest-dom/extend-expect';
++import { MemoryRouter } from 'react-router-dom';
++import { render, fireEvent, screen, within } from '@testing-library/react';
++import {
++  BarChart3,
++  Bookmark,
++  Bot,
++  Brain,
++  CalendarClock,
++  Folder,
++  MessagesSquare,
++  NotebookPen,
++  Paperclip,
++  Server,
++  Settings2,
++} from 'lucide-react';
++import type { NavLink } from '~/common';
++
++const mockStartNewChat = jest.fn();
++const mockSetSidebarOpen = jest.fn();
++let mockRole = 'USER';
++let mockShowMarketplace = true;
++let mockExpanded = true;
++let mockLinks: NavLink[] = [];
++
++jest.mock('~/hooks', () => ({
++  useLocalize: () => (key: string) => key,
++  useAuthContext: () => ({ user: { role: mockRole } }),
++  useShowMarketplace: () => mockShowMarketplace,
++}));
++jest.mock('~/hooks/Nav/useUnifiedSidebarLinks', () => ({
++  __esModule: true,
++  default: () => mockLinks,
++}));
++jest.mock('~/hooks/Nav/useSidebarState', () => ({
++  __esModule: true,
++  default: () => ({ isSmallScreen: false, expanded: mockExpanded }),
++}));
++jest.mock('~/hooks/Nav/useSidebarToggle', () => ({
++  __esModule: true,
++  default: () => ({ setSidebarOpen: mockSetSidebarOpen }),
++}));
++jest.mock('~/hooks/Chat/useNewChat', () => ({
++  __esModule: true,
++  default: () => ({ startNewChat: mockStartNewChat }),
++}));
++jest.mock('~/utils', () => ({
++  cn: (...classes: unknown[]) => classes.filter(Boolean).join(' '),
++}));
++/** The page frame (title, permission check, phone header) has its own spec. */
++jest.mock('../EfSectionPage', () => ({
++  __esModule: true,
++  default: ({
++    title,
++    hint,
++    children,
++  }: {
++    title: string;
++    hint?: string;
++    children: React.ReactNode;
++  }) => (
++    <main>
++      <h1>{title}</h1>
++      <p>{hint}</p>
++      {children}
++    </main>
++  ),
++}));
++
++import EfCustomizePage from '../EfCustomizePage';
++
++const Panel = () => null;
++const page = (id: string, title: NavLink['title'], icon: NavLink['icon']): NavLink => ({
++  id,
++  title,
++  icon,
++  onClick: jest.fn(),
++});
++const panel = (id: string, title: NavLink['title'], icon: NavLink['icon']): NavLink => ({
++  id,
++  title,
++  icon,
++  Component: Panel,
++});
++
++/** As useUnifiedSidebarLinks returns them (the admin tools only for admins). */
++const createLinks = ({ admin = false, extra = [] as NavLink[] } = {}): NavLink[] => [
++  panel('conversations', 'com_ui_chat_history', MessagesSquare),
++  page('projects', 'com_ui_projects', Folder),
++  ...(admin ? [panel('agents', 'com_sidepanel_agent_builder', Bot)] : []),
++  page('skills', 'com_ui_skills', NotebookPen),
++  page('prompts', 'com_ui_prompts', NotebookPen),
++  page('memories', 'com_ui_memories', Brain),
++  page('bookmarks', 'com_sidepanel_conversation_tags', Bookmark),
++  page('files', 'com_sidepanel_attach_files', Paperclip),
++  ...(admin
++    ? [
++        panel('parameters', 'com_sidepanel_parameters', Settings2),
++        panel('mcp-builder', 'com_nav_setting_mcp', Server),
++      ]
++    : []),
++  ...extra,
++];
++
++/** The sidebar's hidden shortcut targets, which the page presses to open a panel tool. */
++function addTargets(ids: string[], pressed: string[] = []) {
++  const clicks: Record<string, jest.Mock> = {};
++  for (const id of ids) {
++    const button = document.createElement('button');
++    button.hidden = true;
++    button.dataset.testid = `nav-panel-${id}`;
++    button.setAttribute('aria-pressed', pressed.includes(id) ? 'true' : 'false');
++    clicks[id] = jest.fn();
++    button.addEventListener('click', clicks[id]);
++    document.body.appendChild(button);
++  }
++  return clicks;
++}
++
++function renderPage() {
++  return render(
++    <MemoryRouter initialEntries={['/customize']}>
++      <EfCustomizePage />
++    </MemoryRouter>,
++  );
++}
++
++const section = (name: string) =>
++  screen.getByRole('heading', { level: 2, name }).closest('section') as HTMLElement;
++const cardIds = (container: HTMLElement) =>
++  within(container)
++    .getAllByRole('listitem')
++    .map((item) => item.getAttribute('data-testid'));
++
++describe('EfCustomizePage («Customize», sidebar v5 #221)', () => {
++  beforeEach(() => {
++    jest.clearAllMocks();
++    jest.useRealTimers();
++    document.querySelectorAll('[data-testid^="nav-panel-"]').forEach((node) => node.remove());
++    mockRole = 'USER';
++    mockShowMarketplace = true;
++    mockExpanded = true;
++    mockLinks = createLinks();
++  });
++
++  it("an employee's page: the tools for everyone, in order, each a page with its line, and no admin tools", () => {
++    renderPage();
++    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('com_efaiw_customize');
++    const forYou = section('com_efaiw_customize_for_you');
++    expect(cardIds(forYou)).toEqual([
++      'efaiw-cz-prompts',
++      'efaiw-cz-skills',
++      'efaiw-cz-memories',
++      'efaiw-cz-bookmarks',
++    ]);
++    const prompts = within(forYou).getByRole('link', { name: 'com_ui_prompts' });
++    expect(prompts).toHaveAttribute('href', '/prompts');
++    expect(prompts).toHaveAccessibleDescription('com_efaiw_desc_prompts');
++    expect(within(forYou).getByRole('link', { name: 'com_efaiw_rail_skills' })).toHaveAttribute(
++      'href',
++      '/skills',
++    );
++    expect(screen.queryByText('com_efaiw_admin_tools')).not.toBeInTheDocument();
++    expect(screen.queryByTestId('efaiw-cz-marketplace')).not.toBeInTheDocument();
++    expect(screen.queryByText('com_efaiw_new')).not.toBeInTheDocument();
++    expect(screen.getByText('com_efaiw_customize_tip')).toBeInTheDocument();
++  });
++
++  it('the work sections (projects, documents) stay in the sidebar, not here', () => {
++    renderPage();
++    expect(screen.queryByTestId('efaiw-cz-projects')).not.toBeInTheDocument();
++    expect(screen.queryByTestId('efaiw-cz-files')).not.toBeInTheDocument();
++    expect(screen.queryByTestId('efaiw-cz-conversations')).not.toBeInTheDocument();
++  });
++
++  it('a section the deployment adds (an upgrade, a new feature) gets its card by itself, marked new', () => {
++    mockLinks = createLinks({
++      extra: [panel('schedules', 'com_ui_schedules' as NavLink['title'], CalendarClock)],
++    });
++    const clicks = addTargets(['schedules']);
++    renderPage();
++    const card = screen.getByTestId('efaiw-cz-schedules');
++    expect(section('com_efaiw_customize_for_you')).toContainElement(card);
++    expect(card).toHaveTextContent('com_efaiw_new');
++    const open = within(card).getByRole('button', { name: 'com_ui_schedules' });
++    expect(open).toHaveAccessibleDescription('com_efaiw_desc_new');
++    fireEvent.click(open);
++    expect(clicks.schedules).toHaveBeenCalledTimes(1);
++  });
++
++  it('a section that navigates by itself (Insights) keeps doing so', () => {
++    const insights = page('insights', 'com_insights_navigation' as NavLink['title'], BarChart3);
++    mockLinks = createLinks({ extra: [insights] });
++    renderPage();
++    fireEvent.click(screen.getByRole('button', { name: 'com_insights_navigation' }));
++    expect(insights.onClick).toHaveBeenCalledTimes(1);
++  });
++
++  it("an admin's page adds «Admins only»: the marketplace with «New assistant», the parameters and the connectors", () => {
++    mockRole = 'ADMIN';
++    mockLinks = createLinks({ admin: true });
++    renderPage();
++    const admin = section('com_efaiw_admin_tools');
++    expect(cardIds(admin)).toEqual([
++      'efaiw-cz-marketplace',
++      'efaiw-cz-parameters',
++      'efaiw-cz-mcp-builder',
++    ]);
++    expect(within(admin).getByRole('link', { name: 'com_efaiw_rail_agents' })).toHaveAttribute(
++      'href',
++      '/agents',
++    );
++    for (const id of ['efaiw-cz-marketplace', 'efaiw-cz-parameters', 'efaiw-cz-mcp-builder']) {
++      expect(screen.getByTestId(id)).toHaveTextContent('com_efaiw_admin_only');
++    }
++    expect(
++      within(admin).getByRole('button', { name: 'com_efaiw_connectors' }),
++    ).toHaveAccessibleDescription('com_efaiw_desc_connectors');
++    /** The builder is the marketplace card's action, not a card of its own. */
++    expect(screen.queryByTestId('efaiw-cz-agents')).not.toBeInTheDocument();
++    expect(cardIds(section('com_efaiw_customize_for_you'))).toHaveLength(4);
++  });
++
++  it('«New assistant» starts a new chat and opens the builder in the sidebar', () => {
++    mockRole = 'ADMIN';
++    mockLinks = createLinks({ admin: true });
++    const clicks = addTargets(['agents']);
++    renderPage();
++    fireEvent.click(screen.getByTestId('efaiw-cz-new-agent'));
++    expect(mockStartNewChat).toHaveBeenCalledTimes(1);
++    expect(clicks.agents).toHaveBeenCalledTimes(1);
++  });
++
++  it('without the marketplace, the builder has its own card', () => {
++    mockRole = 'ADMIN';
++    mockShowMarketplace = false;
++    mockLinks = createLinks({ admin: true });
++    renderPage();
++    expect(cardIds(section('com_efaiw_admin_tools'))).toEqual([
++      'efaiw-cz-agents',
++      'efaiw-cz-parameters',
++      'efaiw-cz-mcp-builder',
++    ]);
++    expect(screen.queryByTestId('efaiw-cz-new-agent')).not.toBeInTheDocument();
++  });
++
++  it('a panel tool opens in the open sidebar, and leaves an already open one alone', () => {
++    mockRole = 'ADMIN';
++    mockLinks = createLinks({ admin: true });
++    const clicks = addTargets(['mcp-builder', 'parameters'], ['parameters']);
++    renderPage();
++    fireEvent.click(screen.getByRole('button', { name: 'com_efaiw_connectors' }));
++    expect(clicks['mcp-builder']).toHaveBeenCalledTimes(1);
++    fireEvent.click(screen.getByRole('button', { name: 'com_efaiw_rail_parameters' }));
++    expect(clicks.parameters).not.toHaveBeenCalled();
++    expect(mockSetSidebarOpen).not.toHaveBeenCalled();
++  });
++
++  it('a panel tool opens the closed sidebar (the phone drawer) first', () => {
++    jest.useFakeTimers();
++    mockRole = 'ADMIN';
++    mockExpanded = false;
++    mockLinks = createLinks({ admin: true });
++    const clicks = addTargets(['mcp-builder']);
++    renderPage();
++    fireEvent.click(screen.getByRole('button', { name: 'com_efaiw_connectors' }));
++    expect(mockSetSidebarOpen).toHaveBeenCalledWith(true, expect.any(Function));
++    expect(clicks['mcp-builder']).not.toHaveBeenCalled();
++    const afterSlide = mockSetSidebarOpen.mock.calls[0][1] as () => void;
++    afterSlide();
++    jest.runAllTimers();
++    expect(clicks['mcp-builder']).toHaveBeenCalledTimes(1);
++  });
++});
+diff --git a/client/src/components/EfPages/__tests__/EfSectionPage.spec.tsx b/client/src/components/EfPages/__tests__/EfSectionPage.spec.tsx
+new file mode 100644
+index 0000000..72e8693
+--- /dev/null
++++ b/client/src/components/EfPages/__tests__/EfSectionPage.spec.tsx
+@@ -0,0 +1,81 @@
++import React from 'react';
++import '@testing-library/jest-dom/extend-expect';
++import { MemoryRouter } from 'react-router-dom';
++import { render, screen } from '@testing-library/react';
++
++let mockSmallScreen = false;
++
++jest.mock('@librechat/client', () => ({
++  Spinner: () => <div data-testid="spinner" />,
++  useMediaQuery: () => mockSmallScreen,
++}));
++jest.mock('~/components/Chat/Menus/OpenSidebar', () => ({
++  __esModule: true,
++  default: () => <button type="button" aria-label="open-sidebar" />,
++}));
++jest.mock('~/hooks', () => ({
++  useLocalize: () => (key: string, values?: Record<string, string>) =>
++    values ? `${key}:${Object.values(values).join(',')}` : key,
++  useAuthContext: () => ({ user: { role: 'USER' }, roles: { USER: {} } }),
++  useHasAccess: () => true,
++}));
++jest.mock('~/utils', () => ({
++  cn: (...classes: unknown[]) => classes.filter(Boolean).join(' '),
++}));
++
++import EfSectionPage from '../EfSectionPage';
++
++const parent = { to: '/customize', label: 'com_efaiw_customize' };
++
++function renderPage(props: Partial<React.ComponentProps<typeof EfSectionPage>> = {}) {
++  return render(
++    <MemoryRouter initialEntries={['/skills']}>
++      <EfSectionPage title="com_efaiw_rail_skills" {...props}>
++        <p data-testid="content" />
++      </EfSectionPage>
++    </MemoryRouter>,
++  );
++}
++
++describe('EfSectionPage: the way back to «Customize» (#221)', () => {
++  beforeEach(() => {
++    mockSmallScreen = false;
++  });
++
++  it('wider screens: a breadcrumb above the title leads to «Customize»', () => {
++    renderPage({ parent });
++    const crumb = screen.getByRole('navigation', { name: 'com_efaiw_breadcrumb' });
++    expect(crumb).toContainElement(screen.getByRole('link', { name: 'com_efaiw_customize' }));
++    expect(screen.getByRole('link', { name: 'com_efaiw_customize' })).toHaveAttribute(
++      'href',
++      '/customize',
++    );
++    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('com_efaiw_rail_skills');
++    expect(screen.queryByRole('button', { name: 'open-sidebar' })).not.toBeInTheDocument();
++  });
++
++  it('phones: the menu button, then a back button to «Customize»', () => {
++    mockSmallScreen = true;
++    renderPage({ parent });
++    expect(screen.getByRole('button', { name: 'open-sidebar' })).toBeInTheDocument();
++    expect(
++      screen.getByRole('link', { name: 'com_efaiw_back_to:com_efaiw_customize' }),
++    ).toHaveAttribute('href', '/customize');
++    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
++  });
++
++  it('phones: an open detail leads back to its list instead', () => {
++    mockSmallScreen = true;
++    renderPage({ parent, list: <ul />, detailOpen: true, backTo: '/skills' });
++    expect(screen.getByRole('link', { name: 'com_ui_back' })).toHaveAttribute('href', '/skills');
++    expect(
++      screen.queryByRole('link', { name: 'com_efaiw_back_to:com_efaiw_customize' }),
++    ).not.toBeInTheDocument();
++  });
++
++  it('a page outside «Customize» (Documents, Projects) has no way back', () => {
++    renderPage();
++    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
++    expect(screen.queryByTestId('efaiw-page-parent')).not.toBeInTheDocument();
++  });
++});
+diff --git a/client/src/components/EfPages/index.ts b/client/src/components/EfPages/index.ts
+index ee17f9e..2a25d9a 100644
+--- a/client/src/components/EfPages/index.ts
++++ b/client/src/components/EfPages/index.ts
+@@ -2,3 +2,4 @@ export { default as EfSkillsPage } from './EfSkillsPage';
+ export { default as EfPromptsPage } from './EfPromptsPage';
+ export { default as EfFilesPage } from './EfFilesPage';
+ export { EfMemoriesPage, EfBookmarksPage } from './EfPanelPages';
++export { default as EfCustomizePage } from './EfCustomizePage';
+diff --git a/client/src/components/UnifiedSidebar/EfChatsPanel.tsx b/client/src/components/UnifiedSidebar/EfChatsPanel.tsx
+index 06602ff..a818448 100644
+--- a/client/src/components/UnifiedSidebar/EfChatsPanel.tsx
++++ b/client/src/components/UnifiedSidebar/EfChatsPanel.tsx
+@@ -1,7 +1,8 @@
+ import { memo, lazy, Suspense, useCallback, useEffect, useMemo, useRef } from 'react';
+ import { useRecoilValue } from 'recoil';
+ import { useLocation, useNavigate } from 'react-router-dom';
+-import { ChevronLeft, Ellipsis, MessagesSquare, SquarePen, X } from 'lucide-react';
++import { ChevronLeft, SlidersHorizontal, SquarePen, X } from 'lucide-react';
++import { SystemRoles } from 'librechat-data-provider';
+ import { Button, Sidebar, Skeleton, TooltipAnchor } from '@librechat/client';
+ import type { NavLink } from '~/common';
+ import { useActivePanel, resolveActivePanel, DEFAULT_PANEL } from '~/Providers';
+@@ -11,32 +12,35 @@ import ChatFilterMenu from '~/components/Conversations/ChatFilterMenu';
+ import SidePanelNav from '~/components/SidePanel/Nav';
+ import SearchBar from '~/components/Nav/SearchBar';
+ import useNewChat from '~/hooks/Chat/useNewChat';
+-import { useLocalize } from '~/hooks';
++import { useAuthContext, useLocalize } from '~/hooks';
+ import { MobileShortcutTargets as ShortcutTargets } from './mobile';
+-import EfMoreMenu, { useEfMoreVisible } from './EfMoreMenu';
+ import EfChatChips from './EfChatChips';
+-import { EF_PAGES, EF_LINK_LABELS, EF_MAIN_PANELS, efPageIdOf, useEfPanelGuard } from './efSidebar';
++import {
++  EF_PAGES,
++  EF_LINK_LABELS,
++  EF_MAIN_PANELS,
++  EF_CUSTOMIZE_TONE,
++  efCustomizeIsCurrent,
++  efPageIdOf,
++  useEfPanelGuard,
++} from './efSidebar';
+ import { EF_CHATS_PANEL_ID } from './constants';
+ import { cn } from '~/utils';
+ import store from '~/store';
+ 
+ const AccountSettings = lazy(() => import('~/components/Nav/AccountSettings'));
+ 
+-/** Each tab takes its content's width plus an equal share of the rest, so a long name («المستندات», «Documents») keeps
+- *  its letters on a narrow drawer instead of every tab getting a fifth. */
+-const tabClass =
+-  'efaiw-tab flex min-w-0 flex-auto flex-col items-center justify-center gap-0.5 rounded-xl px-0.5 text-text-secondary no-underline outline-none';
+-
+ /**
+- * EF (sidebar v4 #204, owner-approved Concept 2): the chats panel. On the desktop it stands beside the rail at full
+- * height; on a phone it is the drawer, which reads as the chats screen.
+- *   - Header: «Chats», upstream's sort and filter menu, and the control that closes the panel (on a phone also the
+- *     account). A chat-bound tool (the agent builder, the parameters, the MCP servers; admins) takes the panel under
+- *     its own name, with the way back to the chats.
++ * EF (sidebar v4 #204, owner-approved Concept 2; v5 #221): the chats panel. On the desktop it stands beside the rail at
++ * full height; on a phone it is the drawer.
++ *   - Header: «Chats», upstream's sort and filter menu, and the control that closes the panel. A chat-bound tool (the
++ *     agent builder, the parameters, the MCP servers; admins) takes the panel under its own name, with the way back to
++ *     the chats.
+  *   - The chat search, the chips «All / Pinned / Project» (EfChatChips) and the history, pinned first.
+- *   - Phone only: a floating «New chat» and a tab bar (Chats, Projects, Skills, Documents, More); a tab closes the
+- *     drawer and opens its page, as the v3 rows did. The hidden shortcut targets live here on a phone and in the rail
+- *     on the desktop.
++ *   - Phone (#221, owner feedback: the bottom tab bar went unnoticed): «Baseer» and the X on top, then the search, the
++ *     three sections as tiles (Projects, Documents, Customize; a tile closes the drawer and opens its page), «Chats»
++ *     with the sort and filter menu, the chips and the history, and at the bottom the account and «New chat», where the
++ *     thumb reaches. The hidden shortcut targets live here on a phone and in the rail on the desktop.
+  * Sections open as pages in the main area (EF_PAGES) and never replace the chats here.
+  */
+ function EfChatsPanel({
+@@ -58,7 +62,7 @@ function EfChatsPanel({
+   const { active, setActive } = useActivePanel();
+   const search = useRecoilValue(store.search);
+   const switchToHistory = useRecoilValue(store.newChatSwitchToHistory);
+-  const moreVisible = useEfMoreVisible(links);
++  const { user } = useAuthContext();
+   const closeRef = useRef<HTMLButtonElement>(null);
+ 
+   const isInsightsRoute = location.pathname.startsWith('/insights');
+@@ -68,6 +72,12 @@ function EfChatsPanel({
+   const activeLink = links.find((link) => link.id === activeId);
+   const chatsShown = activeId === DEFAULT_PANEL && !routeActiveId;
+   const labelOf = (link: NavLink) => localize(EF_LINK_LABELS[link.id] ?? link.title);
++  const customizeIsCurrent = efCustomizeIsCurrent({
++    links,
++    pageId,
++    activeId,
++    isMarketplaceRoute: user?.role === SystemRoles.ADMIN && location.pathname.startsWith('/agents'),
++  });
+ 
+   /** One guard: the rail runs it on the desktop. */
+   const guardLinks = mobile ? links : [];
+@@ -121,21 +131,7 @@ function EfChatsPanel({
+     [active, navigate, onClose, setActive],
+   );
+ 
+-  const openPanel = useCallback(
+-    (link: NavLink) => {
+-      if (link.onClick) {
+-        onClose(() => link.onClick?.());
+-        return;
+-      }
+-      setActive(link.id);
+-      if (routeActiveId) {
+-        onLeaveInsights?.();
+-      }
+-    },
+-    [onClose, setActive, routeActiveId, onLeaveInsights],
+-  );
+-
+-  /** The phone's shortcut targets close the drawer before a page opens, like the tabs. */
++  /** The phone's shortcut targets close the drawer before a page opens, like the tiles. */
+   const targetLinks = useMemo(
+     () =>
+       links.map((link) =>
+@@ -144,6 +140,52 @@ function EfChatsPanel({
+     [links, onClose],
+   );
+ 
++  /** The header: on a phone «Baseer»; on the desktop «Chats» with the sort and filter menu; a tool in the panel under
++   *  its own name with the way back to the chats. */
++  let headContent: React.ReactNode;
++  if (!(chatsShown || !activeLink)) {
++    headContent = (
++      <>
++        {/* #218: the short «Chats» leaves the tool's name room in 300 px («MCP servers», «Agent builder»). */}
++        <button
++          type="button"
++          data-testid="efaiw-back-to-chats"
++          aria-label={localize('com_efaiw_back_to_chats')}
++          className="flex h-9 flex-shrink-0 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary outline-none hover:bg-surface-hover"
++          onClick={() => setActive(DEFAULT_PANEL)}
++        >
++          <ChevronLeft className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
++          {localize('com_efaiw_rail_chats')}
++        </button>
++        <h2 className="min-w-0 flex-1 truncate text-end text-sm font-semibold text-text-primary">
++          {labelOf(activeLink)}
++        </h2>
++      </>
++    );
++  } else if (mobile) {
++    headContent = (
++      <>
++        <img
++          src="assets/ef-baseer-icon.svg"
++          className="efaiw-rail-logo h-9 w-9 flex-shrink-0 rounded-full"
++          alt=""
++        />
++        <span className="efaiw-chats-title efaiw-drawer-brand min-w-0 flex-1 truncate">
++          {localize('com_efaiw_product_name')}
++        </span>
++      </>
++    );
++  } else {
++    headContent = (
++      <>
++        <h2 className="efaiw-chats-title min-w-0 flex-1 truncate">
++          {localize('com_efaiw_rail_chats')}
++        </h2>
++        {chatsShown && <ChatFilterMenu />}
++      </>
++    );
++  }
++
+   return (
+     <div
+       id={EF_CHATS_PANEL_ID}
+@@ -153,45 +195,7 @@ function EfChatsPanel({
+       )}
+     >
+       <div className="efaiw-chats-head flex flex-shrink-0 items-center gap-1">
+-        {chatsShown || !activeLink ? (
+-          <>
+-            {mobile && (
+-              <img
+-                src="assets/ef-baseer-icon.svg"
+-                className="efaiw-rail-logo h-9 w-9 flex-shrink-0 rounded-full"
+-                alt={localize('com_ui_logo', { 0: localize('com_efaiw_product_name') })}
+-              />
+-            )}
+-            <h2 className="efaiw-chats-title min-w-0 flex-1 truncate">
+-              {localize('com_efaiw_rail_chats')}
+-            </h2>
+-            {chatsShown && <ChatFilterMenu />}
+-          </>
+-        ) : (
+-          <>
+-            {/* #218: the short «Chats» leaves the tool's name room in 300 px («MCP servers», «Agent builder»). */}
+-            <button
+-              type="button"
+-              data-testid="efaiw-back-to-chats"
+-              aria-label={localize('com_efaiw_back_to_chats')}
+-              className="flex h-9 flex-shrink-0 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary outline-none hover:bg-surface-hover"
+-              onClick={() => setActive(DEFAULT_PANEL)}
+-            >
+-              <ChevronLeft className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
+-              {localize('com_efaiw_rail_chats')}
+-            </button>
+-            <h2 className="min-w-0 flex-1 truncate text-end text-sm font-semibold text-text-primary">
+-              {labelOf(activeLink)}
+-            </h2>
+-          </>
+-        )}
+-        {mobile && (
+-          <div className="efaiw-chats-me flex-shrink-0">
+-            <Suspense fallback={<Skeleton className="h-9 w-9 rounded-full" />}>
+-              <AccountSettings collapsed />
+-            </Suspense>
+-          </div>
+-        )}
++        {headContent}
+         <TooltipAnchor
+           side={mobile ? 'bottom' : 'right'}
+           description={closeHint}
+@@ -214,7 +218,9 @@ function EfChatsPanel({
+                 /* The control goes with the panel: keyboard focus returns to «Chats» in the rail, which reopens it. */
+                 if (!mobile) {
+                   setTimeout(() => {
+-                    document.querySelector<HTMLElement>('[data-testid="efaiw-rail-chats"]')?.focus();
++                    document
++                      .querySelector<HTMLElement>('[data-testid="efaiw-rail-chats"]')
++                      ?.focus();
+                   }, 0);
+                 }
+               }}
+@@ -236,6 +242,52 @@ function EfChatsPanel({
+               <SearchBar isSmallScreen={mobile} />
+             </div>
+           )}
++          {mobile && (
++            <nav aria-label={localize('com_efaiw_sections')} className="efaiw-drawer-tiles">
++              {EF_MAIN_PANELS.map(({ id, tone }) => {
++                const link = links.find((item) => item.id === id);
++                const path = EF_PAGES[id];
++                if (!link || !path) {
++                  return null;
++                }
++                return (
++                  <a
++                    key={id}
++                    href={path}
++                    data-testid={`efaiw-drawer-${id}`}
++                    aria-current={id === pageId ? 'page' : undefined}
++                    className="efaiw-drawer-tile"
++                    onClick={(event) => openPage(path, event)}
++                  >
++                    <span className={cn('efaiw-side-tile', tone)} aria-hidden="true">
++                      <link.icon className="h-[18px] w-[18px]" />
++                    </span>
++                    <span className="efaiw-drawer-tile-label">{labelOf(link)}</span>
++                  </a>
++                );
++              })}
++              <a
++                href={EF_PAGES.customize}
++                data-testid="efaiw-drawer-customize"
++                aria-current={customizeIsCurrent ? 'page' : undefined}
++                className="efaiw-drawer-tile"
++                onClick={(event) => openPage(EF_PAGES.customize, event)}
++              >
++                <span className={cn('efaiw-side-tile', EF_CUSTOMIZE_TONE)} aria-hidden="true">
++                  <SlidersHorizontal className="h-[18px] w-[18px]" />
++                </span>
++                <span className="efaiw-drawer-tile-label">{localize('com_efaiw_customize')}</span>
++              </a>
++            </nav>
++          )}
++          {mobile && (
++            <div className="efaiw-chats-sub flex items-center gap-1">
++              <h2 className="efaiw-chats-subtitle min-w-0 flex-1 truncate">
++                {localize('com_efaiw_rail_chats')}
++              </h2>
++              <ChatFilterMenu />
++            </div>
++          )}
+           <EfChatChips />
+         </div>
+       )}
+@@ -252,79 +304,32 @@ function EfChatsPanel({
+ 
+       {mobile && (
+         <>
+-          <a
+-            href="/c/new"
+-            data-testid="nav-new-chat-fab"
+-            aria-label={localize('com_ui_new_chat')}
+-            aria-keyshortcuts={newChatAriaKey}
+-            className="efaiw-fab absolute flex h-[52px] items-center gap-2 rounded-2xl px-[18px] text-[15.5px] font-bold no-underline outline-none"
+-            onClick={handleNewChat}
+-          >
+-            <SquarePen className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
+-            <span>{localize('com_ui_new_chat')}</span>
+-          </a>
+-          <nav
+-            aria-label={localize('com_efaiw_sections')}
+-            className="efaiw-tabs flex flex-shrink-0"
+-            style={{ paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom, 0px))' }}
+-          >
+-            <button
+-              type="button"
+-              data-testid="efaiw-tab-chats"
+-              aria-current="page"
+-              className={cn(tabClass, 'efaiw-tab-current')}
+-              onClick={() => {
+-                if (active !== DEFAULT_PANEL) {
+-                  setActive(DEFAULT_PANEL);
+-                }
+-              }}
++          {chatsShown && (
++            <div
++              className="efaiw-dock flex flex-shrink-0 items-center gap-2.5"
++              style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
+             >
+-              <span className="efaiw-tab-icon">
+-                <MessagesSquare className="h-5 w-5" aria-hidden="true" />
+-              </span>
+-              <span className="efaiw-tab-label">{localize('com_efaiw_rail_chats')}</span>
+-            </button>
+-            {EF_MAIN_PANELS.map(({ id }) => {
+-              const link = links.find((item) => item.id === id);
+-              const path = EF_PAGES[id];
+-              if (!link || !path) {
+-                return null;
+-              }
+-              return (
+-                <a
+-                  key={id}
+-                  href={path}
+-                  data-testid={`efaiw-tab-${id}`}
+-                  className={tabClass}
+-                  onClick={(event) => openPage(path, event)}
+-                >
+-                  <span className="efaiw-tab-icon">
+-                    <link.icon className="h-5 w-5" aria-hidden="true" />
+-                  </span>
+-                  <span className="efaiw-tab-label">{labelOf(link)}</span>
+-                </a>
+-              );
+-            })}
+-            {moreVisible && (
+-              <EfMoreMenu
+-                links={links}
+-                pageId={pageId}
+-                activeId={activeId}
+-                placement={document.documentElement.dir === 'rtl' ? 'top-start' : 'top-end'}
+-                testId="efaiw-tab-more"
+-                className={tabClass}
+-                onOpenPage={openPage}
+-                onOpenPanel={openPanel}
++              {/* The account at the start edge: its menu (upstream's, placed to the right and flipped when it does not
++                  fit) then opens across the drawer, inside a phone's screen in both directions. */}
++              <div className="efaiw-chats-me flex-shrink-0">
++                <Suspense fallback={<Skeleton className="h-10 w-10 rounded-full" />}>
++                  <AccountSettings collapsed />
++                </Suspense>
++              </div>
++              {/* The test id is upstream's drawer button's: focus falls back to it when a removed row has no
++                  neighbour (Conversations/focus.ts). */}
++              <a
++                href="/c/new"
++                data-testid="nav-new-chat-fab"
++                aria-keyshortcuts={newChatAriaKey}
++                className="efaiw-dock-new flex h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-2xl px-4 text-[15.5px] font-bold no-underline outline-none"
++                onClick={handleNewChat}
+               >
+-                <span className="efaiw-tab-icon">
+-                  <Ellipsis className="h-5 w-5" aria-hidden="true" />
+-                </span>
+-                <span className="efaiw-tab-label" aria-hidden="true">
+-                  {localize('com_efaiw_more')}
+-                </span>
+-              </EfMoreMenu>
+-            )}
+-          </nav>
++                <SquarePen className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
++                <span className="truncate">{localize('com_ui_new_chat')}</span>
++              </a>
++            </div>
++          )}
+           <ShortcutTargets
+             links={targetLinks}
+             onLeaveInsights={onLeaveInsights}
+diff --git a/client/src/components/UnifiedSidebar/EfMoreMenu.tsx b/client/src/components/UnifiedSidebar/EfMoreMenu.tsx
+deleted file mode 100644
+index 9902b6e..0000000
+--- a/client/src/components/UnifiedSidebar/EfMoreMenu.tsx
++++ /dev/null
+@@ -1,172 +0,0 @@
+-import { memo } from 'react';
+-import * as Ariakit from '@ariakit/react';
+-import { LayoutGrid } from 'lucide-react';
+-import { Link, useLocation } from 'react-router-dom';
+-import { SystemRoles } from 'librechat-data-provider';
+-import { TooltipAnchor } from '@librechat/client';
+-import type { ReactNode, MouseEvent } from 'react';
+-import type { NavLink } from '~/common';
+-import { useAuthContext, useLocalize, useShowMarketplace } from '~/hooks';
+-import { EF_PAGES, EF_LINK_LABELS, efAdminLinks, efMoreLinks } from './efSidebar';
+-import { cn } from '~/utils';
+-
+-const popItemClass =
+-  'efaiw-rail-pop-item flex h-10 w-full cursor-pointer items-center gap-3 rounded-lg px-3 text-start text-[14.5px] text-text-primary no-underline outline-none data-[active-item]:bg-surface-hover';
+-
+-/** Whether «More» has anything to show (its sections, or the admin tools). */
+-export function useEfMoreVisible(links: NavLink[]): boolean {
+-  const showMarketplace = useShowMarketplace();
+-  const { user } = useAuthContext();
+-  const isAdmin = user?.role === SystemRoles.ADMIN;
+-  return (
+-    efMoreLinks(links).length > 0 || efAdminLinks(links).length > 0 || (isAdmin && showMarketplace)
+-  );
+-}
+-
+-/**
+- * EF (sidebar v3 #198, v4 #204): «More» as a small menu, from the rail on the desktop and from the tab bar on a phone.
+- * Memory, bookmarks, ready commands and any other section the deployment enables; for admins the assistants
+- * marketplace, their builder, the parameters and the MCP servers under «Admins only» (owner decisions #189, #218).
+- * Sections open as pages (`onOpenPage` lets the phone close its drawer first); the chat-bound tools open as a panel
+- * (`onOpenPanel`).
+- */
+-function EfMoreMenu({
+-  links,
+-  pageId,
+-  activeId,
+-  placement,
+-  testId,
+-  className,
+-  children,
+-  onOpenPage,
+-  onOpenPanel,
+-}: {
+-  links: NavLink[];
+-  pageId?: string;
+-  activeId: string;
+-  placement: 'left-start' | 'right-start' | 'top-end' | 'top-start';
+-  testId: string;
+-  /** The trigger's classes, the current look included when one of its sections is open. */
+-  className: string;
+-  children: ReactNode;
+-  onOpenPage?: (path: string, event: MouseEvent<HTMLElement>) => void;
+-  onOpenPanel: (link: NavLink) => void;
+-}) {
+-  const localize = useLocalize();
+-  const location = useLocation();
+-  const showMarketplace = useShowMarketplace();
+-  const { user } = useAuthContext();
+-  const isAdmin = user?.role === SystemRoles.ADMIN;
+-  const moreLinks = efMoreLinks(links);
+-  const adminLinks = efAdminLinks(links);
+-  const hasAdminItems = adminLinks.length > 0 || (isAdmin && showMarketplace);
+-  const isMarketplaceRoute = location.pathname.startsWith('/agents');
+-  const labelOf = (link: NavLink) => localize(EF_LINK_LABELS[link.id] ?? link.title);
+-
+-  const pageClick = (path: string) => (event: MouseEvent<HTMLElement>) => {
+-    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+-      return;
+-    }
+-    onOpenPage?.(path, event);
+-  };
+-
+-  const popItem = (link: NavLink, badge = false) => {
+-    const path = EF_PAGES[link.id];
+-    const content = (
+-      <>
+-        <link.icon
+-          className="h-[18px] w-[18px] flex-shrink-0 text-text-secondary"
+-          aria-hidden="true"
+-        />
+-        <span className="min-w-0 flex-1 truncate">{labelOf(link)}</span>
+-        {badge && <span className="efaiw-admin-badge">{localize('com_efaiw_admin_only')}</span>}
+-      </>
+-    );
+-    if (path) {
+-      const current = link.id === pageId;
+-      return (
+-        <Ariakit.MenuItem
+-          key={link.id}
+-          data-testid={`${testId}-${link.id}`}
+-          aria-current={current ? 'page' : undefined}
+-          className={cn(popItemClass, current && 'efaiw-rail-pop-current')}
+-          render={<Link to={path} onClick={pageClick(path)} />}
+-        >
+-          {content}
+-        </Ariakit.MenuItem>
+-      );
+-    }
+-    return (
+-      <Ariakit.MenuItem
+-        key={link.id}
+-        data-testid={`${testId}-${link.id}`}
+-        disabled={link.disabled}
+-        className={cn(popItemClass, link.id === activeId && 'efaiw-rail-pop-current')}
+-        onClick={() => onOpenPanel(link)}
+-      >
+-        {content}
+-      </Ariakit.MenuItem>
+-    );
+-  };
+-
+-  return (
+-    <Ariakit.MenuProvider placement={placement}>
+-      <TooltipAnchor
+-        side={placement.startsWith('top') ? 'top' : 'right'}
+-        description={localize('com_efaiw_more')}
+-        render={
+-          <Ariakit.MenuButton
+-            data-testid={testId}
+-            aria-label={localize('com_efaiw_more')}
+-            className={className}
+-          >
+-            {children}
+-          </Ariakit.MenuButton>
+-        }
+-      />
+-      <Ariakit.Menu
+-        portal
+-        gutter={14}
+-        unmountOnHide
+-        /* Focus moves into the menu when it opens; no focusable aria-hidden traps around the portal (axe). */
+-        preserveTabOrder={false}
+-        data-testid={`${testId}-menu`}
+-        className="efaiw-rail-pop popover-ui z-[125] flex w-[268px] flex-col gap-0.5 rounded-2xl p-2"
+-      >
+-        {moreLinks.map((link) => popItem(link))}
+-        {hasAdminItems && (
+-          <>
+-            {moreLinks.length > 0 && (
+-              <Ariakit.MenuSeparator className="efaiw-rail-pop-sep mx-2 my-1 border-border-light" />
+-            )}
+-            <Ariakit.MenuGroup className="flex flex-col gap-0.5">
+-              <Ariakit.MenuGroupLabel className="efaiw-rail-pop-label px-3 pb-0.5 pt-1.5 text-xs font-semibold text-text-secondary">
+-                {localize('com_efaiw_admin_tools')}
+-              </Ariakit.MenuGroupLabel>
+-              {isAdmin && showMarketplace && (
+-                <Ariakit.MenuItem
+-                  data-testid={`${testId}-marketplace`}
+-                  aria-current={isMarketplaceRoute ? 'page' : undefined}
+-                  className={cn(popItemClass, isMarketplaceRoute && 'efaiw-rail-pop-current')}
+-                  render={<Link to="/agents" onClick={pageClick('/agents')} />}
+-                >
+-                  <LayoutGrid
+-                    className="h-[18px] w-[18px] flex-shrink-0 text-text-secondary"
+-                    aria-hidden="true"
+-                  />
+-                  <span className="min-w-0 flex-1 truncate">
+-                    {localize('com_efaiw_rail_agents')}
+-                  </span>
+-                  <span className="efaiw-admin-badge">{localize('com_efaiw_admin_only')}</span>
+-                </Ariakit.MenuItem>
+-              )}
+-              {adminLinks.map((link) => popItem(link, true))}
+-            </Ariakit.MenuGroup>
+-          </>
+-        )}
+-      </Ariakit.Menu>
+-    </Ariakit.MenuProvider>
+-  );
+-}
+-
+-export default memo(EfMoreMenu);
+diff --git a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
+index a7a4990..38b9915 100644
+--- a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
++++ b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
+@@ -1,6 +1,6 @@
+ import { memo, useCallback, lazy, Suspense } from 'react';
+ import { useRecoilValue } from 'recoil';
+-import { Ellipsis, MessagesSquare, SquarePen } from 'lucide-react';
++import { MessagesSquare, SlidersHorizontal, SquarePen } from 'lucide-react';
+ import { Link, useLocation } from 'react-router-dom';
+ import { SystemRoles } from 'librechat-data-provider';
+ import { Skeleton, TooltipAnchor } from '@librechat/client';
+@@ -10,13 +10,12 @@ import { useActivePanel, resolveActivePanel, DEFAULT_PANEL } from '~/Providers';
+ import { useAuthContext, useLocalize } from '~/hooks';
+ import useNewChat from '~/hooks/Chat/useNewChat';
+ import ShortcutTargets from './mobile/ShortcutTargets';
+-import EfMoreMenu, { useEfMoreVisible } from './EfMoreMenu';
+ import {
+   EF_PAGES,
+   EF_LINK_LABELS,
+   EF_MAIN_PANELS,
+-  efAdminLinks,
+-  efMoreLinks,
++  EF_CUSTOMIZE_TONE,
++  efCustomizeIsCurrent,
+   efPageIdOf,
+   useEfPanelGuard,
+ } from './efSidebar';
+@@ -73,10 +72,11 @@ const NewChatButton = memo(function NewChatButton({
+ });
+ 
+ /**
+- * EF (sidebar v4 #204, owner-approved Concept 2): the desktop rail, always shown beside the chats panel. Top to bottom:
+- * the «Baseer» icon, «New chat», «Chats» (opens and closes the chats panel, pressed while it shows the history: the same
+- * as the sidebar shortcut), a line, Projects, Skills and Documents (pages in the main area, the open one marked),
+- * «More» as a small menu, and the account. The hidden shortcut targets keep the panel shortcuts working.
++ * EF (sidebar v4 #204, owner-approved Concept 2; v5 #221): the desktop rail, always shown beside the chats panel. Top to
++ * bottom: the «Baseer» icon, «New chat», «Chats» (opens and closes the chats panel, pressed while it shows the history:
++ * the same as the sidebar shortcut), a line, Projects and Documents (pages in the main area, the open one marked),
++ * «Customize» (the page of every tool, marked while one of them is open), and the account. The hidden shortcut targets
++ * keep the panel shortcuts working.
+  */
+ function ExpandedPanel({
+   links,
+@@ -101,12 +101,14 @@ function ExpandedPanel({
+   const { user } = useAuthContext();
+   const isMarketplaceRoute =
+     user?.role === SystemRoles.ADMIN && location.pathname.startsWith('/agents');
+-  const moreVisible = useEfMoreVisible(links);
+   const labelOf = (link: NavLink) => localize(EF_LINK_LABELS[link.id] ?? link.title);
+-  const moreIsCurrent =
+-    efMoreLinks(links).some((link) => link.id === pageId) ||
+-    isMarketplaceRoute ||
+-    efAdminLinks(links).some((link) => link.id === activeId);
++  const customizeIsCurrent = efCustomizeIsCurrent({
++    links,
++    pageId,
++    activeId,
++    isMarketplaceRoute,
++  });
++  const customizeLabel = localize('com_efaiw_customize');
+   useEfPanelGuard(links, pageId);
+ 
+   /** Pressed while the panel shows the chat history; a chat-bound tool in the panel is not the chats. */
+@@ -145,22 +147,6 @@ function ExpandedPanel({
+     setActive,
+   ]);
+ 
+-  /** A panel (a chat-bound tool, or a section the deployment adds) opens in the panel beside the rail. */
+-  const openPanel = useCallback(
+-    (link: NavLink) => {
+-      if (link.onClick) {
+-        link.onClick();
+-        return;
+-      }
+-      setActive(link.id);
+-      if (isInsightsRoute) {
+-        onLeaveInsights?.();
+-      }
+-      onExpand?.();
+-    },
+-    [isInsightsRoute, onExpand, onLeaveInsights, setActive],
+-  );
+-
+   return (
+     <nav
+       aria-label={localize('com_efaiw_sections')}
+@@ -223,28 +209,23 @@ function ExpandedPanel({
+             />
+           );
+         })}
+-        {moreVisible && (
+-          <EfMoreMenu
+-            links={links}
+-            pageId={pageId}
+-            activeId={activeId}
+-            placement={document.documentElement.dir === 'rtl' ? 'left-start' : 'right-start'}
+-            testId="efaiw-rail-more"
+-            className={cn(
+-              railItemClass,
+-              'aria-[expanded=true]:bg-surface-hover',
+-              moreIsCurrent && 'efaiw-rail-active',
+-            )}
+-            onOpenPanel={openPanel}
+-          >
+-            <span className="efaiw-side-tile" aria-hidden="true">
+-              <Ellipsis className="h-[18px] w-[18px]" />
+-            </span>
+-            <span className="efaiw-rail-label" aria-hidden="true">
+-              {localize('com_efaiw_more')}
+-            </span>
+-          </EfMoreMenu>
+-        )}
++        <TooltipAnchor
++          side="right"
++          description={customizeLabel}
++          render={
++            <Link
++              to={EF_PAGES.customize}
++              data-testid="efaiw-rail-customize"
++              aria-current={customizeIsCurrent ? 'page' : undefined}
++              className={cn(railItemClass, customizeIsCurrent && 'efaiw-rail-active')}
++            >
++              <span className={cn('efaiw-side-tile', EF_CUSTOMIZE_TONE)} aria-hidden="true">
++                <SlidersHorizontal className="h-[18px] w-[18px]" />
++              </span>
++              <span className="efaiw-rail-label">{customizeLabel}</span>
++            </Link>
++          }
++        />
+       </div>
+ 
+       <ShortcutTargets
+diff --git a/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx b/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx
+index 1119a5a..aab4aab 100644
+--- a/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx
++++ b/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx
+@@ -190,35 +190,70 @@ function renderPanel({
+   return { ...result, onCollapse, onExpand };
+ }
+ 
+-describe('ExpandedPanel (EF rail, sidebar v4 #204)', () => {
++describe('ExpandedPanel (EF rail, sidebar v4 #204, v5 #221)', () => {
+   beforeEach(() => {
+     jest.clearAllMocks();
+     localStorage.clear();
+     mockRole = 'USER';
+   });
+ 
+-  it('lists new chat, «Chats», the three main pages, then «More»', () => {
++  it('lists new chat, «Chats», Projects and Documents, then «Customize» (#221)', () => {
+     renderPanel();
+     const order = [
+       'new-chat-button',
+       'efaiw-rail-chats',
+       'efaiw-rail-projects',
+-      'efaiw-rail-skills',
+       'efaiw-rail-files',
+-      'efaiw-rail-more',
++      'efaiw-rail-customize',
+     ].map((id) => screen.getByTestId(id));
+     order.reduce((prev, next) => {
+       expect(prev.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+       return next;
+     });
+-    expect(screen.getByTestId('efaiw-rail-skills')).toHaveAttribute('href', '/skills');
++    expect(screen.getByTestId('efaiw-rail-projects')).toHaveAttribute('href', '/projects');
+     expect(screen.getByTestId('efaiw-rail-files')).toHaveAttribute('href', '/files');
++    expect(screen.getByTestId('efaiw-rail-customize')).toHaveAttribute('href', '/customize');
++    expect(screen.getByTestId('efaiw-rail-customize')).toHaveTextContent('com_efaiw_customize');
++    /** Skills and «More» moved into «Customize». */
++    expect(screen.queryByTestId('efaiw-rail-skills')).not.toBeInTheDocument();
++    expect(screen.queryByTestId('efaiw-rail-more')).not.toBeInTheDocument();
+   });
+ 
+   it("marks the open page's entry from the route", () => {
+-    renderPanel({ route: '/skills/abc' });
+-    expect(screen.getByTestId('efaiw-rail-skills')).toHaveAttribute('aria-current', 'page');
++    renderPanel({ route: '/files' });
++    expect(screen.getByTestId('efaiw-rail-files')).toHaveAttribute('aria-current', 'page');
+     expect(screen.getByTestId('efaiw-rail-projects')).not.toHaveAttribute('aria-current');
++    expect(screen.getByTestId('efaiw-rail-customize')).not.toHaveAttribute('aria-current');
++  });
++
++  it.each(['/customize', '/skills/abc', '/prompts', '/memories', '/bookmarks'])(
++    '«Customize» reads as open on %s',
++    (route) => {
++      renderPanel({ route });
++      expect(screen.getByTestId('efaiw-rail-customize')).toHaveAttribute('aria-current', 'page');
++      expect(screen.getByTestId('efaiw-rail-files')).not.toHaveAttribute('aria-current');
++    },
++  );
++
++  it("«Customize» reads as open on the admin's marketplace, not on an employee's", () => {
++    mockRole = 'ADMIN';
++    const { unmount } = renderPanel({ route: '/agents', links: createLinks({ admin: true }) });
++    expect(screen.getByTestId('efaiw-rail-customize')).toHaveAttribute('aria-current', 'page');
++    unmount();
++    mockRole = 'USER';
++    renderPanel({ route: '/agents' });
++    expect(screen.getByTestId('efaiw-rail-customize')).not.toHaveAttribute('aria-current');
++  });
++
++  it('«Customize» reads as open while one of its tools holds the panel (MCP, #218)', () => {
++    mockRole = 'ADMIN';
++    renderPanel({
++      expanded: true,
++      initialPanel: 'mcp-builder',
++      links: createLinks({ admin: true }),
++    });
++    expect(screen.getByTestId('efaiw-rail-customize')).toHaveAttribute('aria-current', 'page');
++    expect(screen.getByTestId('efaiw-rail-chats')).toHaveAttribute('aria-pressed', 'false');
+   });
+ 
+   it('«Chats» opens the closed panel on the chat history', () => {
+@@ -268,44 +303,6 @@ describe('ExpandedPanel (EF rail, sidebar v4 #204)', () => {
+     expect(onExpand).not.toHaveBeenCalled();
+   });
+ 
+-  it('«More» lists memory, bookmarks and ready commands, without admin tools for an employee', async () => {
+-    renderPanel();
+-    fireEvent.click(screen.getByTestId('efaiw-rail-more'));
+-    expect(await screen.findByTestId('efaiw-rail-more-memories')).toHaveAttribute(
+-      'href',
+-      '/memories',
+-    );
+-    expect(screen.getByTestId('efaiw-rail-more-bookmarks')).toHaveAttribute('href', '/bookmarks');
+-    expect(screen.getByTestId('efaiw-rail-more-prompts')).toHaveAttribute('href', '/prompts');
+-    expect(screen.queryByText('com_efaiw_admin_tools')).not.toBeInTheDocument();
+-    expect(screen.queryByTestId('efaiw-rail-more-marketplace')).not.toBeInTheDocument();
+-  });
+-
+-  it('admins find their tools under «Admins only»; the builder opens in the column', async () => {
+-    mockRole = 'ADMIN';
+-    const { onExpand } = renderPanel({ links: createLinks({ admin: true }) });
+-    fireEvent.click(screen.getByTestId('efaiw-rail-more'));
+-    expect(await screen.findByText('com_efaiw_admin_tools')).toBeInTheDocument();
+-    expect(screen.getByTestId('efaiw-rail-more-marketplace')).toHaveAttribute('href', '/agents');
+-    fireEvent.click(screen.getByTestId('efaiw-rail-more-agents'));
+-    expect(localStorage.getItem('side:active-panel')).toBe('agents');
+-    expect(onExpand).toHaveBeenCalledTimes(1);
+-  });
+-
+-  it('MCP servers are an admin tool (#218): under «Admins only» with the badge, opened in the column', async () => {
+-    mockRole = 'ADMIN';
+-    const { onExpand } = renderPanel({ links: createLinks({ admin: true }) });
+-    fireEvent.click(screen.getByTestId('efaiw-rail-more'));
+-    const group = (await screen.findByText('com_efaiw_admin_tools')).closest('[role="group"]');
+-    const mcp = screen.getByTestId('efaiw-rail-more-mcp-builder');
+-    expect(group).toContainElement(mcp);
+-    expect(mcp).toHaveTextContent('com_ui_mcp_servers');
+-    expect(mcp).toHaveTextContent('com_efaiw_admin_only');
+-    fireEvent.click(mcp);
+-    expect(localStorage.getItem('side:active-panel')).toBe('mcp-builder');
+-    expect(onExpand).toHaveBeenCalledTimes(1);
+-  });
+-
+   it('keeps hidden shortcut targets, pressed for the open page', () => {
+     const { container } = renderPanel({ route: '/files' });
+     const target = container.querySelector('[data-testid="nav-panel-files"]');
+diff --git a/client/src/components/UnifiedSidebar/efSidebar.ts b/client/src/components/UnifiedSidebar/efSidebar.ts
+index 56e8cc4..8b2c2ef 100644
+--- a/client/src/components/UnifiedSidebar/efSidebar.ts
++++ b/client/src/components/UnifiedSidebar/efSidebar.ts
+@@ -5,7 +5,7 @@ import { useActivePanel, DEFAULT_PANEL } from '~/Providers';
+ 
+ /** EF (sidebar v3 #198, owner-approved): the sections that open as a page in the main area instead of a panel in the
+  *  sidebar, each with its route. The sidebar keeps the chat history; the chat-bound tools (the agent builder, the
+- *  parameters) stay panels. */
++ *  parameters, the MCP servers) stay panels. «Customize» (#221) is the page that gathers the tools. */
+ export const EF_PAGES: Record<string, string> = {
+   projects: '/projects',
+   skills: '/skills',
+@@ -13,6 +13,7 @@ export const EF_PAGES: Record<string, string> = {
+   prompts: '/prompts',
+   memories: '/memories',
+   bookmarks: '/bookmarks',
++  customize: '/customize',
+ };
+ 
+ /** The page section the route belongs to, so its row reads as the open one. */
+@@ -22,8 +23,9 @@ export function efPageIdOf(pathname: string): string | undefined {
+   );
+ }
+ 
+-/** The names shown in the column, the rail and «More». The builder keeps its full name so it is not confused with
+- *  «المساعدون», which opens the marketplace. Files are presented as the employee's documents. */
++/** The names shown in the rail, the drawer, «Customize» and a tool's panel header. The builder keeps its full name so
++ *  it is not confused with «المساعدون», which opens the marketplace. Files are presented as the employee's documents,
++ *  and the MCP servers as connectors (#221). */
+ export const EF_LINK_LABELS: Record<string, TranslationKeys> = {
+   conversations: 'com_efaiw_rail_chats',
+   projects: 'com_ui_projects',
+@@ -34,31 +36,35 @@ export const EF_LINK_LABELS: Record<string, TranslationKeys> = {
+   prompts: 'com_efaiw_rail_prompts',
+   agents: 'com_sidepanel_agent_builder',
+   parameters: 'com_efaiw_rail_parameters',
+-  'mcp-builder': 'com_ui_mcp_servers',
++  'mcp-builder': 'com_efaiw_connectors',
+ };
+ 
+-/** The column's main rows, each with its tint from the palette (brand.css). */
++/** EF (#221, owner-approved): the sidebar's three sections, each with its tint from the palette (brand.css): the
++ *  employee's work (Projects, Documents), then «Customize», which gathers every tool so a section LibreChat adds later
++ *  needs no new place in the sidebar. */
+ export const EF_MAIN_PANELS: ReadonlyArray<{ id: string; tone: string }> = [
+   { id: 'projects', tone: 'efaiw-tone-blue' },
+-  { id: 'skills', tone: 'efaiw-tone-green' },
+   { id: 'files', tone: 'efaiw-tone-brown' },
+ ];
+-/** «More» lists these first, then any other section the deployment enables; the admin-only ones come last. MCP
+- *  servers are for admins only (owner decision #218, ADR-0021). */
+-export const EF_MORE_FIRST = ['memories', 'bookmarks', 'prompts'];
++export const EF_CUSTOMIZE_TONE = 'efaiw-tone-sec';
++
++/** «Customize» lists these first, then any other section the deployment enables (one that an upgrade adds shows up by
++ *  itself, marked new); the admin-only ones come last. MCP servers are for admins only (owner decision #218,
++ *  ADR-0021). */
++export const EF_CUSTOMIZE_FIRST = ['prompts', 'skills', 'memories', 'bookmarks'];
+ export const EF_ADMIN_PANELS = ['agents', 'parameters', 'mcp-builder'];
+ 
+-/** «More»'s entries for everyone, in order. The admin panels only reach `links` for admins
++/** «Customize»'s entries for everyone, in order. The admin panels only reach `links` for admins
+  *  (useUnifiedSidebarLinks). */
+-export function efMoreLinks(links: NavLink[]): NavLink[] {
++export function efCustomizeLinks(links: NavLink[]): NavLink[] {
+   const mainIds = EF_MAIN_PANELS.map((panel) => panel.id);
+   return [
+-    ...EF_MORE_FIRST.map((id) => links.find((link) => link.id === id)),
++    ...EF_CUSTOMIZE_FIRST.map((id) => links.find((link) => link.id === id)),
+     ...links.filter(
+       (link) =>
+         link.id !== DEFAULT_PANEL &&
+         !mainIds.includes(link.id) &&
+-        !EF_MORE_FIRST.includes(link.id) &&
++        !EF_CUSTOMIZE_FIRST.includes(link.id) &&
+         !EF_ADMIN_PANELS.includes(link.id),
+     ),
+   ].filter((link): link is NavLink => link != null);
+@@ -70,6 +76,30 @@ export function efAdminLinks(links: NavLink[]): NavLink[] {
+   );
+ }
+ 
++/** «Customize» reads as the open section on its page and its tools' pages, on the marketplace (admins), and while one
++ *  of its panels holds the sidebar. */
++export function efCustomizeIsCurrent({
++  links,
++  pageId,
++  activeId,
++  isMarketplaceRoute,
++}: {
++  links: NavLink[];
++  pageId?: string;
++  activeId: string;
++  isMarketplaceRoute: boolean;
++}): boolean {
++  const mainIds = EF_MAIN_PANELS.map((panel) => panel.id);
++  if (pageId != null) {
++    return !mainIds.includes(pageId);
++  }
++  return (
++    isMarketplaceRoute ||
++    (activeId !== DEFAULT_PANEL &&
++      [...efCustomizeLinks(links), ...efAdminLinks(links)].some((link) => link.id === activeId))
++  );
++}
++
+ /** Keeps the chats in the sidebar: a section that became a page (v2 kept them as panels) may still be the remembered
+  *  panel, and opening a page by a shortcut or a link puts a chat-bound tool away, as the rows do. A tool opened while
+  *  a page is shown stays (the rail opens it as it expands the column). */
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index 624229d..88f2d47 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3122,7 +3122,6 @@
+   "com_efaiw_print_blocked": "The browser blocked the print page. Allow pop-ups for this site, then try again.",
+   "com_efaiw_download_default_name": "Baseer reply",
+   "com_efaiw_panel_switcher_label": "{{panel}}, choose a panel",
+-  "com_efaiw_more": "More",
+   "com_efaiw_greeting_morning": "Good morning",
+   "com_efaiw_greeting_morning_named": "Good morning, {{name}}",
+   "com_efaiw_greeting_afternoon": "Good afternoon",
+@@ -3152,5 +3151,23 @@
+   "com_efaiw_no_project": "No project",
+   "com_efaiw_no_projects": "You have no projects yet.",
+   "com_efaiw_no_pinned": "No pinned chats yet. Pin a chat from its menu.",
+-  "com_efaiw_no_project_chats": "No chats here yet."
++  "com_efaiw_no_project_chats": "No chats here yet.",
++  "com_efaiw_customize": "Customize",
++  "com_efaiw_customize_hint": "Tools that make Baseer work your way.",
++  "com_efaiw_customize_for_you": "For you",
++  "com_efaiw_customize_tip": "For everyday use, type / in the message box for a ready command, or $ for a skill.",
++  "com_efaiw_desc_prompts": "The Fund's official templates and your own commands",
++  "com_efaiw_desc_skills": "Expertise Baseer applies when a task needs it",
++  "com_efaiw_desc_memories": "What Baseer remembers about you and your preferences",
++  "com_efaiw_desc_bookmarks": "Tags you put on your chats to find them quickly",
++  "com_efaiw_desc_agents": "Explore agents set up for specific tasks, or create one",
++  "com_efaiw_desc_builder": "Create an agent or edit an existing one",
++  "com_efaiw_desc_parameters": "Model settings for the open chat",
++  "com_efaiw_desc_connectors": "MCP servers that connect Baseer to other systems",
++  "com_efaiw_desc_new": "A section newly enabled in Baseer",
++  "com_efaiw_new": "New",
++  "com_efaiw_new_agent": "New agent",
++  "com_efaiw_connectors": "Connectors",
++  "com_efaiw_back_to": "Back to {{0}}",
++  "com_efaiw_breadcrumb": "Breadcrumb"
+ }
+diff --git a/client/src/routes/index.tsx b/client/src/routes/index.tsx
+index 17ffab5..bc34367 100644
+--- a/client/src/routes/index.tsx
++++ b/client/src/routes/index.tsx
+@@ -31,9 +31,15 @@ const AuthLayout = () => (
+   </AuthContextProvider>
+ );
+ 
+-/** EF (sidebar v3 #198): the sections the sidebar opens as pages in the main area. */
++/** EF (sidebar v3 #198, v5 #221): the sections the sidebar opens as pages in the main area. */
+ const loadEfPage = (
+-  name: 'EfSkillsPage' | 'EfPromptsPage' | 'EfFilesPage' | 'EfMemoriesPage' | 'EfBookmarksPage',
++  name:
++    | 'EfSkillsPage'
++    | 'EfPromptsPage'
++    | 'EfFilesPage'
++    | 'EfMemoriesPage'
++    | 'EfBookmarksPage'
++    | 'EfCustomizePage',
+ ) =>
+   import('~/components/EfPages').then((m) => ({
+     Component: m[name],
+@@ -163,6 +169,10 @@ export const router = createBrowserRouter(
+               path: 'bookmarks',
+               lazy: () => loadEfPage('EfBookmarksPage'),
+             },
++            {
++              path: 'customize',
++              lazy: () => loadEfPage('EfCustomizePage'),
++            },
+             {
+               path: 'skills',
+               lazy: loadSkillsView,

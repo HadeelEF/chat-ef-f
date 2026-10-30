@@ -1,0 +1,28 @@
+B-04 (#89, ADR-0013): the landing greeting animates one box per letter, which breaks Arabic letter joining.
+Words of joining scripts (Arabic, Syriac, N'Ko, Mongolian, Adlam) animate as one box per word instead.
+
+diff --git a/packages/client/src/components/SplitText.tsx b/packages/client/src/components/SplitText.tsx
+index dfbc410..5577b1c 100644
+--- a/packages/client/src/components/SplitText.tsx
++++ b/packages/client/src/components/SplitText.tsx
+@@ -58,6 +58,11 @@ const splitGraphemes = (text: string): string[] => {
+   }
+ };
+ 
++/** Letters of joining scripts must stay in one box per word, or each letter takes its isolated form. */
++const JOINING_SCRIPT = /[\p{Script=Arabic}\p{Script=Syriac}\p{Script=Nko}\p{Script=Mongolian}\p{Script=Adlam}]/u;
++const splitUnits = (word: string): string[] =>
++  JOINING_SCRIPT.test(word) ? [word] : splitGraphemes(word);
++
+ const SplitText: React.FC<SplitTextProps> = ({
+   text = '',
+   className = '',
+@@ -71,7 +76,7 @@ const SplitText: React.FC<SplitTextProps> = ({
+   onLetterAnimationComplete,
+   onLineCountChange,
+ }) => {
+-  const words = text.split(' ').map(splitGraphemes);
++  const words = text.split(' ').map(splitUnits);
+   const letters = words.flat();
+   const [inView, setInView] = useState(false);
+   const ref = useRef<HTMLParagraphElement>(null);

@@ -1,0 +1,2161 @@
+EF AI Workspace (#204): sidebar v4, owner-approved 2026-10-25 (Concept 2 «الشريط واللوحة»: «اعتمد المفهوم 2 ونفذه بدقة»).
+The v3 column left the chat history about 30% of its height (15% with «More» open); the history now has a panel of its
+own beside a rail, as upstream's unified sidebar (a labelled rail beside a panel) already arranges it.
+
+- Rail (UnifiedSidebar/ExpandedPanel.tsx, constants.ts: 76 px), always shown on the desktop: the «Baseer» icon, «New
+  chat», «Chats» (opens and closes the chats panel, pressed while it shows them; a tool in the panel gives way to the
+  chats), a line, Projects, Skills and Documents (pages, the open one marked), «More» (EfMoreMenu.tsx: memory,
+  bookmarks, ready commands; for admins the marketplace, the builder and the parameters under «Admins only»), the
+  account. It keeps the hidden shortcut targets.
+- Chats panel (UnifiedSidebar/EfChatsPanel.tsx, replaces EfSidebarColumn.tsx; Sidebar.tsx, UnifiedSidebar.tsx): beside
+  the rail at full height, 300 px and resizable (the handle at its inner edge, the pointer and arrows following the page
+  direction). Header «Chats» with upstream's sort and filter menu (ChatFilterMenu) and the collapse control; the chat
+  search; the chips «All / Pinned / Project» (EfChatChips.tsx, efChatScope.ts: «Pinned» alone, or one project's chats
+  or those of none, filtered by the server's `projectId`, its pinned chats first); the history. The list's own «Chats»
+  heading steps aside (Conversations.tsx `hideHeader`, `emptyLabel`; ConversationsSection.tsx). Pages never replace the
+  panel; the admin chat-bound tools keep it with «Back to chats».
+- Phone: the drawer is the chats screen: header (icon, «Chats», sort and filter, account, close), search, chips,
+  history, a floating «New chat», and a tab bar (Chats, Projects, Skills, Documents, More) whose tabs close the drawer
+  and open their page; each tab takes its name's width so «المستندات» and «Documents» stay whole on a 360 px phone.
+- Tests: ExpandedPanel.spec (the rail and «Chats»), ConversationsSection.spec (the chips), drawerPaint.spec (the panel).
+
+diff --git a/client/src/components/Conversations/Conversations.tsx b/client/src/components/Conversations/Conversations.tsx
+index 7c5f6fa..98e687a 100644
+--- a/client/src/components/Conversations/Conversations.tsx
++++ b/client/src/components/Conversations/Conversations.tsx
+@@ -53,6 +53,10 @@ interface ConversationsProps {
+   setIsChatsExpanded: (expanded: boolean) => void;
+   /** Actions for the Chats header, alongside the Projects header's own. */
+   chatsHeaderTrailing?: ReactNode;
++  /** EF (sidebar v4 #204): the chats panel's own header names the list, so it has no «Chats» heading. */
++  hideHeader?: boolean;
++  /** EF (#204): what an empty list says when the panel's chips narrowed it (one project's chats). */
++  emptyLabel?: TranslationKeys;
+   /** Whether another page exists, so an empty list can be told apart from an unpaged one. */
+   hasNextPage?: boolean;
+   /** Whether the initial conversations request failed without usable rows. */
+@@ -195,6 +199,8 @@ const Conversations: FC<ConversationsProps> = ({
+   isChatsExpanded,
+   setIsChatsExpanded,
+   chatsHeaderTrailing,
++  hideHeader = false,
++  emptyLabel: emptyLabelOverride,
+   hasNextPage = false,
+   isError = false,
+   onRetry,
+@@ -533,6 +539,8 @@ const Conversations: FC<ConversationsProps> = ({
+     emptyLabel = 'com_ui_no_chats_match_filters';
+   } else if (isArchivedView) {
+     emptyLabel = 'com_ui_no_archived_chats';
++  } else if (emptyLabelOverride) {
++    emptyLabel = emptyLabelOverride;
+   }
+ 
+   let body: ReactNode = (
+@@ -609,14 +617,16 @@ const Conversations: FC<ConversationsProps> = ({
+       ref={chatsRegionRef}
+       className="relative flex flex-1 flex-col pb-2 text-sm text-text-primary"
+     >
+-      <div className="px-3">
+-        <ChatsHeader
+-          isExpanded={isChatsExpanded}
+-          onToggle={() => setIsChatsExpanded(!isChatsExpanded)}
+-          trailing={chatsHeaderTrailing}
+-          highlight={isDropOver && canDrop}
+-        />
+-      </div>
++      {!hideHeader && (
++        <div className="px-3">
++          <ChatsHeader
++            isExpanded={isChatsExpanded}
++            onToggle={() => setIsChatsExpanded(!isChatsExpanded)}
++            trailing={chatsHeaderTrailing}
++            highlight={isDropOver && canDrop}
++          />
++        </div>
++      )}
+       {body}
+     </div>
+   );
+diff --git a/client/src/components/UnifiedSidebar/ConversationsSection.tsx b/client/src/components/UnifiedSidebar/ConversationsSection.tsx
+index 0e601a8..07cba77 100644
+--- a/client/src/components/UnifiedSidebar/ConversationsSection.tsx
++++ b/client/src/components/UnifiedSidebar/ConversationsSection.tsx
+@@ -16,15 +16,13 @@ import {
+   useTitleGeneration,
+ } from '~/data-provider';
+ import { useLocalize, useAuthContext, useLocalStorage, useNavScrolling } from '~/hooks';
+-import ChatFilterMenu from '~/components/Conversations/ChatFilterMenu';
+ import PinnedSection from '~/components/Conversations/PinnedSection';
+ import useSidebarToggle from '~/hooks/Nav/useSidebarToggle';
+ import { Conversations } from '~/components/Conversations';
+ import { collectPinnedConversations } from '~/utils';
++import { EF_UNASSIGNED_PROJECT, efChatScopeAtom } from './efChatScope';
+ import store from '~/store';
+ 
+-const chatsHeaderTrailing = <ChatFilterMenu />;
+-
+ const ConversationsSection = memo(() => {
+   const localize = useLocalize();
+   const isSmallScreen = useMediaQuery('(max-width: 768px)');
+@@ -32,7 +30,11 @@ const ConversationsSection = memo(() => {
+   const { isAuthenticated } = useAuthContext();
+   useTitleGeneration(isAuthenticated);
+ 
+-  const [isChatsExpanded, setIsChatsExpanded] = useLocalStorage('chatsExpanded', true);
++  /** EF (sidebar v4 #204): the panel's own header names the chats and holds the filter menu, so the list has no
++   *  collapsible «Chats» heading of its own and is always open. */
++  const [, setIsChatsExpanded] = useLocalStorage('chatsExpanded', true);
++  /** EF (#204): the chips above the history (EfChatChips): every chat, the pinned ones, or one project's. */
++  const scope = useAtomValue(efChatScopeAtom);
+ 
+   const tags = useAtomValue(chatFilterTagsAtom);
+   const sort = useAtomValue(chatSortAtom);
+@@ -57,6 +59,7 @@ const ConversationsSection = memo(() => {
+       sortDirection: sort.direction,
+       tags: tags.length === 0 ? undefined : tags,
+       search: search.debouncedQuery || undefined,
++      projectId: scope.kind === 'project' ? scope.projectId : undefined,
+     },
+     {
+       enabled: isAuthenticated,
+@@ -104,11 +107,25 @@ const ConversationsSection = memo(() => {
+      refetch keeps the previous dedicated result, so merge in pins from the
+      live chats cache rather than hiding a newly pinned row — but only while that
+      cache holds the same unarchived chats this section shows. */
+-  const pinnedConversations = useMemo(
++  const allPinned = useMemo(
+     () =>
+       collectPinnedConversations(pinnedData?.conversations, isArchivedView ? [] : conversations),
+     [pinnedData?.conversations, conversations, isArchivedView],
+   );
++  /** EF (#204): under «Project» the pinned chats of that project (or of none) still lead its list; the chats list
++   *  leaves pins out, so they would otherwise vanish. */
++  const projectScope = scope.kind === 'project' ? scope.projectId : undefined;
++  const pinnedConversations = useMemo(
++    () =>
++      projectScope == null
++        ? allPinned
++        : allPinned.filter((convo) =>
++            projectScope === EF_UNASSIGNED_PROJECT
++              ? !convo.chatProjectId
++              : convo.chatProjectId === projectScope,
++          ),
++    [allPinned, projectScope],
++  );
+ 
+   /**
+    * Selecting a conversation is the most common close path — it must take
+@@ -156,6 +173,9 @@ const ConversationsSection = memo(() => {
+    *  enough for the browser not to clamp it, so the surface returns to the top
+    *  whenever it changes what it is showing. */
+   const isSearching = Boolean(search.query);
++  /** «Pinned» shows the pinned chats alone; a search still looks through every chat. */
++  const pinnedOnly = scope.kind === 'pinned' && !isSearching;
++  const showPinned = !isSearching;
+   useEffect(() => {
+     if (scrollViewport) {
+       scrollViewport.scrollTop = 0;
+@@ -178,20 +198,30 @@ const ConversationsSection = memo(() => {
+             list still claims the space below them when there is little to show. */}
+         <div ref={setScrollContent} className="flex min-h-full flex-col">
+           {/* EF (#189): Projects open from their own sidebar row (EfProjectsPanel); Pinned leads the history. */}
+-          {!search.query && (
++          {showPinned && (
+             <PinnedSection
+               conversations={pinnedConversations}
+               toggleNav={toggleNav}
+               isSmallScreen={isSmallScreen}
+               /* Only a successful drain proves the list is whole: a failed later
+                  page still publishes partial data and stops fetching. The Chats filters
+-                 never reach this query, so nothing else can truncate it. */
+-              membershipComplete={isPinnedComplete}
++                 never reach this query, so nothing else can truncate it. EF (#204): a project's pins are a
++                 subset, never the whole list, so they never prune the stored order. */
++              membershipComplete={isPinnedComplete && projectScope == null}
+               /* When that drain last ran, which decides whether it is current
+                  enough to prune the stored order against. */
+               membershipUpdatedAt={pinnedUpdatedAt}
+             />
+           )}
++          {pinnedOnly && isPinnedComplete && pinnedConversations.length === 0 && (
++            <div
++              className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center text-sm text-text-secondary"
++              data-testid="efaiw-no-pinned"
++            >
++              {localize('com_efaiw_no_pinned')}
++            </div>
++          )}
++          {!pinnedOnly && (
+           <Conversations
+             conversations={conversations}
+             moveToTop={moveToTop}
+@@ -200,15 +230,17 @@ const ConversationsSection = memo(() => {
+             loadMoreConversations={loadMoreConversations}
+             isLoading={isFetchingNextPage || isLoading}
+             isSearchLoading={isSearchLoading || isPreviousData}
+-            isChatsExpanded={isChatsExpanded}
++            isChatsExpanded={true}
+             setIsChatsExpanded={setIsChatsExpanded}
++            hideHeader={true}
++            emptyLabel={scope.kind === 'project' ? 'com_efaiw_no_project_chats' : undefined}
+             hasNextPage={computedHasNextPage}
+             isError={isError}
+             onRetry={retryConversations}
+-            chatsHeaderTrailing={chatsHeaderTrailing}
+             scrollViewport={scrollViewport}
+             scrollContent={scrollContent}
+           />
++          )}
+         </div>
+       </div>
+     </div>
+diff --git a/client/src/components/UnifiedSidebar/EfChatChips.tsx b/client/src/components/UnifiedSidebar/EfChatChips.tsx
+new file mode 100644
+index 0000000..2e42afd
+--- /dev/null
++++ b/client/src/components/UnifiedSidebar/EfChatChips.tsx
+@@ -0,0 +1,136 @@
++import { memo, useMemo, useState } from 'react';
++import * as Ariakit from '@ariakit/react';
++import { useAtom } from 'jotai';
++import { Check, ChevronDown, FolderMinus } from 'lucide-react';
++import { usePopoverZIndex } from '@librechat/client';
++import { useProjectsInfiniteQuery } from '~/data-provider';
++import { EF_UNASSIGNED_PROJECT, efChatScopeAtom } from './efChatScope';
++import { useLocalize } from '~/hooks';
++import { cn } from '~/utils';
++
++const chipClass =
++  'efaiw-chip flex h-8 min-w-0 flex-shrink-0 items-center gap-1 rounded-full px-3 text-[13px] font-semibold outline-none';
++const itemClass =
++  'flex w-full cursor-pointer select-none items-center gap-2 rounded-lg px-2 py-2 text-sm text-text-primary outline-none data-[active-item]:bg-surface-hover';
++
++/**
++ * EF (sidebar v4 #204, owner-approved Concept 2): «All», «Pinned» and «Project ▾» above the chat history, one at a
++ * time (efChatScope.ts). The project chip lists the employee's projects and «No project»; it names the chosen one.
++ * Sorting, the archive and bookmarks stay in upstream's filter menu in the panel header.
++ */
++function EfChatChips() {
++  const localize = useLocalize();
++  const zIndex = usePopoverZIndex();
++  const [scope, setScope] = useAtom(efChatScopeAtom);
++  const [projectsOpen, setProjectsOpen] = useState(false);
++  const { data } = useProjectsInfiniteQuery(
++    { sortBy: 'lastConversationAt', sortDirection: 'desc' },
++    { enabled: projectsOpen },
++  );
++  const projects = useMemo(() => (data?.pages ?? []).flatMap((page) => page.projects), [data]);
++  const noProject = localize('com_efaiw_no_project');
++  const projectLabel = scope.kind === 'project' ? scope.name : localize('com_efaiw_chip_project');
++
++  return (
++    <div
++      role="group"
++      aria-label={localize('com_efaiw_chats_filter')}
++      className="efaiw-chips flex min-w-0 items-center gap-1.5"
++    >
++      <button
++        type="button"
++        data-testid="efaiw-chip-all"
++        aria-pressed={scope.kind === 'all'}
++        className={chipClass}
++        onClick={() => setScope({ kind: 'all' })}
++      >
++        {localize('com_efaiw_chip_all')}
++      </button>
++      <button
++        type="button"
++        data-testid="efaiw-chip-pinned"
++        aria-pressed={scope.kind === 'pinned'}
++        className={chipClass}
++        onClick={() => setScope(scope.kind === 'pinned' ? { kind: 'all' } : { kind: 'pinned' })}
++      >
++        {localize('com_efaiw_chip_pinned')}
++      </button>
++      <Ariakit.MenuProvider
++        open={projectsOpen}
++        setOpen={setProjectsOpen}
++        placement="bottom-start"
++        focusLoop={true}
++      >
++        <Ariakit.MenuButton
++          data-testid="efaiw-chip-project"
++          aria-pressed={scope.kind === 'project'}
++          aria-label={
++            scope.kind === 'project'
++              ? localize('com_efaiw_chip_project_named', { 0: scope.name })
++              : localize('com_efaiw_chip_project')
++          }
++          className={cn(chipClass, 'max-w-[9.5rem]')}
++        >
++          <span className="min-w-0 truncate">{projectLabel}</span>
++          <ChevronDown className="size-3.5 flex-shrink-0" aria-hidden="true" />
++        </Ariakit.MenuButton>
++        <Ariakit.Menu
++          portal={true}
++          gutter={6}
++          unmountOnHide={true}
++          /* Focus moves into the menu when it opens; no focusable aria-hidden traps around the portal (axe). */
++          preserveTabOrder={false}
++          data-testid="efaiw-chip-project-menu"
++          className="popover-ui max-h-80 min-w-52 max-w-72 overflow-y-auto"
++          /** Portaled beside modal dialog layers, which disable pointer events on body. */
++          style={{ zIndex, pointerEvents: 'auto' }}
++        >
++          <Ariakit.MenuGroup>
++            <Ariakit.MenuGroupLabel className="px-2 pb-1 pt-1.5 text-xs font-medium text-text-secondary">
++              {localize('com_efaiw_filter_by_project')}
++            </Ariakit.MenuGroupLabel>
++            {projects.map((project) => {
++              const checked = scope.kind === 'project' && scope.projectId === project._id;
++              return (
++                <Ariakit.MenuItem
++                  key={project._id}
++                  role="menuitemradio"
++                  aria-checked={checked}
++                  className={itemClass}
++                  onClick={() =>
++                    setScope({ kind: 'project', projectId: project._id, name: project.name })
++                  }
++                >
++                  <span className="min-w-0 flex-1 truncate">{project.name}</span>
++                  {checked && <Check className="size-4 flex-shrink-0" aria-hidden="true" />}
++                </Ariakit.MenuItem>
++              );
++            })}
++            {data != null && projects.length === 0 && (
++              <div className="px-2 py-2 text-sm text-text-secondary">
++                {localize('com_efaiw_no_projects')}
++              </div>
++            )}
++          </Ariakit.MenuGroup>
++          <Ariakit.MenuSeparator className="my-1 h-px border-border-medium" />
++          <Ariakit.MenuItem
++            role="menuitemradio"
++            aria-checked={scope.kind === 'project' && scope.projectId === EF_UNASSIGNED_PROJECT}
++            className={itemClass}
++            onClick={() =>
++              setScope({ kind: 'project', projectId: EF_UNASSIGNED_PROJECT, name: noProject })
++            }
++          >
++            <FolderMinus className="size-4 flex-shrink-0 text-text-secondary" aria-hidden="true" />
++            <span className="min-w-0 flex-1 truncate">{noProject}</span>
++            {scope.kind === 'project' && scope.projectId === EF_UNASSIGNED_PROJECT && (
++              <Check className="size-4 flex-shrink-0" aria-hidden="true" />
++            )}
++          </Ariakit.MenuItem>
++        </Ariakit.Menu>
++      </Ariakit.MenuProvider>
++    </div>
++  );
++}
++
++export default memo(EfChatChips);
+diff --git a/client/src/components/UnifiedSidebar/EfChatsPanel.tsx b/client/src/components/UnifiedSidebar/EfChatsPanel.tsx
+new file mode 100644
+index 0000000..09c903e
+--- /dev/null
++++ b/client/src/components/UnifiedSidebar/EfChatsPanel.tsx
+@@ -0,0 +1,338 @@
++import { memo, lazy, Suspense, useCallback, useEffect, useMemo, useRef } from 'react';
++import { useRecoilValue } from 'recoil';
++import { useLocation, useNavigate } from 'react-router-dom';
++import { ChevronLeft, Ellipsis, MessagesSquare, SquarePen, X } from 'lucide-react';
++import { Button, Sidebar, Skeleton, TooltipAnchor } from '@librechat/client';
++import type { NavLink } from '~/common';
++import { useActivePanel, resolveActivePanel, DEFAULT_PANEL } from '~/Providers';
++import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcuts';
++import { CLOSE_SIDEBAR_ID } from '~/components/Chat/Menus/OpenSidebar';
++import ChatFilterMenu from '~/components/Conversations/ChatFilterMenu';
++import SidePanelNav from '~/components/SidePanel/Nav';
++import SearchBar from '~/components/Nav/SearchBar';
++import useNewChat from '~/hooks/Chat/useNewChat';
++import { useLocalize } from '~/hooks';
++import { MobileShortcutTargets as ShortcutTargets } from './mobile';
++import EfMoreMenu, { useEfMoreVisible } from './EfMoreMenu';
++import EfChatChips from './EfChatChips';
++import { EF_PAGES, EF_LINK_LABELS, EF_MAIN_PANELS, efPageIdOf, useEfPanelGuard } from './efSidebar';
++import { EF_CHATS_PANEL_ID } from './constants';
++import { cn } from '~/utils';
++import store from '~/store';
++
++const AccountSettings = lazy(() => import('~/components/Nav/AccountSettings'));
++
++/** Each tab takes its content's width plus an equal share of the rest, so a long name («المستندات», «Documents») keeps
++ *  its letters on a narrow drawer instead of every tab getting a fifth. */
++const tabClass =
++  'efaiw-tab flex min-w-0 flex-auto flex-col items-center justify-center gap-0.5 rounded-xl px-0.5 text-text-secondary no-underline outline-none';
++
++/**
++ * EF (sidebar v4 #204, owner-approved Concept 2): the chats panel. On the desktop it stands beside the rail at full
++ * height; on a phone it is the drawer, which reads as the chats screen.
++ *   - Header: «Chats», upstream's sort and filter menu, and the control that closes the panel (on a phone also the
++ *     account). A chat-bound tool (the agent builder, the parameters; admins) takes the panel under its own name, with
++ *     the way back to the chats.
++ *   - The chat search, the chips «All / Pinned / Project» (EfChatChips) and the history, pinned first.
++ *   - Phone only: a floating «New chat» and a tab bar (Chats, Projects, Skills, Documents, More); a tab closes the
++ *     drawer and opens its page, as the v3 rows did. The hidden shortcut targets live here on a phone and in the rail
++ *     on the desktop.
++ * Sections open as pages in the main area (EF_PAGES) and never replace the chats here.
++ */
++function EfChatsPanel({
++  links,
++  mobile = false,
++  expanded = true,
++  onClose,
++  onLeaveInsights,
++}: {
++  links: NavLink[];
++  mobile?: boolean;
++  expanded?: boolean;
++  onClose: (afterSlide?: () => void) => void;
++  onLeaveInsights?: () => void;
++}) {
++  const localize = useLocalize();
++  const location = useLocation();
++  const navigate = useNavigate();
++  const { active, setActive } = useActivePanel();
++  const search = useRecoilValue(store.search);
++  const switchToHistory = useRecoilValue(store.newChatSwitchToHistory);
++  const moreVisible = useEfMoreVisible(links);
++  const closeRef = useRef<HTMLButtonElement>(null);
++
++  const isInsightsRoute = location.pathname.startsWith('/insights');
++  const routeActiveId = isInsightsRoute ? 'insights' : undefined;
++  const pageId = efPageIdOf(location.pathname);
++  const activeId = routeActiveId ?? resolveActivePanel(active, links);
++  const activeLink = links.find((link) => link.id === activeId);
++  const chatsShown = activeId === DEFAULT_PANEL && !routeActiveId;
++  const labelOf = (link: NavLink) => localize(EF_LINK_LABELS[link.id] ?? link.title);
++
++  /** One guard: the rail runs it on the desktop. */
++  const guardLinks = mobile ? links : [];
++  useEfPanelGuard(guardLinks, mobile ? pageId : undefined);
++
++  const closeLabel = mobile ? 'com_nav_close_sidebar' : 'com_efaiw_collapse_chats';
++  const closeHint = useShortcutHint('toggleSidebar', localize(closeLabel));
++  const closeAriaKey = useShortcutAriaKey('toggleSidebar');
++  const newChatAriaKey = useShortcutAriaKey('newChat');
++
++  /** The phone drawer makes the chat inert while open, so focus moves into it (as upstream's drawer header did). */
++  useEffect(() => {
++    if (mobile && expanded) {
++      closeRef.current?.focus();
++    }
++  }, [mobile, expanded]);
++
++  const { startNewChat } = useNewChat({
++    onNewChat: () => {
++      if (switchToHistory) {
++        setActive(DEFAULT_PANEL);
++      }
++    },
++  });
++
++  /** Phone: close first and reset in the slide's callback, as upstream's drawer bottom bar did, so the reset does not
++   *  stall the slide; modified clicks still open /c/new in a new tab. */
++  const handleNewChat = useCallback(
++    (event: React.MouseEvent<HTMLAnchorElement>) => {
++      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) {
++        return;
++      }
++      event.preventDefault();
++      onClose(() => startNewChat());
++    },
++    [onClose, startNewChat],
++  );
++
++  /** Phone: a page closes the drawer first, then opens; the panel goes back to the chats if a tool held it. */
++  const openPage = useCallback(
++    (path: string, event: React.MouseEvent<HTMLElement>) => {
++      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
++        return;
++      }
++      event.preventDefault();
++      if (active !== DEFAULT_PANEL) {
++        setActive(DEFAULT_PANEL);
++      }
++      onClose(() => navigate(path));
++    },
++    [active, navigate, onClose, setActive],
++  );
++
++  const openPanel = useCallback(
++    (link: NavLink) => {
++      if (link.onClick) {
++        onClose(() => link.onClick?.());
++        return;
++      }
++      setActive(link.id);
++      if (routeActiveId) {
++        onLeaveInsights?.();
++      }
++    },
++    [onClose, setActive, routeActiveId, onLeaveInsights],
++  );
++
++  /** The phone's shortcut targets close the drawer before a page opens, like the tabs. */
++  const targetLinks = useMemo(
++    () =>
++      links.map((link) =>
++        EF_PAGES[link.id] ? { ...link, onClick: () => onClose(() => link.onClick?.()) } : link,
++      ),
++    [links, onClose],
++  );
++
++  return (
++    <div
++      id={EF_CHATS_PANEL_ID}
++      className={cn(
++        'efaiw-side efaiw-chats relative flex h-full w-full min-w-0 flex-col',
++        mobile && 'efaiw-chats-mobile',
++      )}
++    >
++      <div className="efaiw-chats-head flex flex-shrink-0 items-center gap-1">
++        {chatsShown || !activeLink ? (
++          <>
++            {mobile && (
++              <img
++                src="assets/ef-baseer-icon.svg"
++                className="efaiw-rail-logo h-9 w-9 flex-shrink-0 rounded-full"
++                alt={localize('com_ui_logo', { 0: localize('com_efaiw_product_name') })}
++              />
++            )}
++            <h2 className="efaiw-chats-title min-w-0 flex-1 truncate">
++              {localize('com_efaiw_rail_chats')}
++            </h2>
++            {chatsShown && <ChatFilterMenu />}
++          </>
++        ) : (
++          <>
++            <button
++              type="button"
++              data-testid="efaiw-back-to-chats"
++              className="flex h-9 flex-shrink-0 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary outline-none hover:bg-surface-hover"
++              onClick={() => setActive(DEFAULT_PANEL)}
++            >
++              <ChevronLeft className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
++              {localize('com_efaiw_back_to_chats')}
++            </button>
++            <h2 className="min-w-0 flex-1 truncate text-end text-sm font-semibold text-text-primary">
++              {labelOf(activeLink)}
++            </h2>
++          </>
++        )}
++        {mobile && (
++          <div className="efaiw-chats-me flex-shrink-0">
++            <Suspense fallback={<Skeleton className="h-9 w-9 rounded-full" />}>
++              <AccountSettings collapsed />
++            </Suspense>
++          </div>
++        )}
++        <TooltipAnchor
++          side={mobile ? 'bottom' : 'right'}
++          description={closeHint}
++          render={
++            <Button
++              ref={closeRef}
++              /* OpenSidebar focuses this id after opening; claimed only while the panel is shown. */
++              id={expanded ? CLOSE_SIDEBAR_ID : undefined}
++              data-testid={expanded ? 'close-sidebar-button' : undefined}
++              size="icon"
++              variant="ghost"
++              aria-label={localize(closeLabel)}
++              aria-expanded={expanded}
++              aria-controls="chat-history-nav"
++              aria-keyshortcuts={closeAriaKey}
++              tabIndex={expanded ? 0 : -1}
++              className="efaiw-chats-close h-9 w-9 flex-shrink-0 rounded-lg text-text-secondary"
++              onClick={() => {
++                onClose();
++                /* The control goes with the panel: keyboard focus returns to «Chats» in the rail, which reopens it. */
++                if (!mobile) {
++                  setTimeout(() => {
++                    document.querySelector<HTMLElement>('[data-testid="efaiw-rail-chats"]')?.focus();
++                  }, 0);
++                }
++              }}
++            >
++              {mobile ? (
++                <X className="h-[22px] w-[22px]" aria-hidden="true" />
++              ) : (
++                <Sidebar className="h-5 w-5" aria-hidden="true" />
++              )}
++            </Button>
++          }
++        />
++      </div>
++
++      {chatsShown && (
++        <div className="efaiw-chats-tools flex flex-shrink-0 flex-col gap-2.5">
++          {search.enabled === true && (
++            <div className="efaiw-side-search flex">
++              <SearchBar isSmallScreen={mobile} />
++            </div>
++          )}
++          <EfChatChips />
++        </div>
++      )}
++
++      <div className="efaiw-side-panel flex min-h-0 flex-1 flex-col">
++        <nav
++          id="chat-history-nav"
++          aria-label={localize('com_ui_chat_history')}
++          className="min-h-0 flex-1 overflow-hidden"
++        >
++          <SidePanelNav links={links} />
++        </nav>
++      </div>
++
++      {mobile && (
++        <>
++          <a
++            href="/c/new"
++            data-testid="nav-new-chat-fab"
++            aria-label={localize('com_ui_new_chat')}
++            aria-keyshortcuts={newChatAriaKey}
++            className="efaiw-fab absolute flex h-[52px] items-center gap-2 rounded-2xl px-[18px] text-[15.5px] font-bold no-underline outline-none"
++            onClick={handleNewChat}
++          >
++            <SquarePen className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
++            <span>{localize('com_ui_new_chat')}</span>
++          </a>
++          <nav
++            aria-label={localize('com_efaiw_sections')}
++            className="efaiw-tabs flex flex-shrink-0"
++            style={{ paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom, 0px))' }}
++          >
++            <button
++              type="button"
++              data-testid="efaiw-tab-chats"
++              aria-current="page"
++              className={cn(tabClass, 'efaiw-tab-current')}
++              onClick={() => {
++                if (active !== DEFAULT_PANEL) {
++                  setActive(DEFAULT_PANEL);
++                }
++              }}
++            >
++              <span className="efaiw-tab-icon">
++                <MessagesSquare className="h-5 w-5" aria-hidden="true" />
++              </span>
++              <span className="efaiw-tab-label">{localize('com_efaiw_rail_chats')}</span>
++            </button>
++            {EF_MAIN_PANELS.map(({ id }) => {
++              const link = links.find((item) => item.id === id);
++              const path = EF_PAGES[id];
++              if (!link || !path) {
++                return null;
++              }
++              return (
++                <a
++                  key={id}
++                  href={path}
++                  data-testid={`efaiw-tab-${id}`}
++                  className={tabClass}
++                  onClick={(event) => openPage(path, event)}
++                >
++                  <span className="efaiw-tab-icon">
++                    <link.icon className="h-5 w-5" aria-hidden="true" />
++                  </span>
++                  <span className="efaiw-tab-label">{labelOf(link)}</span>
++                </a>
++              );
++            })}
++            {moreVisible && (
++              <EfMoreMenu
++                links={links}
++                pageId={pageId}
++                activeId={activeId}
++                placement={document.documentElement.dir === 'rtl' ? 'top-start' : 'top-end'}
++                testId="efaiw-tab-more"
++                className={tabClass}
++                onOpenPage={openPage}
++                onOpenPanel={openPanel}
++              >
++                <span className="efaiw-tab-icon">
++                  <Ellipsis className="h-5 w-5" aria-hidden="true" />
++                </span>
++                <span className="efaiw-tab-label" aria-hidden="true">
++                  {localize('com_efaiw_more')}
++                </span>
++              </EfMoreMenu>
++            )}
++          </nav>
++          <ShortcutTargets
++            links={targetLinks}
++            onLeaveInsights={onLeaveInsights}
++            routeActiveId={routeActiveId}
++            pageId={pageId}
++          />
++        </>
++      )}
++    </div>
++  );
++}
++
++export default memo(EfChatsPanel);
+diff --git a/client/src/components/UnifiedSidebar/EfMoreMenu.tsx b/client/src/components/UnifiedSidebar/EfMoreMenu.tsx
+new file mode 100644
+index 0000000..ae7b09f
+--- /dev/null
++++ b/client/src/components/UnifiedSidebar/EfMoreMenu.tsx
+@@ -0,0 +1,171 @@
++import { memo } from 'react';
++import * as Ariakit from '@ariakit/react';
++import { LayoutGrid } from 'lucide-react';
++import { Link, useLocation } from 'react-router-dom';
++import { SystemRoles } from 'librechat-data-provider';
++import { TooltipAnchor } from '@librechat/client';
++import type { ReactNode, MouseEvent } from 'react';
++import type { NavLink } from '~/common';
++import { useAuthContext, useLocalize, useShowMarketplace } from '~/hooks';
++import { EF_PAGES, EF_LINK_LABELS, efAdminLinks, efMoreLinks } from './efSidebar';
++import { cn } from '~/utils';
++
++const popItemClass =
++  'efaiw-rail-pop-item flex h-10 w-full cursor-pointer items-center gap-3 rounded-lg px-3 text-start text-[14.5px] text-text-primary no-underline outline-none data-[active-item]:bg-surface-hover';
++
++/** Whether «More» has anything to show (its sections, or the admin tools). */
++export function useEfMoreVisible(links: NavLink[]): boolean {
++  const showMarketplace = useShowMarketplace();
++  const { user } = useAuthContext();
++  const isAdmin = user?.role === SystemRoles.ADMIN;
++  return (
++    efMoreLinks(links).length > 0 || efAdminLinks(links).length > 0 || (isAdmin && showMarketplace)
++  );
++}
++
++/**
++ * EF (sidebar v3 #198, v4 #204): «More» as a small menu, from the rail on the desktop and from the tab bar on a phone.
++ * Memory, bookmarks, ready commands and any other section the deployment enables; for admins the assistants
++ * marketplace, their builder and the parameters under «Admins only» (owner decision, #189). Sections open as pages
++ * (`onOpenPage` lets the phone close its drawer first); the chat-bound tools open as a panel (`onOpenPanel`).
++ */
++function EfMoreMenu({
++  links,
++  pageId,
++  activeId,
++  placement,
++  testId,
++  className,
++  children,
++  onOpenPage,
++  onOpenPanel,
++}: {
++  links: NavLink[];
++  pageId?: string;
++  activeId: string;
++  placement: 'left-start' | 'right-start' | 'top-end' | 'top-start';
++  testId: string;
++  /** The trigger's classes, the current look included when one of its sections is open. */
++  className: string;
++  children: ReactNode;
++  onOpenPage?: (path: string, event: MouseEvent<HTMLElement>) => void;
++  onOpenPanel: (link: NavLink) => void;
++}) {
++  const localize = useLocalize();
++  const location = useLocation();
++  const showMarketplace = useShowMarketplace();
++  const { user } = useAuthContext();
++  const isAdmin = user?.role === SystemRoles.ADMIN;
++  const moreLinks = efMoreLinks(links);
++  const adminLinks = efAdminLinks(links);
++  const hasAdminItems = adminLinks.length > 0 || (isAdmin && showMarketplace);
++  const isMarketplaceRoute = location.pathname.startsWith('/agents');
++  const labelOf = (link: NavLink) => localize(EF_LINK_LABELS[link.id] ?? link.title);
++
++  const pageClick = (path: string) => (event: MouseEvent<HTMLElement>) => {
++    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
++      return;
++    }
++    onOpenPage?.(path, event);
++  };
++
++  const popItem = (link: NavLink, badge = false) => {
++    const path = EF_PAGES[link.id];
++    const content = (
++      <>
++        <link.icon
++          className="h-[18px] w-[18px] flex-shrink-0 text-text-secondary"
++          aria-hidden="true"
++        />
++        <span className="min-w-0 flex-1 truncate">{labelOf(link)}</span>
++        {badge && <span className="efaiw-admin-badge">{localize('com_efaiw_admin_only')}</span>}
++      </>
++    );
++    if (path) {
++      const current = link.id === pageId;
++      return (
++        <Ariakit.MenuItem
++          key={link.id}
++          data-testid={`${testId}-${link.id}`}
++          aria-current={current ? 'page' : undefined}
++          className={cn(popItemClass, current && 'efaiw-rail-pop-current')}
++          render={<Link to={path} onClick={pageClick(path)} />}
++        >
++          {content}
++        </Ariakit.MenuItem>
++      );
++    }
++    return (
++      <Ariakit.MenuItem
++        key={link.id}
++        data-testid={`${testId}-${link.id}`}
++        disabled={link.disabled}
++        className={cn(popItemClass, link.id === activeId && 'efaiw-rail-pop-current')}
++        onClick={() => onOpenPanel(link)}
++      >
++        {content}
++      </Ariakit.MenuItem>
++    );
++  };
++
++  return (
++    <Ariakit.MenuProvider placement={placement}>
++      <TooltipAnchor
++        side={placement.startsWith('top') ? 'top' : 'right'}
++        description={localize('com_efaiw_more')}
++        render={
++          <Ariakit.MenuButton
++            data-testid={testId}
++            aria-label={localize('com_efaiw_more')}
++            className={className}
++          >
++            {children}
++          </Ariakit.MenuButton>
++        }
++      />
++      <Ariakit.Menu
++        portal
++        gutter={14}
++        unmountOnHide
++        /* Focus moves into the menu when it opens; no focusable aria-hidden traps around the portal (axe). */
++        preserveTabOrder={false}
++        data-testid={`${testId}-menu`}
++        className="efaiw-rail-pop popover-ui z-[125] flex w-[268px] flex-col gap-0.5 rounded-2xl p-2"
++      >
++        {moreLinks.map((link) => popItem(link))}
++        {hasAdminItems && (
++          <>
++            {moreLinks.length > 0 && (
++              <Ariakit.MenuSeparator className="efaiw-rail-pop-sep mx-2 my-1 border-border-light" />
++            )}
++            <Ariakit.MenuGroup className="flex flex-col gap-0.5">
++              <Ariakit.MenuGroupLabel className="efaiw-rail-pop-label px-3 pb-0.5 pt-1.5 text-xs font-semibold text-text-secondary">
++                {localize('com_efaiw_admin_tools')}
++              </Ariakit.MenuGroupLabel>
++              {isAdmin && showMarketplace && (
++                <Ariakit.MenuItem
++                  data-testid={`${testId}-marketplace`}
++                  aria-current={isMarketplaceRoute ? 'page' : undefined}
++                  className={cn(popItemClass, isMarketplaceRoute && 'efaiw-rail-pop-current')}
++                  render={<Link to="/agents" onClick={pageClick('/agents')} />}
++                >
++                  <LayoutGrid
++                    className="h-[18px] w-[18px] flex-shrink-0 text-text-secondary"
++                    aria-hidden="true"
++                  />
++                  <span className="min-w-0 flex-1 truncate">
++                    {localize('com_efaiw_rail_agents')}
++                  </span>
++                  <span className="efaiw-admin-badge">{localize('com_efaiw_admin_only')}</span>
++                </Ariakit.MenuItem>
++              )}
++              {adminLinks.map((link) => popItem(link, true))}
++            </Ariakit.MenuGroup>
++          </>
++        )}
++      </Ariakit.Menu>
++    </Ariakit.MenuProvider>
++  );
++}
++
++export default memo(EfMoreMenu);
+diff --git a/client/src/components/UnifiedSidebar/EfSidebarColumn.tsx b/client/src/components/UnifiedSidebar/EfSidebarColumn.tsx
+deleted file mode 100644
+index db59d90..0000000
+--- a/client/src/components/UnifiedSidebar/EfSidebarColumn.tsx
++++ /dev/null
+@@ -1,460 +0,0 @@
+-import { Fragment, memo, lazy, Suspense, useCallback, useEffect, useMemo, useRef } from 'react';
+-import { useRecoilValue } from 'recoil';
+-import { Link, useLocation, useNavigate } from 'react-router-dom';
+-import { ChevronDown, ChevronLeft, Ellipsis, LayoutGrid, SquarePen, X } from 'lucide-react';
+-import { SystemRoles } from 'librechat-data-provider';
+-import { Button, Sidebar, Skeleton, TooltipAnchor } from '@librechat/client';
+-import type { NavLink } from '~/common';
+-import { useActivePanel, resolveActivePanel, DEFAULT_PANEL } from '~/Providers';
+-import {
+-  useShortcutAriaKey,
+-  useShortcutDisplay,
+-  useShortcutHint,
+-} from '~/hooks/useKeyboardShortcuts';
+-import { useAuthContext, useLocalize, useLocalStorage, useShowMarketplace } from '~/hooks';
+-import { CLOSE_SIDEBAR_ID } from '~/components/Chat/Menus/OpenSidebar';
+-import SidePanelNav from '~/components/SidePanel/Nav';
+-import SearchBar from '~/components/Nav/SearchBar';
+-import { parseShortcutKeys } from '~/components/Nav/ShortcutKeyCombo';
+-import useNewChat from '~/hooks/Chat/useNewChat';
+-import { MobileShortcutTargets as ShortcutTargets } from './mobile';
+-import {
+-  EF_PAGES,
+-  EF_LINK_LABELS,
+-  EF_MAIN_PANELS,
+-  efAdminLinks,
+-  efMoreLinks,
+-  efPageIdOf,
+-  useEfPanelGuard,
+-} from './efSidebar';
+-import { cn } from '~/utils';
+-import store from '~/store';
+-
+-const AccountSettings = lazy(() => import('~/components/Nav/AccountSettings'));
+-
+-// `li a` in style.css makes links bold, blue and underlined: the rows keep their own look.
+-const rowClass =
+-  'efaiw-side-row flex h-11 w-full items-center gap-3 rounded-xl px-3 text-start text-[15px] font-normal text-text-primary no-underline outline-none transition-colors hover:bg-surface-hover';
+-
+-/**
+- * EF (Concept 1, sidebar v2 #189 and v3 #198, owner-approved): the expanded sidebar as one column, on the desktop and in
+- * the phone drawer. Top to bottom: the EF logo and the close control; «New chat» in the primary blue; Projects, Skills
+- * and Documents; «More» with memory, bookmarks, ready commands (prompts) and any other section the deployment enables,
+- * and for admins the assistants marketplace, their builder and the parameters; under a line, the chat search and the
+- * chat history (pinned first); the account menu. Sections open as pages in the main area (EF_PAGES), so the history
+- * stays; only the chat-bound tools (the builder, the parameters) replace it, with a way back. On a phone, choosing a
+- * page closes the drawer first. The hidden shortcut targets keep the panel shortcuts working.
+- */
+-function EfSidebarColumn({
+-  links,
+-  mobile = false,
+-  expanded = true,
+-  onClose,
+-  onLeaveInsights,
+-}: {
+-  links: NavLink[];
+-  mobile?: boolean;
+-  expanded?: boolean;
+-  onClose: (afterSlide?: () => void) => void;
+-  onLeaveInsights?: () => void;
+-}) {
+-  const localize = useLocalize();
+-  const location = useLocation();
+-  const navigate = useNavigate();
+-  const { active, setActive } = useActivePanel();
+-  const search = useRecoilValue(store.search);
+-  const switchToHistory = useRecoilValue(store.newChatSwitchToHistory);
+-  const showMarketplace = useShowMarketplace();
+-  const [moreOpen, setMoreOpen] = useLocalStorage('efaiwSidebarMoreOpen', false);
+-  const closeRef = useRef<HTMLButtonElement>(null);
+-  const { user } = useAuthContext();
+-  const isAdmin = user?.role === SystemRoles.ADMIN;
+-
+-  const isInsightsRoute = location.pathname.startsWith('/insights');
+-  const routeActiveId = isInsightsRoute ? 'insights' : undefined;
+-  /** The open page's row, from the route; the sidebar's own panel is the chat history or a chat-bound tool. */
+-  const pageId = efPageIdOf(location.pathname);
+-  const activeId = routeActiveId ?? resolveActivePanel(active, links);
+-  const activeLink = links.find((link) => link.id === activeId);
+-  const byId = (id: string) => links.find((link) => link.id === id);
+-  const moreLinks = efMoreLinks(links);
+-  const adminLinks = efAdminLinks(links);
+-  const isMarketplaceRoute = location.pathname.startsWith('/agents');
+-  /** Folded, «More» reads as current while one of its sections is open, as in the rail. */
+-  const moreIsCurrent =
+-    moreLinks.some((link) => link.id === pageId) ||
+-    (isAdmin && isMarketplaceRoute) ||
+-    adminLinks.some((link) => link.id === activeId);
+-  const labelOf = (link: NavLink) => localize(EF_LINK_LABELS[link.id] ?? link.title);
+-  useEfPanelGuard(links, pageId);
+-  const adminBadge = <span className="efaiw-admin-badge">{localize('com_efaiw_admin_only')}</span>;
+-
+-  const toggleLabel = 'com_nav_close_sidebar';
+-  const toggleHint = useShortcutHint('toggleSidebar', localize(toggleLabel));
+-  const toggleAriaKey = useShortcutAriaKey('toggleSidebar');
+-  const newChatHint = useShortcutHint('newChat', localize('com_ui_new_chat'));
+-  const newChatAriaKey = useShortcutAriaKey('newChat');
+-  /* The keys as bound now (the employee can rebind or turn shortcuts off in Settings). */
+-  const newChatKeys = parseShortcutKeys(useShortcutDisplay('newChat'));
+-  const logoAlt = localize('com_ui_logo', { 0: localize('com_efaiw_ef_name') });
+-
+-  /** The phone drawer makes the chat inert while open, so focus moves into it (as upstream's drawer header did). */
+-  useEffect(() => {
+-    if (mobile && expanded) {
+-      closeRef.current?.focus();
+-    }
+-  }, [mobile, expanded]);
+-
+-  const { startNewChat, handleNewChatClick: desktopNewChat } = useNewChat({
+-    onNewChat: () => {
+-      if (switchToHistory) {
+-        setActive(DEFAULT_PANEL);
+-      }
+-    },
+-  });
+-
+-  /** Phone: close first and reset in the slide's callback, as upstream's drawer bottom bar did, so the reset does not
+-   *  stall the slide; modified clicks still open /c/new in a new tab. */
+-  const handleNewChat = useCallback(
+-    (event: React.MouseEvent<HTMLAnchorElement>) => {
+-      if (!mobile) {
+-        desktopNewChat(event);
+-        return;
+-      }
+-      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) {
+-        return;
+-      }
+-      event.preventDefault();
+-      onClose(() => startNewChat());
+-    },
+-    [mobile, desktopNewChat, onClose, startNewChat],
+-  );
+-
+-  /** A page opens in the main area: the sidebar goes back to the chats if a tool was open and «More» folds, so the
+-   *  history keeps its room (a short phone has none left with «More» open); on a phone the drawer closes first.
+-   *  Modified clicks still open the page in a new tab. */
+-  const openPage = useCallback(
+-    (path: string, event: React.MouseEvent<HTMLAnchorElement>) => {
+-      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+-        return;
+-      }
+-      if (active !== DEFAULT_PANEL) {
+-        setActive(DEFAULT_PANEL);
+-      }
+-      setMoreOpen(false);
+-      if (mobile) {
+-        event.preventDefault();
+-        onClose(() => navigate(path));
+-      }
+-    },
+-    [active, mobile, navigate, onClose, setActive, setMoreOpen],
+-  );
+-
+-  const openPanel = useCallback(
+-    (link: NavLink, event?: React.MouseEvent<HTMLButtonElement>) => {
+-      if (link.onClick) {
+-        if (mobile) {
+-          onClose(() => link.onClick?.());
+-        } else {
+-          link.onClick(event);
+-        }
+-        return;
+-      }
+-      setActive(link.id);
+-      /* The list folds away so the chosen panel gets the room; its header names it and leads back to the chats. */
+-      setMoreOpen(false);
+-      if (routeActiveId) {
+-        onLeaveInsights?.();
+-      }
+-    },
+-    [mobile, onClose, setActive, setMoreOpen, routeActiveId, onLeaveInsights],
+-  );
+-
+-  /** The phone's shortcut targets close the drawer before a page opens, like the rows. */
+-  const targetLinks = useMemo(
+-    () =>
+-      mobile
+-        ? links.map((link) =>
+-            EF_PAGES[link.id] ? { ...link, onClick: () => onClose(() => link.onClick?.()) } : link,
+-          )
+-        : links,
+-    [links, mobile, onClose],
+-  );
+-
+-  /** A row of the column: a link for a section that opens as a page, a button for a panel. */
+-  const renderRow = (
+-    link: NavLink,
+-    testId: string,
+-    className: string,
+-    children: React.ReactNode,
+-  ) => {
+-    const path = EF_PAGES[link.id];
+-    if (path) {
+-      const isCurrent = link.id === pageId;
+-      return (
+-        <Link
+-          to={path}
+-          data-testid={testId}
+-          aria-current={isCurrent ? 'page' : undefined}
+-          className={cn(className, isCurrent && 'efaiw-side-current')}
+-          onClick={(event) => openPage(path, event)}
+-        >
+-          {children}
+-        </Link>
+-      );
+-    }
+-    const isActive = link.id === activeId;
+-    return (
+-      <button
+-        type="button"
+-        data-testid={testId}
+-        aria-pressed={isActive}
+-        disabled={link.disabled}
+-        className={cn(className, isActive && 'efaiw-side-current')}
+-        onClick={(event) => openPanel(link, event)}
+-      >
+-        {children}
+-      </button>
+-    );
+-  };
+-
+-  return (
+-    <div className="efaiw-side flex h-full w-full min-w-0 flex-col bg-surface-primary-alt">
+-      <div className="efaiw-side-top flex flex-shrink-0 items-center justify-between gap-2">
+-        <img
+-          src="assets/logo.svg"
+-          className="efaiw-side-logo h-[52px] w-auto dark:hidden"
+-          alt={logoAlt}
+-        />
+-        <img
+-          src="assets/logo-dark.svg"
+-          className="efaiw-side-logo hidden h-[52px] w-auto dark:block"
+-          alt={logoAlt}
+-        />
+-        <TooltipAnchor
+-          side={mobile ? 'bottom' : 'right'}
+-          description={toggleHint}
+-          render={
+-            <Button
+-              ref={closeRef}
+-              /* OpenSidebar focuses this id after opening; claimed only while the column is shown. */
+-              id={expanded ? CLOSE_SIDEBAR_ID : undefined}
+-              data-testid={expanded ? 'close-sidebar-button' : undefined}
+-              size="icon"
+-              variant="ghost"
+-              aria-label={localize(toggleLabel)}
+-              aria-expanded={expanded}
+-              aria-controls="chat-history-nav"
+-              aria-keyshortcuts={toggleAriaKey}
+-              tabIndex={expanded ? 0 : -1}
+-              className="h-10 w-10 flex-shrink-0 rounded-lg text-text-secondary"
+-              onClick={() => onClose()}
+-            >
+-              {mobile ? (
+-                <X className="h-[22px] w-[22px]" aria-hidden="true" />
+-              ) : (
+-                <Sidebar className="h-5 w-5" aria-hidden="true" />
+-              )}
+-            </Button>
+-          }
+-        />
+-      </div>
+-
+-      <div className="efaiw-side-nav flex flex-shrink-0 flex-col gap-0.5">
+-        <TooltipAnchor
+-          side={mobile ? 'bottom' : 'right'}
+-          description={newChatHint}
+-          render={
+-            <a
+-              href="/c/new"
+-              data-testid={mobile ? 'nav-new-chat-fab' : 'new-chat-button'}
+-              aria-label={localize('com_ui_new_chat')}
+-              aria-keyshortcuts={newChatAriaKey}
+-              className="efaiw-side-new flex h-[46px] w-full items-center gap-3 rounded-xl px-3 text-[15px] font-semibold outline-none"
+-              onClick={handleNewChat}
+-            >
+-              <SquarePen className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
+-              <span className="flex-1 truncate">{localize('com_ui_new_chat')}</span>
+-              {!mobile && newChatKeys.length > 0 && (
+-                <span className="efaiw-side-kbd" aria-hidden="true">
+-                  {newChatKeys.map((key, idx) => (
+-                    <kbd key={`${key}-${idx}`}>{key}</kbd>
+-                  ))}
+-                </span>
+-              )}
+-            </a>
+-          }
+-        />
+-
+-        {EF_MAIN_PANELS.map(({ id, tone }) => {
+-          const link = byId(id);
+-          if (!link) {
+-            return null;
+-          }
+-          return (
+-            <Fragment key={link.id}>
+-              {renderRow(
+-                link,
+-                `efaiw-main-${link.id}`,
+-                rowClass,
+-                <>
+-                  <span className={cn('efaiw-side-tile', tone)} aria-hidden="true">
+-                    <link.icon className="h-[18px] w-[18px]" />
+-                  </span>
+-                  <span className="flex-1 truncate">{labelOf(link)}</span>
+-                </>,
+-              )}
+-            </Fragment>
+-          );
+-        })}
+-
+-        {(moreLinks.length > 0 || adminLinks.length > 0 || (isAdmin && showMarketplace)) && (
+-          <>
+-            <button
+-              type="button"
+-              data-testid="efaiw-more-toggle"
+-              aria-expanded={moreOpen}
+-              aria-controls="efaiw-more-list"
+-              className={cn(
+-                rowClass,
+-                moreOpen && 'efaiw-side-more-open',
+-                !moreOpen && moreIsCurrent && 'efaiw-side-current',
+-              )}
+-              onClick={() => setMoreOpen(!moreOpen)}
+-            >
+-              <span className="efaiw-side-tile" aria-hidden="true">
+-                <Ellipsis className="efaiw-side-more-icon h-[18px] w-[18px]" />
+-              </span>
+-              <span className="flex-1 truncate">{localize('com_efaiw_more')}</span>
+-              <ChevronDown
+-                className={cn(
+-                  'h-4 w-4 flex-shrink-0 text-text-secondary transition-transform',
+-                  moreOpen && 'rotate-180',
+-                )}
+-                aria-hidden="true"
+-              />
+-            </button>
+-            {moreOpen && (
+-              <ul id="efaiw-more-list" className="efaiw-side-more flex flex-col gap-0.5">
+-                {moreLinks.map((link) => (
+-                  <li key={link.id}>
+-                    {renderRow(
+-                      link,
+-                      `efaiw-more-${link.id}`,
+-                      cn(rowClass, 'h-10 text-[14.5px]'),
+-                      <>
+-                        <link.icon className="h-[18px] w-[18px] flex-shrink-0" aria-hidden="true" />
+-                        <span className="flex-1 truncate">{labelOf(link)}</span>
+-                      </>,
+-                    )}
+-                  </li>
+-                ))}
+-                {/* Admins only (owner decision, #189): the assistants marketplace, their builder and the parameters. */}
+-                {isAdmin && showMarketplace && (
+-                  <li>
+-                    <Link
+-                      to="/agents"
+-                      data-testid="nav-agents-marketplace-button"
+-                      aria-label={localize('com_agents_marketplace')}
+-                      aria-current={isMarketplaceRoute ? 'page' : undefined}
+-                      title={localize('com_agents_marketplace')}
+-                      className={cn(
+-                        rowClass,
+-                        'h-10 text-[14.5px]',
+-                        isMarketplaceRoute && 'efaiw-side-current',
+-                      )}
+-                      onClick={(event) => {
+-                        if (
+-                          event.button !== 0 ||
+-                          event.ctrlKey ||
+-                          event.metaKey ||
+-                          event.shiftKey
+-                        ) {
+-                          return;
+-                        }
+-                        setMoreOpen(false);
+-                        if (mobile) {
+-                          onClose();
+-                        }
+-                      }}
+-                    >
+-                      <LayoutGrid className="h-[18px] w-[18px] flex-shrink-0" aria-hidden="true" />
+-                      <span className="flex-1 truncate">{localize('com_efaiw_rail_agents')}</span>
+-                      {adminBadge}
+-                    </Link>
+-                  </li>
+-                )}
+-                {adminLinks.map((link) => (
+-                  <li key={link.id}>
+-                    {renderRow(
+-                      link,
+-                      `efaiw-more-${link.id}`,
+-                      cn(rowClass, 'h-10 text-[14.5px]'),
+-                      <>
+-                        <link.icon className="h-[18px] w-[18px] flex-shrink-0" aria-hidden="true" />
+-                        <span className="flex-1 truncate">{labelOf(link)}</span>
+-                        {adminBadge}
+-                      </>,
+-                    )}
+-                  </li>
+-                ))}
+-              </ul>
+-            )}
+-          </>
+-        )}
+-      </div>
+-
+-      <div className="efaiw-side-panel flex min-h-0 flex-1 flex-col">
+-        {/* Under the line, the search field leads the chat history it filters (#189). */}
+-        {search.enabled === true && activeId === DEFAULT_PANEL && !routeActiveId && (
+-          <div className="efaiw-side-search flex flex-shrink-0">
+-            <SearchBar isSmallScreen={mobile} />
+-          </div>
+-        )}
+-        {activeId !== DEFAULT_PANEL && activeLink && !routeActiveId && (
+-          <div className="efaiw-side-panel-head flex flex-shrink-0 items-center gap-2">
+-            <button
+-              type="button"
+-              data-testid="efaiw-back-to-chats"
+-              className="flex h-9 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary outline-none hover:bg-surface-hover"
+-              onClick={() => setActive(DEFAULT_PANEL)}
+-            >
+-              <ChevronLeft className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
+-              {localize('com_efaiw_back_to_chats')}
+-            </button>
+-            <h2 className="min-w-0 flex-1 truncate text-end text-sm font-semibold text-text-primary">
+-              {labelOf(activeLink)}
+-            </h2>
+-          </div>
+-        )}
+-        <nav
+-          id="chat-history-nav"
+-          aria-label={localize('com_ui_chat_history')}
+-          className="min-h-0 flex-1 overflow-hidden"
+-        >
+-          <SidePanelNav links={links} />
+-        </nav>
+-      </div>
+-
+-      <ShortcutTargets
+-        links={targetLinks}
+-        onLeaveInsights={onLeaveInsights}
+-        routeActiveId={routeActiveId}
+-        pageId={pageId}
+-      />
+-
+-      <div
+-        className="efaiw-side-me flex-shrink-0"
+-        style={
+-          mobile ? { paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' } : undefined
+-        }
+-      >
+-        <Suspense fallback={<Skeleton className="h-11 w-full rounded-xl" />}>
+-          <AccountSettings />
+-        </Suspense>
+-      </div>
+-    </div>
+-  );
+-}
+-
+-export default memo(EfSidebarColumn);
+diff --git a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
+index a8ad856..a7a4990 100644
+--- a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
++++ b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
+@@ -1,18 +1,16 @@
+ import { memo, useCallback, lazy, Suspense } from 'react';
+ import { useRecoilValue } from 'recoil';
+-import * as Ariakit from '@ariakit/react';
+-import { Ellipsis, LayoutGrid, Search, SquarePen } from 'lucide-react';
++import { Ellipsis, MessagesSquare, SquarePen } from 'lucide-react';
+ import { Link, useLocation } from 'react-router-dom';
+ import { SystemRoles } from 'librechat-data-provider';
+-import { Skeleton, Sidebar, Button, TooltipAnchor } from '@librechat/client';
++import { Skeleton, TooltipAnchor } from '@librechat/client';
+ import type { NavLink } from '~/common';
+ import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcuts';
+ import { useActivePanel, resolveActivePanel, DEFAULT_PANEL } from '~/Providers';
+-import { useAuthContext, useLocalize, useShowMarketplace } from '~/hooks';
+-import { CLOSE_SIDEBAR_ID } from '~/components/Chat/Menus/OpenSidebar';
+-import useSidebarToggle from '~/hooks/Nav/useSidebarToggle';
++import { useAuthContext, useLocalize } from '~/hooks';
+ import useNewChat from '~/hooks/Chat/useNewChat';
+ import ShortcutTargets from './mobile/ShortcutTargets';
++import EfMoreMenu, { useEfMoreVisible } from './EfMoreMenu';
+ import {
+   EF_PAGES,
+   EF_LINK_LABELS,
+@@ -22,15 +20,14 @@ import {
+   efPageIdOf,
+   useEfPanelGuard,
+ } from './efSidebar';
++import { EF_CHATS_PANEL_ID } from './constants';
+ import { cn } from '~/utils';
+ import store from '~/store';
+ 
+ const AccountSettings = lazy(() => import('~/components/Nav/AccountSettings'));
+ 
+ const railItemClass =
+-  'efaiw-rail-item flex w-14 flex-col items-center gap-1 rounded-lg px-0.5 py-1.5 text-text-secondary no-underline outline-none transition-colors hover:bg-surface-hover';
+-const popItemClass =
+-  'efaiw-rail-pop-item flex h-10 w-full cursor-pointer items-center gap-3 rounded-lg px-3 text-start text-[14.5px] text-text-primary no-underline outline-none data-[active-item]:bg-surface-hover';
++  'efaiw-rail-item relative flex w-[64px] flex-col items-center gap-1 rounded-xl px-0.5 py-1.5 text-text-secondary no-underline outline-none transition-colors hover:bg-surface-hover';
+ 
+ const NewChatButton = memo(function NewChatButton({
+   setActive,
+@@ -63,8 +60,8 @@ const NewChatButton = memo(function NewChatButton({
+           className={cn(railItemClass, 'efaiw-rail-new')}
+           onClick={handleNewChatClick}
+         >
+-          <span className="efaiw-rail-new-icon flex h-8 w-8 items-center justify-center rounded-lg">
+-            <SquarePen className="h-[18px] w-[18px]" aria-hidden="true" />
++          <span className="efaiw-rail-new-icon flex h-10 w-10 items-center justify-center rounded-xl">
++            <SquarePen className="h-5 w-5" aria-hidden="true" />
+           </span>
+           <span className="efaiw-rail-label" aria-hidden="true">
+             {localize('com_efaiw_rail_new')}
+@@ -76,11 +73,10 @@ const NewChatButton = memo(function NewChatButton({
+ });
+ 
+ /**
+- * EF (sidebar v3 #198, owner-approved): the collapsed sidebar mirrors the column. Top to bottom: the toggle, «New
+- * chat», «Search» (opens the column on the chat search), a line, Projects, Skills and Documents (pages in the main
+- * area, the open one marked), «More» as a small menu (memory, bookmarks, ready commands and any other section; for
+- * admins the assistants marketplace, their builder and the parameters under «Admins only»), and the account. The
+- * hidden shortcut targets keep the panel shortcuts working while the column is closed.
++ * EF (sidebar v4 #204, owner-approved Concept 2): the desktop rail, always shown beside the chats panel. Top to bottom:
++ * the «Baseer» icon, «New chat», «Chats» (opens and closes the chats panel, pressed while it shows the history: the same
++ * as the sidebar shortcut), a line, Projects, Skills and Documents (pages in the main area, the open one marked),
++ * «More» as a small menu, and the account. The hidden shortcut targets keep the panel shortcuts working.
+  */
+ function ExpandedPanel({
+   links,
+@@ -98,48 +94,58 @@ function ExpandedPanel({
+   const localize = useLocalize();
+   const location = useLocation();
+   const { active, setActive } = useActivePanel();
+-  const { setSidebarOpen } = useSidebarToggle();
+-  const search = useRecoilValue(store.search);
+-  const showMarketplace = useShowMarketplace();
+-  const { user } = useAuthContext();
+-  const isAdmin = user?.role === SystemRoles.ADMIN;
+   const isInsightsRoute = location.pathname.startsWith('/insights');
+   const routeActiveId = isInsightsRoute ? 'insights' : undefined;
+   const pageId = efPageIdOf(location.pathname);
+   const activeId = routeActiveId ?? resolveActivePanel(active, links);
+-  const isMarketplaceRoute = location.pathname.startsWith('/agents');
+-  const moreLinks = efMoreLinks(links);
+-  const adminLinks = efAdminLinks(links);
+-  const hasAdminItems = adminLinks.length > 0 || (isAdmin && showMarketplace);
++  const { user } = useAuthContext();
++  const isMarketplaceRoute =
++    user?.role === SystemRoles.ADMIN && location.pathname.startsWith('/agents');
++  const moreVisible = useEfMoreVisible(links);
+   const labelOf = (link: NavLink) => localize(EF_LINK_LABELS[link.id] ?? link.title);
+   const moreIsCurrent =
+-    moreLinks.some((link) => link.id === pageId) ||
+-    (isAdmin && isMarketplaceRoute) ||
+-    adminLinks.some((link) => link.id === activeId);
++    efMoreLinks(links).some((link) => link.id === pageId) ||
++    isMarketplaceRoute ||
++    efAdminLinks(links).some((link) => link.id === activeId);
+   useEfPanelGuard(links, pageId);
+ 
+-  const toggleLabel = expanded ? 'com_nav_close_sidebar' : 'com_nav_open_sidebar';
+-  const toggleClick = expanded ? onCollapse : onExpand;
+-  const toggleSidebarHint = useShortcutHint('toggleSidebar', localize(toggleLabel));
+-  const toggleSidebarAriaKey = useShortcutAriaKey('toggleSidebar');
+-  const searchHint = useShortcutHint('focusSearch', localize('com_nav_search_placeholder'));
++  /** Pressed while the panel shows the chat history; a chat-bound tool in the panel is not the chats. */
++  const chatsShown = expanded && activeId === DEFAULT_PANEL;
++  const chatsHint = useShortcutHint(
++    'toggleSidebar',
++    localize(expanded ? 'com_efaiw_collapse_chats' : 'com_efaiw_open_chats'),
++  );
++  const chatsAriaKey = useShortcutAriaKey('toggleSidebar');
+ 
+-  /** «Search» opens the column on the chat history with the cursor in its search field. */
+-  const openSearch = useCallback(() => {
+-    if (active !== DEFAULT_PANEL) {
++  /** «Chats» brings the history back if a tool holds the panel, and otherwise opens or closes the panel. */
++  const toggleChats = useCallback(() => {
++    if (expanded && activeId !== DEFAULT_PANEL) {
+       setActive(DEFAULT_PANEL);
++      if (isInsightsRoute) {
++        onLeaveInsights?.();
++      }
++      return;
+     }
+-    if (isInsightsRoute) {
+-      onLeaveInsights?.();
++    if (expanded) {
++      onCollapse?.();
++      return;
+     }
+-    setSidebarOpen(true, () => {
+-      setTimeout(() => {
+-        document.querySelector<HTMLInputElement>('input[data-testid="nav-search-input"]')?.focus();
+-      }, 0);
+-    });
+-  }, [active, isInsightsRoute, onLeaveInsights, setActive, setSidebarOpen]);
++    if (active !== DEFAULT_PANEL) {
++      setActive(DEFAULT_PANEL);
++    }
++    onExpand?.();
++  }, [
++    active,
++    activeId,
++    expanded,
++    isInsightsRoute,
++    onCollapse,
++    onExpand,
++    onLeaveInsights,
++    setActive,
++  ]);
+ 
+-  /** A panel (a chat-bound tool, or a section the deployment adds) opens in the column. */
++  /** A panel (a chat-bound tool, or a section the deployment adds) opens in the panel beside the rail. */
+   const openPanel = useCallback(
+     (link: NavLink) => {
+       if (link.onClick) {
+@@ -155,90 +161,39 @@ function ExpandedPanel({
+     [isInsightsRoute, onExpand, onLeaveInsights, setActive],
+   );
+ 
+-  const popItem = (link: NavLink, testId: string, badge = false) => {
+-    const path = EF_PAGES[link.id];
+-    const content = (
+-      <>
+-        <link.icon
+-          className="h-[18px] w-[18px] flex-shrink-0 text-text-secondary"
+-          aria-hidden="true"
+-        />
+-        <span className="min-w-0 flex-1 truncate">{labelOf(link)}</span>
+-        {badge && <span className="efaiw-admin-badge">{localize('com_efaiw_admin_only')}</span>}
+-      </>
+-    );
+-    if (path) {
+-      const isCurrent = link.id === pageId;
+-      return (
+-        <Ariakit.MenuItem
+-          key={link.id}
+-          data-testid={testId}
+-          aria-current={isCurrent ? 'page' : undefined}
+-          className={cn(popItemClass, isCurrent && 'efaiw-rail-pop-current')}
+-          render={<Link to={path} />}
+-        >
+-          {content}
+-        </Ariakit.MenuItem>
+-      );
+-    }
+-    return (
+-      <Ariakit.MenuItem
+-        key={link.id}
+-        data-testid={testId}
+-        disabled={link.disabled}
+-        className={cn(popItemClass, link.id === activeId && 'efaiw-rail-pop-current')}
+-        onClick={() => openPanel(link)}
+-      >
+-        {content}
+-      </Ariakit.MenuItem>
+-    );
+-  };
+-
+   return (
+-    <div className="efaiw-rail flex h-full w-full flex-shrink-0 flex-col items-center gap-1 border-r border-border-light bg-surface-primary-alt px-2 py-2">
++    <nav
++      aria-label={localize('com_efaiw_sections')}
++      className="efaiw-rail flex h-full w-full flex-shrink-0 flex-col items-center gap-1 px-1.5 pb-3 pt-3"
++    >
++      <img
++        src="assets/ef-baseer-icon.svg"
++        className="efaiw-rail-logo mb-2 h-11 w-11 rounded-full"
++        alt={localize('com_ui_logo', { 0: localize('com_efaiw_product_name') })}
++      />
++      <NewChatButton setActive={setActive} />
+       <TooltipAnchor
+         side="right"
+-        description={toggleSidebarHint}
++        description={chatsHint}
+         render={
+-          <Button
+-            id={expanded ? CLOSE_SIDEBAR_ID : undefined}
+-            data-testid={expanded ? 'close-sidebar-button' : 'open-sidebar-button'}
+-            size="icon"
+-            variant="ghost"
+-            aria-label={localize(toggleLabel)}
+-            aria-expanded={expanded}
+-            aria-keyshortcuts={toggleSidebarAriaKey}
+-            className="efaiw-rail-toggle mb-1 h-9 w-9 rounded-lg"
+-            onClick={toggleClick}
++          <button
++            type="button"
++            data-testid="efaiw-rail-chats"
++            aria-pressed={chatsShown}
++            /* Only while the panel exists: a reference to a missing element is invalid (axe). */
++            aria-controls={expanded ? EF_CHATS_PANEL_ID : undefined}
++            aria-keyshortcuts={chatsAriaKey}
++            className={cn(railItemClass, 'mt-1', chatsShown && 'efaiw-rail-active')}
++            onClick={toggleChats}
+           >
+-            <Sidebar aria-hidden="true" className="h-5 w-5 text-text-primary" />
+-          </Button>
++            <span className="efaiw-rail-icon flex h-8 w-11 items-center justify-center rounded-[10px]">
++              <MessagesSquare className="h-5 w-5" aria-hidden="true" />
++            </span>
++            <span className="efaiw-rail-label">{localize('com_efaiw_rail_chats')}</span>
++          </button>
+         }
+       />
+-      <NewChatButton setActive={setActive} />
+-      {search.enabled === true && (
+-        <TooltipAnchor
+-          side="right"
+-          description={searchHint}
+-          render={
+-            <button
+-              type="button"
+-              data-testid="efaiw-rail-search"
+-              aria-label={localize('com_efaiw_rail_search')}
+-              className={railItemClass}
+-              onClick={openSearch}
+-            >
+-              <span className="flex h-8 w-8 items-center justify-center">
+-                <Search className="h-5 w-5" aria-hidden="true" />
+-              </span>
+-              <span className="efaiw-rail-label" aria-hidden="true">
+-                {localize('com_efaiw_rail_search')}
+-              </span>
+-            </button>
+-          }
+-        />
+-      )}
+-      <div className="efaiw-rail-sep my-1 w-10 border-b border-border-light" aria-hidden="true" />
++      <div className="efaiw-rail-sep my-1.5 w-9 border-b" aria-hidden="true" />
+       <div className="flex min-h-0 flex-col items-center gap-1 overflow-y-auto">
+         {EF_MAIN_PANELS.map(({ id, tone }) => {
+           const link = links.find((item) => item.id === id);
+@@ -256,92 +211,39 @@ function ExpandedPanel({
+                 <Link
+                   to={EF_PAGES[id]}
+                   data-testid={`efaiw-rail-${id}`}
+-                  aria-label={label}
+                   aria-current={isCurrent ? 'page' : undefined}
+                   className={cn(railItemClass, isCurrent && 'efaiw-rail-active')}
+                 >
+                   <span className={cn('efaiw-side-tile', tone)} aria-hidden="true">
+                     <link.icon className="h-[18px] w-[18px]" />
+                   </span>
+-                  <span className="efaiw-rail-label" aria-hidden="true">
+-                    {label}
+-                  </span>
++                  <span className="efaiw-rail-label">{label}</span>
+                 </Link>
+               }
+             />
+           );
+         })}
+-        {(moreLinks.length > 0 || hasAdminItems) && (
+-          <Ariakit.MenuProvider
++        {moreVisible && (
++          <EfMoreMenu
++            links={links}
++            pageId={pageId}
++            activeId={activeId}
+             placement={document.documentElement.dir === 'rtl' ? 'left-start' : 'right-start'}
++            testId="efaiw-rail-more"
++            className={cn(
++              railItemClass,
++              'aria-[expanded=true]:bg-surface-hover',
++              moreIsCurrent && 'efaiw-rail-active',
++            )}
++            onOpenPanel={openPanel}
+           >
+-            <TooltipAnchor
+-              side="right"
+-              description={localize('com_efaiw_more')}
+-              render={
+-                <Ariakit.MenuButton
+-                  data-testid="efaiw-rail-more"
+-                  aria-label={localize('com_efaiw_more')}
+-                  className={cn(
+-                    railItemClass,
+-                    'aria-[expanded=true]:bg-surface-hover',
+-                    moreIsCurrent && 'efaiw-rail-active',
+-                  )}
+-                >
+-                  <span className="efaiw-side-tile" aria-hidden="true">
+-                    <Ellipsis className="h-[18px] w-[18px]" />
+-                  </span>
+-                  <span className="efaiw-rail-label" aria-hidden="true">
+-                    {localize('com_efaiw_more')}
+-                  </span>
+-                </Ariakit.MenuButton>
+-              }
+-            />
+-            <Ariakit.Menu
+-              portal
+-              gutter={14}
+-              unmountOnHide
+-              /* Focus moves into the menu when it opens; no focusable aria-hidden traps around the portal (axe). */
+-              preserveTabOrder={false}
+-              data-testid="efaiw-rail-more-menu"
+-              className="efaiw-rail-pop popover-ui z-[125] flex w-[268px] flex-col gap-0.5 rounded-2xl p-2"
+-            >
+-              {moreLinks.map((link) => popItem(link, `efaiw-rail-more-${link.id}`))}
+-              {hasAdminItems && (
+-                <>
+-                  {moreLinks.length > 0 && (
+-                    <Ariakit.MenuSeparator className="efaiw-rail-pop-sep mx-2 my-1 border-border-light" />
+-                  )}
+-                  {/* Admins only (owner decision, #189): the marketplace, the agent builder and the parameters. */}
+-                  <Ariakit.MenuGroup className="flex flex-col gap-0.5">
+-                    <Ariakit.MenuGroupLabel className="efaiw-rail-pop-label px-3 pb-0.5 pt-1.5 text-xs font-semibold text-text-secondary">
+-                      {localize('com_efaiw_admin_tools')}
+-                    </Ariakit.MenuGroupLabel>
+-                    {isAdmin && showMarketplace && (
+-                      <Ariakit.MenuItem
+-                        data-testid="efaiw-rail-more-marketplace"
+-                        aria-current={isMarketplaceRoute ? 'page' : undefined}
+-                        className={cn(popItemClass, isMarketplaceRoute && 'efaiw-rail-pop-current')}
+-                        render={<Link to="/agents" />}
+-                      >
+-                        <LayoutGrid
+-                          className="h-[18px] w-[18px] flex-shrink-0 text-text-secondary"
+-                          aria-hidden="true"
+-                        />
+-                        <span className="min-w-0 flex-1 truncate">
+-                          {localize('com_efaiw_rail_agents')}
+-                        </span>
+-                        <span className="efaiw-admin-badge">
+-                          {localize('com_efaiw_admin_only')}
+-                        </span>
+-                      </Ariakit.MenuItem>
+-                    )}
+-                    {adminLinks.map((link) => popItem(link, `efaiw-rail-more-${link.id}`, true))}
+-                  </Ariakit.MenuGroup>
+-                </>
+-              )}
+-            </Ariakit.Menu>
+-          </Ariakit.MenuProvider>
++            <span className="efaiw-side-tile" aria-hidden="true">
++              <Ellipsis className="h-[18px] w-[18px]" />
++            </span>
++            <span className="efaiw-rail-label" aria-hidden="true">
++              {localize('com_efaiw_more')}
++            </span>
++          </EfMoreMenu>
+         )}
+       </div>
+ 
+@@ -353,11 +255,11 @@ function ExpandedPanel({
+       />
+ 
+       <div className="mt-auto">
+-        <Suspense fallback={<Skeleton className="h-9 w-9 rounded-lg" />}>
++        <Suspense fallback={<Skeleton className="h-10 w-10 rounded-full" />}>
+           <AccountSettings collapsed />
+         </Suspense>
+       </div>
+-    </div>
++    </nav>
+   );
+ }
+ 
+diff --git a/client/src/components/UnifiedSidebar/Sidebar.tsx b/client/src/components/UnifiedSidebar/Sidebar.tsx
+index efa5e01..dbb92fa 100644
+--- a/client/src/components/UnifiedSidebar/Sidebar.tsx
++++ b/client/src/components/UnifiedSidebar/Sidebar.tsx
+@@ -1,7 +1,8 @@
+ import { memo } from 'react';
+ import type { NavLink } from '~/common';
+-import EfSidebarColumn from './EfSidebarColumn';
++import EfChatsPanel from './EfChatsPanel';
+ import ExpandedPanel from './ExpandedPanel';
++import { COLLAPSED_WIDTH } from './constants';
+ import { useLocalize } from '~/hooks';
+ import { cn } from '~/utils';
+ 
+@@ -31,12 +32,10 @@ function Sidebar({
+   const localize = useLocalize();
+   return (
+     <>
+-      {/* EF (Concept 1, sidebar v3 #198, owner-approved): expanded, the sidebar is one column (EfSidebarColumn);
+-          collapsed, a labelled rail with the same entries (ExpandedPanel). */}
+-      <div className="flex h-full w-full overflow-hidden high-contrast:border-r high-contrast:border-border-light">
+-        {expanded ? (
+-          <EfSidebarColumn links={links} onClose={onCollapse} onLeaveInsights={onLeaveInsights} />
+-        ) : (
++      {/* EF (sidebar v4 #204, owner-approved Concept 2): the rail (ExpandedPanel) is always shown; the chats panel
++          (EfChatsPanel) stands beside it while the sidebar is open. The handle resizes the panel. */}
++      <div className="flex h-full w-full overflow-hidden high-contrast:border-e high-contrast:border-border-light">
++        <div className="h-full flex-shrink-0" style={{ width: COLLAPSED_WIDTH }}>
+           <ExpandedPanel
+             links={links}
+             expanded={expanded}
+@@ -44,6 +43,11 @@ function Sidebar({
+             onExpand={onExpand}
+             onLeaveInsights={onLeaveInsights}
+           />
++        </div>
++        {expanded && (
++          <div className="h-full min-w-0 flex-1">
++            <EfChatsPanel links={links} onClose={onCollapse} onLeaveInsights={onLeaveInsights} />
++          </div>
+         )}
+       </div>
+       <div
+@@ -55,15 +59,18 @@ function Sidebar({
+         aria-valuemax={Math.round(maxWidth)}
+         tabIndex={expanded ? 0 : -1}
+         className={cn(
+-          'absolute right-0 top-0 z-10 h-full w-1 cursor-col-resize transition-colors hover:bg-border-medium active:bg-border-heavy',
++          'absolute end-0 top-0 z-10 h-full w-1 cursor-col-resize transition-colors hover:bg-border-medium active:bg-border-heavy',
+           expanded ? 'opacity-100' : 'pointer-events-none opacity-0',
+         )}
+         style={{ transition: expanded ? 'opacity 200ms ease 80ms' : 'opacity 150ms ease' }}
+         onMouseDown={onResizeStart}
+         onKeyDown={(e) => {
+-          if (e.key === 'ArrowLeft') {
++          /** The panel grows toward the main area: rightward on a left-to-right page, leftward in Arabic. */
++          const grow = document.documentElement.dir === 'rtl' ? 'ArrowLeft' : 'ArrowRight';
++          const shrink = grow === 'ArrowLeft' ? 'ArrowRight' : 'ArrowLeft';
++          if (e.key === shrink) {
+             onResizeKeyboard('shrink');
+-          } else if (e.key === 'ArrowRight') {
++          } else if (e.key === grow) {
+             onResizeKeyboard('grow');
+           }
+         }}
+diff --git a/client/src/components/UnifiedSidebar/UnifiedSidebar.tsx b/client/src/components/UnifiedSidebar/UnifiedSidebar.tsx
+index d9a85f2..230b3dc 100644
+--- a/client/src/components/UnifiedSidebar/UnifiedSidebar.tsx
++++ b/client/src/components/UnifiedSidebar/UnifiedSidebar.tsx
+@@ -20,7 +20,7 @@ import useUnifiedSidebarLinks from '~/hooks/Nav/useUnifiedSidebarLinks';
+ import useSidebarToggle from '~/hooks/Nav/useSidebarToggle';
+ import useSidebarState from '~/hooks/Nav/useSidebarState';
+ import { useChatHelpers, useLocalize } from '~/hooks';
+-import EfSidebarColumn from './EfSidebarColumn';
++import EfChatsPanel from './EfChatsPanel';
+ import Sidebar from './Sidebar';
+ import { cn } from '~/utils';
+ 
+@@ -72,8 +72,9 @@ function UnifiedSidebar({ isSliding = false }: { isSliding?: boolean }) {
+ 
+   /** Mirrors the bounds the aside is rendered with, so the handle never announces a value
+    *  outside its own range. CSS resolves a 40% that falls under `min-width` in favor of the
+-   *  minimum, and the resize handlers clamp the same way, so the floor belongs here too. */
+-  const resizeMax = Math.max(EXPANDED_MIN, Math.round(viewportWidth * 0.4));
++   *  minimum, and the resize handlers clamp the same way, so the floor belongs here too.
++   *  EF (sidebar v4 #204): the handle sizes the chats panel; the rail beside it keeps its width. */
++  const resizeMax = Math.max(EXPANDED_MIN, Math.round(viewportWidth * 0.4) - COLLAPSED_WIDTH);
+   const resizeNow = panelExpanded
+     ? Math.min(Math.max(sidebarWidth, EXPANDED_MIN), resizeMax)
+     : COLLAPSED_WIDTH;
+@@ -103,7 +104,10 @@ function UnifiedSidebar({ isSliding = false }: { isSliding?: boolean }) {
+   const handleResizeStart = useCallback(() => {
+     setIsResizing(true);
+     document.body.style.userSelect = 'none';
+-    const maxWidth = window.innerWidth * 0.4;
++    const maxWidth = window.innerWidth * 0.4 - COLLAPSED_WIDTH;
++    /** EF (#204): the sidebar is at the start edge, the right in Arabic, so the pointer's distance from that edge is the
++     *  sidebar's width; the panel is that width less the rail. */
++    const rtl = document.documentElement.dir === 'rtl';
+     let rafId: number | null = null;
+ 
+     const move = (e: MouseEvent) => {
+@@ -112,7 +116,8 @@ function UnifiedSidebar({ isSliding = false }: { isSliding?: boolean }) {
+       }
+       rafId = requestAnimationFrame(() => {
+         rafId = null;
+-        const next = Math.max(EXPANDED_MIN, Math.min(e.clientX, maxWidth));
++        const fromStart = rtl ? window.innerWidth - e.clientX : e.clientX;
++        const next = Math.max(EXPANDED_MIN, Math.min(fromStart - COLLAPSED_WIDTH, maxWidth));
+         setSidebarWidth(next);
+       });
+     };
+@@ -143,7 +148,7 @@ function UnifiedSidebar({ isSliding = false }: { isSliding?: boolean }) {
+       const next =
+         direction === 'shrink'
+           ? Math.max(w - 20, EXPANDED_MIN)
+-          : Math.min(w + 20, window.innerWidth * 0.4);
++          : Math.min(w + 20, Math.max(EXPANDED_MIN, window.innerWidth * 0.4 - COLLAPSED_WIDTH));
+       localStorage.setItem('side:width', String(Math.round(next)));
+       return next;
+     });
+@@ -214,8 +219,8 @@ function UnifiedSidebar({ isSliding = false }: { isSliding?: boolean }) {
+       >
+         <SidebarChatProvider>
+           <ActivePanelProvider>
+-            {/* EF (Concept 1, owner-approved): the same column as the desktop sidebar, closed with its X. */}
+-            <EfSidebarColumn
++            {/* EF (sidebar v4 #204, owner-approved Concept 2): the chats screen, with its tab bar; closed with its X. */}
++            <EfChatsPanel
+               links={links}
+               mobile={true}
+               expanded={expanded}
+@@ -234,9 +239,12 @@ function UnifiedSidebar({ isSliding = false }: { isSliding?: boolean }) {
+         <aside
+           className="relative flex h-full flex-shrink-0 overflow-hidden"
+           style={{
+-            width: panelExpanded ? sidebarWidth : COLLAPSED_WIDTH,
+-            minWidth: panelExpanded ? EXPANDED_MIN : COLLAPSED_WIDTH,
+-            maxWidth: panelExpanded ? '40%' : COLLAPSED_WIDTH,
++            /* EF (#204): the rail plus, while open, the chats panel. */
++            width: panelExpanded ? COLLAPSED_WIDTH + sidebarWidth : COLLAPSED_WIDTH,
++            minWidth: panelExpanded ? COLLAPSED_WIDTH + EXPANDED_MIN : COLLAPSED_WIDTH,
++            maxWidth: panelExpanded
++              ? `max(40%, ${COLLAPSED_WIDTH + EXPANDED_MIN}px)`
++              : COLLAPSED_WIDTH,
+             transition: isResizing
+               ? 'none'
+               : `width ${TRANSITION_MS}ms ${EASING}, min-width ${TRANSITION_MS}ms ${EASING}, max-width ${TRANSITION_MS}ms ${EASING}`,
+diff --git a/client/src/components/UnifiedSidebar/__tests__/ConversationsSection.spec.tsx b/client/src/components/UnifiedSidebar/__tests__/ConversationsSection.spec.tsx
+index 1e497ca..f15618b 100644
+--- a/client/src/components/UnifiedSidebar/__tests__/ConversationsSection.spec.tsx
++++ b/client/src/components/UnifiedSidebar/__tests__/ConversationsSection.spec.tsx
+@@ -28,6 +28,7 @@ const mockUseGetConversationTags = jest.fn(() => ({ data: [] as unknown[] }));
+ const mockConversationsRender = jest.fn();
+ const mockSetChatsExpanded = jest.fn();
+ const mockMoveToTop = jest.fn();
++const mockConversationsParams = jest.fn();
+ const mockUseTitleGeneration = jest.fn(() => {
+   useRecoilValue(streamTickAtom);
+ });
+@@ -51,7 +52,11 @@ const mockConversationsResult = {
+ 
+ /** Same identity rule as above: a fresh `pinnedData.conversations` array would
+  *  rebuild `pinnedConversations` and re-render PinnedSection on every tick. */
+-const mockPinnedResult = { data: { conversations: [] as unknown[], nextCursor: null } };
++const mockPinnedResult = {
++  data: { conversations: [] as unknown[], nextCursor: null },
++  isSuccess: true,
++  isFetching: false,
++};
+ 
+ jest.mock('~/store', () => {
+   const { atom: recoilAtom } = jest.requireActual('recoil');
+@@ -82,7 +87,10 @@ jest.mock('~/hooks', () => ({
+ 
+ jest.mock('~/data-provider', () => ({
+   __esModule: true,
+-  useConversationsInfiniteQuery: () => mockConversationsResult,
++  useConversationsInfiniteQuery: (params: unknown) => {
++    mockConversationsParams(params);
++    return mockConversationsResult;
++  },
+   usePinnedConversationsQuery: () => mockPinnedResult,
+   useTitleGeneration: () => mockUseTitleGeneration(),
+   useGetEndpointsQuery: () => ({ data: {}, isLoading: false }),
+@@ -162,7 +170,9 @@ jest.mock('~/components/Nav/Favorites/FavoriteItem', () => ({
+   default: () => <div data-testid="favorite-item-stub" />,
+ }));
+ 
++import { getDefaultStore } from 'jotai';
+ import ConversationsSection from '../ConversationsSection';
++import { efChatScopeAtom } from '../efChatScope';
+ import store from '~/store';
+ 
+ let setStreamTick: SetterOrUpdater<number>;
+@@ -472,3 +482,53 @@ describe('ConversationsSection shared scroll surface', () => {
+     expect(surface!.scrollTop).toBe(0);
+   });
+ });
++
++describe('ConversationsSection chips (EF sidebar v4, #204)', () => {
++  afterEach(() => {
++    act(() => {
++      getDefaultStore().set(efChatScopeAtom, { kind: 'all' });
++    });
++  });
++
++  it('«All» lists every chat, pinned first, without a project filter', async () => {
++    renderSection();
++    await settleRenders();
++    expect(screen.getByTestId('pinned-stub')).toBeInTheDocument();
++    expect(screen.getByTestId('conversations-stub')).toBeInTheDocument();
++    expect(mockConversationsParams).toHaveBeenLastCalledWith(
++      expect.objectContaining({ projectId: undefined }),
++    );
++  });
++
++  it('«Pinned» shows the pinned chats alone, and says so when there are none', async () => {
++    getDefaultStore().set(efChatScopeAtom, { kind: 'pinned' });
++    renderSection();
++    await settleRenders();
++    expect(screen.getByTestId('pinned-stub')).toBeInTheDocument();
++    expect(screen.queryByTestId('conversations-stub')).not.toBeInTheDocument();
++    expect(screen.getByTestId('efaiw-no-pinned')).toHaveTextContent('com_efaiw_no_pinned');
++  });
++
++  it('a search under «Pinned» still looks through every chat', async () => {
++    getDefaultStore().set(efChatScopeAtom, { kind: 'pinned' });
++    renderSection('budget');
++    await settleRenders();
++    expect(screen.getByTestId('conversations-stub')).toBeInTheDocument();
++    expect(screen.queryByTestId('efaiw-no-pinned')).not.toBeInTheDocument();
++  });
++
++  it('«Project» asks the server for that project\'s chats, its pinned ones first', async () => {
++    getDefaultStore().set(efChatScopeAtom, {
++      kind: 'project',
++      projectId: '0123456789abcdef01234567',
++      name: 'Grants',
++    });
++    renderSection();
++    await settleRenders();
++    expect(mockConversationsParams).toHaveBeenLastCalledWith(
++      expect.objectContaining({ projectId: '0123456789abcdef01234567' }),
++    );
++    expect(screen.getByTestId('pinned-stub')).toBeInTheDocument();
++    expect(screen.getByTestId('conversations-stub')).toBeInTheDocument();
++  });
++});
+diff --git a/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx b/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx
+index 3252484..eb431f0 100644
+--- a/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx
++++ b/client/src/components/UnifiedSidebar/__tests__/ExpandedPanel.spec.tsx
+@@ -175,18 +175,18 @@ function renderPanel({
+   return { ...result, onCollapse, onExpand };
+ }
+ 
+-describe('ExpandedPanel (EF collapsed rail, #198)', () => {
++describe('ExpandedPanel (EF rail, sidebar v4 #204)', () => {
+   beforeEach(() => {
+     jest.clearAllMocks();
+     localStorage.clear();
+     mockRole = 'USER';
+   });
+ 
+-  it('mirrors the column: new chat, search, the three main pages, then «More»', () => {
++  it('lists new chat, «Chats», the three main pages, then «More»', () => {
+     renderPanel();
+     const order = [
+       'new-chat-button',
+-      'efaiw-rail-search',
++      'efaiw-rail-chats',
+       'efaiw-rail-projects',
+       'efaiw-rail-skills',
+       'efaiw-rail-files',
+@@ -206,11 +206,51 @@ describe('ExpandedPanel (EF collapsed rail, #198)', () => {
+     expect(screen.getByTestId('efaiw-rail-projects')).not.toHaveAttribute('aria-current');
+   });
+ 
+-  it('«Search» opens the column on the chat history', () => {
+-    renderPanel({ initialPanel: 'agents', links: createLinks({ admin: true }) });
+-    fireEvent.click(screen.getByTestId('efaiw-rail-search'));
+-    expect(mockSetSidebarOpen).toHaveBeenCalledWith(true, expect.any(Function));
++  it('«Chats» opens the closed panel on the chat history', () => {
++    mockRole = 'ADMIN';
++    const { onExpand, onCollapse } = renderPanel({
++      initialPanel: 'agents',
++      links: createLinks({ admin: true }),
++    });
++    const chats = screen.getByTestId('efaiw-rail-chats');
++    expect(chats).toHaveAttribute('aria-pressed', 'false');
++    expect(chats).not.toHaveAttribute('aria-controls');
++    fireEvent.click(chats);
++    expect(onExpand).toHaveBeenCalledTimes(1);
++    expect(onCollapse).not.toHaveBeenCalled();
++    expect(localStorage.getItem('side:active-panel')).toBe(DEFAULT_PANEL);
++  });
++
++  it('«Chats» is pressed while the panel shows them, and closes it', () => {
++    const { onExpand, onCollapse } = renderPanel({ expanded: true });
++    const chats = screen.getByTestId('efaiw-rail-chats');
++    expect(chats).toHaveAttribute('aria-pressed', 'true');
++    expect(chats).toHaveAttribute('aria-controls', 'efaiw-chats-panel');
++    fireEvent.click(chats);
++    expect(onCollapse).toHaveBeenCalledTimes(1);
++    expect(onExpand).not.toHaveBeenCalled();
++  });
++
++  it('«Chats» brings the history back when a tool holds the open panel', () => {
++    mockRole = 'ADMIN';
++    const { onExpand, onCollapse } = renderPanel({
++      expanded: true,
++      initialPanel: 'agents',
++      links: createLinks({ admin: true }),
++    });
++    const chats = screen.getByTestId('efaiw-rail-chats');
++    expect(chats).toHaveAttribute('aria-pressed', 'false');
++    fireEvent.click(chats);
+     expect(localStorage.getItem('side:active-panel')).toBe(DEFAULT_PANEL);
++    expect(onCollapse).not.toHaveBeenCalled();
++    expect(onExpand).not.toHaveBeenCalled();
++  });
++
++  it('opening a page leaves the panel as it is', () => {
++    const { onExpand, onCollapse } = renderPanel({ expanded: true });
++    fireEvent.click(screen.getByTestId('efaiw-rail-projects'));
++    expect(onCollapse).not.toHaveBeenCalled();
++    expect(onExpand).not.toHaveBeenCalled();
+   });
+ 
+   it('«More» lists memory, bookmarks and ready commands, without admin tools for an employee', async () => {
+diff --git a/client/src/components/UnifiedSidebar/__tests__/drawerPaint.spec.tsx b/client/src/components/UnifiedSidebar/__tests__/drawerPaint.spec.tsx
+index de29d68..1acd9d6 100644
+--- a/client/src/components/UnifiedSidebar/__tests__/drawerPaint.spec.tsx
++++ b/client/src/components/UnifiedSidebar/__tests__/drawerPaint.spec.tsx
+@@ -66,9 +66,9 @@ jest.mock('../Sidebar', () => ({
+   default: () => <div data-testid="desktop-sidebar" />,
+ }));
+ 
+-jest.mock('../EfSidebarColumn', () => ({
++jest.mock('../EfChatsPanel', () => ({
+   __esModule: true,
+-  default: () => <div data-testid="ef-sidebar-column" />,
++  default: () => <div data-testid="ef-chats-panel" />,
+ }));
+ 
+ const drawerVisibility = (expanded: boolean, isSliding: boolean): string => {
+diff --git a/client/src/components/UnifiedSidebar/constants.ts b/client/src/components/UnifiedSidebar/constants.ts
+index b119522..47a4a26 100644
+--- a/client/src/components/UnifiedSidebar/constants.ts
++++ b/client/src/components/UnifiedSidebar/constants.ts
+@@ -1,7 +1,9 @@
+-/** EF (#108): 72 px instead of 52 so each icon carries its short label. */
+-export const COLLAPSED_WIDTH = 72;
+-/** EF (Concept 1): the expanded sidebar is one 300 px column (no rail beside it). */
++/** EF (#108, sidebar v4 #204): the rail, always shown on the desktop, 76 px so each icon carries its short label. */
++export const COLLAPSED_WIDTH = 76;
++/** EF (sidebar v4 #204): the chats panel beside the rail, 300 px at least (resizable). */
+ export const EXPANDED_MIN = 300;
++/** EF (sidebar v4 #204): the chats panel, which the rail's «Chats» opens and closes. */
++export const EF_CHATS_PANEL_ID = 'efaiw-chats-panel';
+ 
+ /**
+  * How much of the viewport the mobile drawer covers.
+diff --git a/client/src/components/UnifiedSidebar/efChatScope.ts b/client/src/components/UnifiedSidebar/efChatScope.ts
+new file mode 100644
+index 0000000..f3953cb
+--- /dev/null
++++ b/client/src/components/UnifiedSidebar/efChatScope.ts
+@@ -0,0 +1,16 @@
++import { atom } from 'jotai';
++
++/**
++ * EF (sidebar v4 #204, owner-approved Concept 2): which chats the chips above the history show. One choice at a time:
++ * every chat, the pinned ones only, or the chats of one project (or of none, `unassigned`), which the server filters
++ * by `projectId`. Session-scoped like upstream's status and bookmark filters (chatFilters.ts): a filter that hides
++ * chats should not greet the employee on the next visit.
++ */
++export type EfChatScope =
++  | { kind: 'all' }
++  | { kind: 'pinned' }
++  | { kind: 'project'; projectId: string; name: string };
++
++export const EF_UNASSIGNED_PROJECT = 'unassigned';
++
++export const efChatScopeAtom = atom<EfChatScope>({ kind: 'all' });
+diff --git a/client/src/locales/en/translation.json b/client/src/locales/en/translation.json
+index c3d6e16..624229d 100644
+--- a/client/src/locales/en/translation.json
++++ b/client/src/locales/en/translation.json
+@@ -3134,11 +3134,23 @@
+   "com_efaiw_admin_only": "Admins",
+   "com_efaiw_message_with_commands": "Message {{0}} or type / for a ready command",
+   "com_efaiw_back_to_chats": "Back to chats",
+-  "com_efaiw_rail_search": "Search",
+   "com_efaiw_admin_tools": "Admins only",
+   "com_efaiw_files_hint": "Choose a document to attach it to your open chat.",
+   "com_efaiw_prompts_hint": "To use a ready command, type / in the message box.",
+   "com_efaiw_prompts_none": "Choose a ready command to view or edit it",
+   "com_efaiw_model_menu_title": "Choose a model",
+-  "com_efaiw_model_menu_hint": "You can change the model at any time during the chat."
++  "com_efaiw_model_menu_hint": "You can change the model at any time during the chat.",
++  "com_efaiw_sections": "Sections",
++  "com_efaiw_open_chats": "Open the chats",
++  "com_efaiw_collapse_chats": "Collapse the chats",
++  "com_efaiw_chats_filter": "Show chats",
++  "com_efaiw_chip_all": "All",
++  "com_efaiw_chip_pinned": "Pinned",
++  "com_efaiw_chip_project": "Project",
++  "com_efaiw_chip_project_named": "Project: {{0}}",
++  "com_efaiw_filter_by_project": "Chats of the project",
++  "com_efaiw_no_project": "No project",
++  "com_efaiw_no_projects": "You have no projects yet.",
++  "com_efaiw_no_pinned": "No pinned chats yet. Pin a chat from its menu.",
++  "com_efaiw_no_project_chats": "No chats here yet."
+ }
