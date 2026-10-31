@@ -36,8 +36,8 @@ interface:
   marketplace: {use: true}
   webSearch: false
   runCode: false
-  fileSearch: false
-  fileCitations: false
+  fileSearch: true
+  fileCitations: true
   memories: true
   # Shared links (#125): a user shares a chat with chosen colleagues (`share`) or with anyone who opens the link
   # (`public`). With ALLOW_SHARED_LINKS_PUBLIC=false (librechat.env) every link still needs a signed-in account
@@ -502,7 +502,7 @@ endpoints:
     # bundler (an external origin) until SANDPACK_BUNDLER_URL points to a self-hosted one: a production gate; the other
     # types preview in a local sandboxed frame (patch 0029, #167).
     capabilities: ['artifacts', 'context', 'skills', 'memory', 'tools', 'chain', 'subagents', 'deferred_tools',
-                   'ask_user_question']
+                   'ask_user_question', 'file_search']
     # Provider error text is not stored or shown to users (it can contain gateway pages or internal host names);
     # users get a generic message with the HTTP status. Details stay in the server log.
     maxProviderErrorChars: 0
