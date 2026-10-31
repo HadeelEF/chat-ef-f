@@ -1,0 +1,67 @@
+diff --git a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
+index 38b9915..6ff4bed 100644
+--- a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
++++ b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
+@@ -1,13 +1,12 @@
+ import { memo, useCallback, lazy, Suspense } from 'react';
+ import { useRecoilValue } from 'recoil';
+-import { MessagesSquare, SlidersHorizontal, SquarePen } from 'lucide-react';
++import { Bot, MessagesSquare, SlidersHorizontal, SquarePen } from 'lucide-react';
+ import { Link, useLocation } from 'react-router-dom';
+-import { SystemRoles } from 'librechat-data-provider';
+ import { Skeleton, TooltipAnchor } from '@librechat/client';
+ import type { NavLink } from '~/common';
+ import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcuts';
+ import { useActivePanel, resolveActivePanel, DEFAULT_PANEL } from '~/Providers';
+-import { useAuthContext, useLocalize } from '~/hooks';
++import { useLocalize, useShowMarketplace } from '~/hooks';
+ import useNewChat from '~/hooks/Chat/useNewChat';
+ import ShortcutTargets from './mobile/ShortcutTargets';
+ import {
+@@ -98,15 +97,16 @@ function ExpandedPanel({
+   const routeActiveId = isInsightsRoute ? 'insights' : undefined;
+   const pageId = efPageIdOf(location.pathname);
+   const activeId = routeActiveId ?? resolveActivePanel(active, links);
+-  const { user } = useAuthContext();
+-  const isMarketplaceRoute =
+-    user?.role === SystemRoles.ADMIN && location.pathname.startsWith('/agents');
++  /** The assistants marketplace has its own rail item for every role (owner request 2026-10-31). */
++  const showMarketplace = useShowMarketplace();
++  const isMarketplaceRoute = location.pathname.startsWith('/agents');
++  const agentsLabel = localize('com_efaiw_rail_agents');
+   const labelOf = (link: NavLink) => localize(EF_LINK_LABELS[link.id] ?? link.title);
+   const customizeIsCurrent = efCustomizeIsCurrent({
+     links,
+     pageId,
+     activeId,
+-    isMarketplaceRoute,
++    isMarketplaceRoute: false,
+   });
+   const customizeLabel = localize('com_efaiw_customize');
+   useEfPanelGuard(links, pageId);
+@@ -226,6 +226,25 @@ function ExpandedPanel({
+             </Link>
+           }
+         />
++        {showMarketplace && (
++          <TooltipAnchor
++            side="right"
++            description={agentsLabel}
++            render={
++              <Link
++                to="/agents"
++                data-testid="efaiw-rail-agents"
++                aria-current={isMarketplaceRoute ? 'page' : undefined}
++                className={cn(railItemClass, isMarketplaceRoute && 'efaiw-rail-active')}
++              >
++                <span className={cn('efaiw-side-tile', 'efaiw-tone-green')} aria-hidden="true">
++                  <Bot className="h-[18px] w-[18px]" />
++                </span>
++                <span className="efaiw-rail-label">{agentsLabel}</span>
++              </Link>
++            }
++          />
++        )}
+       </div>
+ 
+       <ShortcutTargets
