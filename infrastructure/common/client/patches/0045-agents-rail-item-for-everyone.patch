@@ -1,3 +1,80 @@
+diff --git a/client/src/components/UnifiedSidebar/EfChatsPanel.tsx b/client/src/components/UnifiedSidebar/EfChatsPanel.tsx
+index a818448..d54ab71 100644
+--- a/client/src/components/UnifiedSidebar/EfChatsPanel.tsx
++++ b/client/src/components/UnifiedSidebar/EfChatsPanel.tsx
+@@ -1,8 +1,7 @@
+ import { memo, lazy, Suspense, useCallback, useEffect, useMemo, useRef } from 'react';
+ import { useRecoilValue } from 'recoil';
+ import { useLocation, useNavigate } from 'react-router-dom';
+-import { ChevronLeft, SlidersHorizontal, SquarePen, X } from 'lucide-react';
+-import { SystemRoles } from 'librechat-data-provider';
++import { Bot, ChevronLeft, SlidersHorizontal, SquarePen, X } from 'lucide-react';
+ import { Button, Sidebar, Skeleton, TooltipAnchor } from '@librechat/client';
+ import type { NavLink } from '~/common';
+ import { useActivePanel, resolveActivePanel, DEFAULT_PANEL } from '~/Providers';
+@@ -12,7 +11,7 @@ import ChatFilterMenu from '~/components/Conversations/ChatFilterMenu';
+ import SidePanelNav from '~/components/SidePanel/Nav';
+ import SearchBar from '~/components/Nav/SearchBar';
+ import useNewChat from '~/hooks/Chat/useNewChat';
+-import { useAuthContext, useLocalize } from '~/hooks';
++import { useLocalize, useShowMarketplace } from '~/hooks';
+ import { MobileShortcutTargets as ShortcutTargets } from './mobile';
+ import EfChatChips from './EfChatChips';
+ import {
+@@ -62,7 +61,9 @@ function EfChatsPanel({
+   const { active, setActive } = useActivePanel();
+   const search = useRecoilValue(store.search);
+   const switchToHistory = useRecoilValue(store.newChatSwitchToHistory);
+-  const { user } = useAuthContext();
++  /** The assistants marketplace is a drawer tile for every role, as in the rail (owner request 2026-10-31). */
++  const showMarketplace = useShowMarketplace();
++  const isMarketplaceRoute = location.pathname.startsWith('/agents');
+   const closeRef = useRef<HTMLButtonElement>(null);
+ 
+   const isInsightsRoute = location.pathname.startsWith('/insights');
+@@ -76,7 +77,7 @@ function EfChatsPanel({
+     links,
+     pageId,
+     activeId,
+-    isMarketplaceRoute: user?.role === SystemRoles.ADMIN && location.pathname.startsWith('/agents'),
++    isMarketplaceRoute: false,
+   });
+ 
+   /** One guard: the rail runs it on the desktop. */
+@@ -243,7 +244,11 @@ function EfChatsPanel({
+             </div>
+           )}
+           {mobile && (
+-            <nav aria-label={localize('com_efaiw_sections')} className="efaiw-drawer-tiles">
++            <nav
++              aria-label={localize('com_efaiw_sections')}
++              className="efaiw-drawer-tiles"
++              style={showMarketplace ? { gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' } : undefined}
++            >
+               {EF_MAIN_PANELS.map(({ id, tone }) => {
+                 const link = links.find((item) => item.id === id);
+                 const path = EF_PAGES[id];
+@@ -266,6 +271,20 @@ function EfChatsPanel({
+                   </a>
+                 );
+               })}
++              {showMarketplace && (
++                <a
++                  href="/agents"
++                  data-testid="efaiw-drawer-agents"
++                  aria-current={isMarketplaceRoute ? 'page' : undefined}
++                  className="efaiw-drawer-tile"
++                  onClick={(event) => openPage('/agents', event)}
++                >
++                  <span className={cn('efaiw-side-tile', 'efaiw-tone-green')} aria-hidden="true">
++                    <Bot className="h-[18px] w-[18px]" />
++                  </span>
++                  <span className="efaiw-drawer-tile-label">{localize('com_efaiw_rail_agents')}</span>
++                </a>
++              )}
+               <a
+                 href={EF_PAGES.customize}
+                 data-testid="efaiw-drawer-customize"
 diff --git a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx b/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
 index 38b9915..3a688b8 100644
 --- a/client/src/components/UnifiedSidebar/ExpandedPanel.tsx
